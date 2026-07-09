@@ -1,0 +1,20 @@
+[Weekly Product Sync — Monday 10:00 AM]
+Attendees: Priya (PM), Marcus (Eng), Dana (Design)
+
+Priya: Okay, quick sync. Where are we on the checkout redesign?
+
+Marcus: Backend's basically done. The new payment endpoint is deployed to staging. I still need to wire up the error states on the frontend — probably a day of work. I'll have it in a PR by Wednesday.
+
+Dana: I finished the final mocks for the confirmation screen on Friday. They're in Figma. Marcus, you'll want the updated spacing tokens — I changed the button padding.
+
+Marcus: Got it, I'll pull those in.
+
+Priya: Good. The one thing I'm nervous about is the mobile flow. We haven't tested the payment sheet on small screens at all.
+
+Dana: I can do a quick device pass tomorrow and flag anything broken.
+
+Priya: Perfect. Let's make that a priority — if mobile checkout is broken we can't ship. Also, I owe the exec team a status update by end of day Thursday. Marcus, can you send me the deploy notes once the frontend PR is merged so I can include real numbers?
+
+Marcus: Sure, I'll send them over as soon as it's merged.
+
+Priya: Last thing — we said we'd decide on the A/B test split this week. Let's not forget that. I'll set up a separate meeting to lock it down. Okay, that's it, thanks everyone.
