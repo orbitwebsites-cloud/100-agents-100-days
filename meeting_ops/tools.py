@@ -58,3 +58,74 @@ def draft_followup_email(to: str, subject: str, body: str) -> str:
 
 
 ALL_TOOLS = [file_meeting_notes, create_task, draft_followup_email]
+
+
+# ── Provider-agnostic tool interface (used by the Cerebras/OpenAI backend) ──
+# The Anthropic Tool Runner reads the @beta_tool functions above. OpenAI-style
+# APIs (Cerebras) need JSON schemas + a manual dispatch — same connectors.
+
+OPENAI_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "file_meeting_notes",
+            "description": "File the meeting summary as a page in Notion. Call once.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short, specific page title."},
+                    "summary_markdown": {
+                        "type": "string",
+                        "description": "Markdown with a '## Summary' (2-4 sentences) and '## Decisions' bullets.",
+                    },
+                },
+                "required": ["title", "summary_markdown"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_task",
+            "description": "Create a Linear task for one action item. Call once per action item.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "The task as an imperative."},
+                    "description": {"type": "string", "description": "One or two sentences of context."},
+                    "assignee": {"type": "string", "description": "Name of the owner, if stated."},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draft_followup_email",
+            "description": "Draft the follow-up email to attendees. Call once, at the end.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Comma-separated attendee names or emails."},
+                    "subject": {"type": "string", "description": "Specific subject line."},
+                    "body": {"type": "string", "description": "Recap line, then owner → task list, then sign-off."},
+                },
+                "required": ["to", "subject", "body"],
+            },
+        },
+    },
+]
+
+
+def dispatch(name: str, args: dict) -> str:
+    """Execute a tool call by name — the same connectors the Anthropic tools use."""
+    if name == "file_meeting_notes":
+        return notion.create_page(args["title"], args["summary_markdown"])
+    if name == "create_task":
+        return linear.create_issue(
+            args.get("title", ""), args.get("description", ""), args.get("assignee", "")
+        )
+    if name == "draft_followup_email":
+        return gmail.create_draft(args["to"], args["subject"], args["body"])
+    return f"Error: unknown tool {name!r}"

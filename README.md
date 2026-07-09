@@ -15,19 +15,25 @@ When a meeting ends, Meeting Ops runs the whole post-meeting workflow:
 2. **Creates the tasks** — one **Linear** issue per action item, with owners
 3. **Drafts the follow-up** — a send-ready email to the attendees, in **Gmail**
 
-It's a real agent loop (Anthropic's Tool Runner on `claude-opus-4-8`): Claude reads
-the transcript and *calls the tools itself* until the work is done — it doesn't
-just describe the notes, it takes the actions.
+It's a real agent loop: the model reads the transcript and *calls the tools
+itself* until the work is done — it doesn't just describe the notes, it takes the
+actions. Runs on either brain:
+
+- **Cerebras** (free tier — Llama/Qwen) via the OpenAI-compatible API
+- **Anthropic** (`claude-opus-4-8`) via the Tool Runner
+
+Whichever key you put in `.env` is the one it uses (Cerebras wins if both are set).
 
 ### Run it in 30 seconds
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # add your ANTHROPIC_API_KEY
+cp .env.example .env          # add CEREBRAS_API_KEY (free) or ANTHROPIC_API_KEY
 python run.py                 # runs on the bundled sample transcript
 ```
 
-With only `ANTHROPIC_API_KEY` set, the Notion / Linear / Gmail connectors run in
+Free key: sign up at [cloud.cerebras.ai](https://cloud.cerebras.ai), drop the key in
+`CEREBRAS_API_KEY`. With just that, the Notion / Linear / Gmail connectors run in
 **dry-run**: they print exactly what they *would* do and return a fake id. So the
 whole agent works end-to-end before you connect a single external account —
 perfect for a first look (and for filming).
@@ -52,9 +58,11 @@ Fill in the optional keys in `.env` and that connector flips from dry-run to rea
 ```
 run.py                     CLI entry point (--transcript / --selftest)
 meeting_ops/
-  agent.py                 the Tool Runner loop + system prompt
-  tools.py                 the 3 tools the agent can call
-  config.py                env keys + the dry-run switch
+  agent.py                 Anthropic Tool Runner loop
+  cerebras_agent.py        Cerebras / OpenAI-compatible loop (same tools)
+  prompts.py               the shared system prompt
+  tools.py                 the 3 tools + schemas both backends share
+  config.py                env keys, provider pick, dry-run switch
   connectors/
     notion.py              real Notion REST, dry-run fallback
     linear.py              real Linear GraphQL, dry-run fallback

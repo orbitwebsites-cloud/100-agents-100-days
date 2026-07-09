@@ -23,8 +23,12 @@ def selftest() -> int:
     from meeting_ops.connectors import gmail, linear, notion
 
     print("Self-test — connector plumbing (dry-run)\n")
-    print(f"  model            : {config.MODEL}")
-    print(f"  anthropic key    : {'set' if config.ANTHROPIC_API_KEY else 'MISSING'}")
+    prov = config.provider()
+    model = config.CEREBRAS_MODEL if prov == "cerebras" else config.MODEL
+    print(f"  provider         : {prov or 'NONE (set a key)'}")
+    print(f"  model            : {model}")
+    print(f"  anthropic key    : {'set' if config.ANTHROPIC_API_KEY else '-'}")
+    print(f"  cerebras key     : {'set' if config.CEREBRAS_API_KEY else '-'}")
     print(f"  notion live?     : {config.notion_live()}")
     print(f"  linear live?     : {config.linear_live()}\n")
 
@@ -48,18 +52,29 @@ def main() -> int:
         print(f"Transcript not found: {args.transcript}", file=sys.stderr)
         return 1
 
-    from meeting_ops import agent, config
+    from meeting_ops import config
 
-    if not config.ANTHROPIC_API_KEY:
-        print("ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key,")
-        print("or run `python run.py --selftest` to check the plumbing without it.", file=sys.stderr)
+    prov = config.provider()
+    if prov is None:
+        print("No model key set. Copy .env.example to .env and add ONE of:")
+        print("  • CEREBRAS_API_KEY   (free tier — Llama/Qwen)")
+        print("  • ANTHROPIC_API_KEY  (claude-opus-4-8)")
+        print("Or run `python run.py --selftest` to check the plumbing without a key.", file=sys.stderr)
         return 1
 
-    transcript = args.transcript.read_text()
+    if prov == "cerebras":
+        from meeting_ops import cerebras_agent as backend
+        model = config.CEREBRAS_MODEL
+    else:
+        from meeting_ops import agent as backend
+        model = config.MODEL
+
+    transcript = args.transcript.read_text(encoding="utf-8")
     banner = "live" if (config.notion_live() or config.linear_live()) else "dry-run"
-    print(f"▶ Meeting Ops on {args.transcript.name}  (integrations: {banner})")
+    print(f"▶ Meeting Ops on {args.transcript.name}")
+    print(f"  brain: {prov} ({model})   integrations: {banner}")
     print("─" * 60)
-    agent.run(transcript)
+    backend.run(transcript)
     print("─" * 60)
     print("Done. Notes filed, tasks created, follow-up drafted.")
     return 0
