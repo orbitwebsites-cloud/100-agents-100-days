@@ -9,7 +9,6 @@ expiry_date, amount, status) — a JSON-mode call, not agentic tool use.
 
 import json
 import logging
-import re
 from datetime import date
 
 import anthropic
@@ -39,15 +38,15 @@ Respond with a single JSON object using exactly those six keys."""
 KNOWN_CATEGORIES = {"order", "delivery", "travel-doc", "bill", "other"}
 MAX_FIELD_LEN = 500
 
-_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
-
 
 def _strip_json_fence(text: str) -> str:
     """Strip a ```json ... ``` (or bare ```) fence around a model reply, if present."""
     text = text.strip()
     if text.startswith("```"):
-        text = _FENCE_RE.sub("", text).strip()
-    return text
+        _, _, text = text.partition("\n")  # drop the ``` / ```json opener line
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    return text.strip()
 
 
 def _clean_str(value, max_len: int = MAX_FIELD_LEN):

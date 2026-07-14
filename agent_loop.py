@@ -31,6 +31,17 @@ def run_anthropic(
     return "\n\n".join(replies)
 
 
+def _run_tool_calls(msg, dispatch, messages: list[dict]) -> None:
+    """Execute each tool call on msg and append the tool results to messages."""
+    for tc in msg.tool_calls:
+        try:
+            args = json.loads(tc.function.arguments or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        result = dispatch(tc.function.name, args)
+        messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+
 def run_openai_compatible(
     client,
     model: str,
@@ -76,13 +87,7 @@ def run_openai_compatible(
                 print(f"\n🤖 {reply}\n")
             return reply
 
-        for tc in msg.tool_calls:
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            result = dispatch(tc.function.name, args)
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+        _run_tool_calls(msg, dispatch, messages)
 
     warning = "Reached the turn limit before the agent finished."
     print(f"\n⚠️  {warning}\n")

@@ -80,7 +80,7 @@
   </header>
   <div id="log"></div>
   <form class="composer" id="form">
-    <input type="text" id="input" placeholder="Ask about an order, a bill, a delivery…" autocomplete="off" autofocus>
+    <input type="text" id="input" aria-label="Ask a question about your email" placeholder="Ask about an order, a bill, a delivery…" autocomplete="off" autofocus>
     <button type="submit">Send</button>
   </form>
 
@@ -165,6 +165,7 @@ async function sendQuestion(q) {
     try {
       data = await res.json();
     } catch (parseErr) {
+      console.error('Response was not JSON:', parseErr);
       data = null;
     }
 
@@ -179,9 +180,9 @@ async function sendQuestion(q) {
 
     pending.textContent = answer;
     pending.classList.remove('pending');
-    history.push({ role: 'user', content: q });
-    history.push({ role: 'assistant', content: answer });
+    history.push({ role: 'user', content: q }, { role: 'assistant', content: answer });
   } catch (err) {
+    console.error('Request to /api/ask failed:', err);
     pending.textContent = "Couldn't reach the assistant. Check your connection and try again.";
     pending.classList.remove('pending');
   } finally {
@@ -199,7 +200,7 @@ form.addEventListener('submit', (e) => {
   // Fire-and-forget: sendQuestion handles all errors internally
   // (try/catch/finally); the .catch is a belt-and-braces guard so the
   // promise can never float or reject unhandled.
-  sendQuestion(q).catch(() => {});
+  sendQuestion(q).catch((err) => console.error('sendQuestion failed unexpectedly:', err));
 });
 </script>
 </body>
