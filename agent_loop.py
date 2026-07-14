@@ -9,14 +9,18 @@ this module just runs the loop.
 import json
 
 
-def run_anthropic(client, model: str, system: str, tools: list, user_content: str, max_tokens: int = 4096) -> str:
+def run_anthropic(
+    client, model: str, system: str, tools: list, user_content: str, max_tokens: int = 4096,
+    history: list[dict] | None = None,
+) -> str:
     """Run an Anthropic Tool Runner loop, printing and returning the reply text."""
+    messages = (history or []) + [{"role": "user", "content": user_content}]
     runner = client.beta.messages.tool_runner(
         model=model,
         max_tokens=max_tokens,
         system=system,
         tools=tools,
-        messages=[{"role": "user", "content": user_content}],
+        messages=messages,
     )
     replies = []
     for message in runner:
@@ -36,10 +40,12 @@ def run_openai_compatible(
     user_content: str,
     max_tokens: int = 4096,
     max_turns: int = 8,
+    history: list[dict] | None = None,
 ) -> str:
     """Run a manual tool loop over an OpenAI-compatible chat-completions API."""
     messages: list[dict] = [
         {"role": "system", "content": system},
+        *(history or []),
         {"role": "user", "content": user_content},
     ]
 

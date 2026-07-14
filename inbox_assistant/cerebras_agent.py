@@ -13,10 +13,10 @@ from .prompts import SYSTEM_PROMPT
 from .tools import OPENAI_TOOLS, dispatch
 
 
-def ask(question: str) -> str:
+def ask(question: str, history: list[dict] | None = None) -> str:
     """Ask the Inbox Assistant a question using the Cerebras backend. Prints and returns the answer."""
     client = OpenAI(api_key=config.CEREBRAS_API_KEY, base_url=config.CEREBRAS_BASE_URL)
     return run_openai_compatible(
         client, config.CEREBRAS_MODEL, SYSTEM_PROMPT, OPENAI_TOOLS, dispatch, question,
-        max_tokens=2048, max_turns=6,
+        max_tokens=2048, max_turns=6, history=history,
     )

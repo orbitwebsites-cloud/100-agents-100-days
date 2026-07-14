@@ -132,12 +132,16 @@ def main() -> int:
         return 0
 
     print("Interactive mode — ask a question, or Ctrl+C to quit.")
+    history: list[dict] = []
     try:
         while True:
             question = input("\nyou> ").strip()
             if not question:
                 continue
-            chat(backend, question)
+            answer = backend.ask(question, history=history)
+            history.append({"role": "user", "content": question})
+            history.append({"role": "assistant", "content": answer})
+            history[:] = history[-20:]
     except (KeyboardInterrupt, EOFError):
         print("\nbye")
     return 0
