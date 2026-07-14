@@ -196,9 +196,10 @@ form.addEventListener('submit', (e) => {
   const q = input.value.trim();
   if (!q) return;
   input.value = '';
-  // sendQuestion handles all errors internally (try/catch/finally),
-  // so this fire-and-forget call can never produce an unhandled rejection.
-  void sendQuestion(q);
+  // Fire-and-forget: sendQuestion handles all errors internally
+  // (try/catch/finally); the .catch is a belt-and-braces guard so the
+  // promise can never float or reject unhandled.
+  sendQuestion(q).catch(() => {});
 });
 </script>
 </body>
