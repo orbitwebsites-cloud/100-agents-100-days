@@ -1,0 +1,44 @@
+[
+  {
+    "message_id": "amz-001",
+    "from": "ship-confirm@amazon.com",
+    "subject": "Your Amazon.com order has shipped",
+    "received_at": "2026-07-12T14:03:00",
+    "body": "Your package with USB-C Hub, Wireless Mouse is on the way. Order #112-4589621-7743108. Carrier: UPS, tracking 1Z999AA10123456784. Estimated delivery: July 15. Total charged: $47.98."
+  },
+  {
+    "message_id": "amz-002",
+    "from": "auto-confirm@amazon.com",
+    "subject": "Your Amazon.com order has been placed",
+    "received_at": "2026-07-13T09:21:00",
+    "body": "Thanks for your order! Order #112-9981234-5567123: Standing Desk Mat. Total: $32.50. Arriving July 18."
+  },
+  {
+    "message_id": "gov-001",
+    "from": "no-reply@passportoffice.gov",
+    "subject": "Passport renewal reminder",
+    "received_at": "2026-06-01T08:00:00",
+    "body": "This is a reminder that your passport (ending in 4821) is due to expire on 2026-11-03. Renew online to avoid delays."
+  },
+  {
+    "message_id": "ups-001",
+    "from": "mcinfo@ups.com",
+    "subject": "UPS: Your package is out for delivery",
+    "received_at": "2026-07-14T07:15:00",
+    "body": "Tracking 1Z999AA10123456784 is out for delivery today, expected by 8pm. Ship to: Home."
+  },
+  {
+    "message_id": "bill-001",
+    "from": "billing@citypower.com",
+    "subject": "Your July electricity bill is ready",
+    "received_at": "2026-07-10T11:00:00",
+    "body": "Your City Power bill for account ending 5521 is $84.32, due July 28. Autopay is not enabled."
+  },
+  {
+    "message_id": "promo-001",
+    "from": "deals@retailer.com",
+    "subject": "50% off everything this weekend only!!",
+    "received_at": "2026-07-11T16:45:00",
+    "body": "Huge weekend sale, don't miss out, shop now for massive discounts on everything in store."
+  }
+]

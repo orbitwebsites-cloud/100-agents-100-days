@@ -70,5 +70,64 @@ meeting_ops/
 samples/standup_transcript.txt
 ```
 
+## Agent #2 — Inbox Assistant
+
+A chat-based assistant that reads your email and answers plain-language
+questions — "what did I order from Amazon?", "when does my passport
+expire?", "what's my delivery status?" — and archives clutter when you ask
+it to. Built for non-technical people: no dashboards, no config files.
+
+It's a real agent loop: given a question, the model decides whether to
+search, look up an order, or archive an email, calls the tool, reads the
+result, and either answers or calls another tool — same Tool Runner pattern
+as Meeting Ops, on either brain (Cerebras or Anthropic).
+
+### Run it in 30 seconds
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env                 # add CEREBRAS_API_KEY (free) or ANTHROPIC_API_KEY
+python run_inbox.py --ingest          # extracts structured fields from the sample inbox
+python run_inbox.py --ask "what's out for delivery?"
+```
+
+```bash
+python run_inbox.py --web             # a little chat window at http://127.0.0.1:5050
+python run_inbox.py --selftest        # check the plumbing, no API key needed
+python run_inbox.py                   # interactive terminal chat
+```
+
+Without `GMAIL_TOKEN` set, the assistant reads and "archives" against a
+bundled sample inbox (`samples/sample_inbox.json`) — the whole agent works
+end-to-end before you connect a real Gmail account. Archiving is always
+reversible; there's no hard delete in this build.
+
+### How it's built
+
+```
+run_inbox.py                CLI entry point (--ingest / --web / --ask / --selftest)
+inbox_assistant/
+  agent.py                  Anthropic Tool Runner loop
+  cerebras_agent.py         Cerebras / OpenAI-compatible loop (same tools)
+  web.py                    tiny Flask chat window (same agent, browser instead of terminal)
+  templates/chat.html       the chat window's UI
+  ingest.py                 pulls raw email, extracts fields via Claude, stores them
+  prompts.py                the shared system prompt
+  tools.py                  search_emails / get_order_status / archive_email
+  store.py                  local SQLite store (stand-in for Supabase + pgvector)
+  config.py                 env keys, provider pick, dry-run switch
+  connectors/
+    gmail.py                real Gmail read/archive, dry-run against the sample inbox
+samples/sample_inbox.json
+```
+
+`store.py` mirrors the `emails` table from the MVP plan (category, entity,
+order_id, tracking_number, expiry_date, amount, status) with keyword search
+standing in for pgvector — swapping in Supabase is a connector change, not a
+rewrite of the agent or its tools. Gmail OAuth and the Telegram bot wiring
+are the next episodes.
+
+---
+
 The build plan for all 24 agents lives in the 6-week launch spreadsheet. Meeting
 Ops is Sprint 1, Day 1 — the flagship.
