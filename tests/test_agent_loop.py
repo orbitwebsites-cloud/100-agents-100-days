@@ -73,6 +73,7 @@ def test_no_tool_call_returns_text_reply():
         user_content="hi",
     )
     assert result == "Hello there"
+    assert len(client.chat.completions.calls) == 1
     assert client.chat.completions.calls[0]["model"] == "model"
 
 
@@ -95,10 +96,12 @@ def test_tool_call_round_dispatches_then_returns_final_text():
     assert result == "Found your order."
     assert dispatched == [("search_emails", {"query": "amazon"})]
     # Second API call's messages should include the tool result appended.
+    assert len(client.chat.completions.calls) == 2
     second_call_messages = client.chat.completions.calls[1]["messages"]
     tool_messages = [m for m in second_call_messages if m.get("role") == "tool"]
-    assert tool_messages[0]["content"] == "tool result text"
-    assert tool_messages[0]["tool_call_id"] == "call-1"
+    assert tool_messages == [
+        {"role": "tool", "tool_call_id": "call-1", "content": "tool result text"}
+    ]
 
 
 def test_json_decode_error_arguments_become_empty_dict():
@@ -141,6 +144,7 @@ def test_history_is_prepended_before_user_content():
         client, "model", "system", [], dispatch=lambda name, args: "unused",
         user_content="new question", history=history,
     )
+    assert len(client.chat.completions.calls) == 1
     messages = client.chat.completions.calls[0]["messages"]
     contents = [m.get("content") for m in messages]
     assert "earlier question" in contents
@@ -216,5 +220,6 @@ def test_run_anthropic_passes_history_and_user_content_through():
     client = FakeAnthropicClient(messages)
     history = [{"role": "user", "content": "earlier"}]
     run_anthropic(client, "model", "system", tools=[], user_content="new", history=history)
-    kwargs = client.beta.messages.tool_runner._calls[0]
-    assert kwargs["messages"] == [{"role": "user", "content": "earlier"}, {"role": "user", "content": "new"}]
+    calls = client.beta.messages.tool_runner._calls
+    assert len(calls) == 1
+    assert calls[0]["messages"] == [{"role": "user", "content": "earlier"}, {"role": "user", "content": "new"}]

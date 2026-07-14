@@ -60,6 +60,7 @@ def test_extract_fields_plain_json():
     assert fields["tracking_number"] == "1Z999AA10123456784"
     assert fields["amount"] == pytest.approx(47.98)
     assert fields["status"] == "shipped"
+    assert len(client.messages.calls) == 1
     assert client.messages.calls[0]["model"] == config.MODEL
 
 
