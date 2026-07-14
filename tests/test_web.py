@@ -69,7 +69,9 @@ def test_ask_happy_path_returns_backend_answer(client, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.get_json()["answer"] == "Your package is out for delivery."
-    assert fake.calls[0][0] == "where is my package?"
+    # No history in the request -> web calls backend.ask(question) alone,
+    # so FakeBackend records history as its default None.
+    assert fake.calls == [("where is my package?", None)]
 
 
 def test_ask_passes_history_to_backend(client, monkeypatch):
@@ -80,8 +82,7 @@ def test_ask_passes_history_to_backend(client, monkeypatch):
     resp = client.post("/api/ask", json={"question": "follow up", "history": history})
 
     assert resp.status_code == 200
-    _, passed_history = fake.calls[0]
-    assert passed_history == history
+    assert fake.calls == [("follow up", history)]
 
 
 def test_ask_backend_exception_returns_500(client, monkeypatch):

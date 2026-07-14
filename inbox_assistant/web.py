@@ -16,7 +16,7 @@ from . import config
 
 app = Flask(__name__)
 # Random per-startup key is fine for this single-process local demo.
-app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
+app.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
 csrf = CSRFProtect(app)
 
 log = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ def api_ask():
 
     history = _clean_history(payload.get("history"))
 
-    backend, _, prov = _backend()
+    backend, _, _ = _backend()
     if backend is None:
         return jsonify(
             answer="No model key set. Add CEREBRAS_API_KEY or ANTHROPIC_API_KEY to .env and restart."

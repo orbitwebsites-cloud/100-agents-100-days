@@ -9,6 +9,8 @@ monkeypatch the anthropic module for the extract_fields tests.
 
 import json
 
+import pytest
+
 from inbox_assistant import config, ingest, store
 
 
@@ -56,7 +58,7 @@ def test_extract_fields_plain_json():
     assert fields["entity"] == "Amazon"
     assert fields["order_id"] == "112-4589621-7743108"
     assert fields["tracking_number"] == "1Z999AA10123456784"
-    assert fields["amount"] == 47.98
+    assert fields["amount"] == pytest.approx(47.98)
     assert fields["status"] == "shipped"
     assert client.messages.calls[0]["model"] == config.MODEL
 
@@ -77,7 +79,7 @@ def test_extract_fields_strips_json_code_fence():
     fields = ingest.extract_fields(client, "billing@citypower.com", "Your bill is ready", "body text")
 
     assert fields["category"] == "bill"
-    assert fields["amount"] == 84.32
+    assert fields["amount"] == pytest.approx(84.32)
 
 
 def test_extract_fields_invalid_json_falls_back_to_other():
@@ -120,7 +122,9 @@ def test_extract_fields_non_numeric_amount_becomes_none():
 def test_run_ingests_sample_inbox_dry_run(monkeypatch, patched_db_path):
     """End to end: gmail dry-run (GMAIL_TOKEN unset) -> extract_fields (faked) -> store."""
     monkeypatch.delenv("GMAIL_TOKEN", raising=False)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "dummy")
+    # run() constructs an Anthropic client up front; stub the constructor so
+    # no key is needed and nothing could ever reach the network.
+    monkeypatch.setattr(ingest.anthropic, "Anthropic", lambda *a, **k: object())
 
     def fake_extract_fields(client, sender, subject, body):
         return {
@@ -148,6 +152,7 @@ def test_run_ingests_sample_inbox_dry_run(monkeypatch, patched_db_path):
 
 def test_run_respects_limit(monkeypatch, patched_db_path):
     monkeypatch.delenv("GMAIL_TOKEN", raising=False)
+    monkeypatch.setattr(ingest.anthropic, "Anthropic", lambda *a, **k: object())
     monkeypatch.setattr(
         ingest, "extract_fields",
         lambda client, sender, subject, body: {
@@ -161,6 +166,7 @@ def test_run_respects_limit(monkeypatch, patched_db_path):
 
 def test_run_skips_already_ingested_messages(monkeypatch, patched_db_path):
     monkeypatch.delenv("GMAIL_TOKEN", raising=False)
+    monkeypatch.setattr(ingest.anthropic, "Anthropic", lambda *a, **k: object())
     calls = []
 
     def fake_extract_fields(client, sender, subject, body):
