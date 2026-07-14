@@ -6,12 +6,18 @@ calling search_emails / get_order_status / archive_email.
 """
 
 import logging
+import os
+import secrets
 
 from flask import Flask, jsonify, render_template, request
+from flask_wtf.csrf import CSRFProtect
 
 from . import config
 
 app = Flask(__name__)
+# Random per-startup key is fine for this single-process local demo.
+app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
+csrf = CSRFProtect(app)
 
 log = logging.getLogger(__name__)
 
@@ -83,13 +89,7 @@ def api_ask():
         ), 200
 
     try:
-        if history:
-            try:
-                answer = backend.ask(question, history=history)
-            except TypeError:
-                answer = backend.ask(question)
-        else:
-            answer = backend.ask(question)
+        answer = backend.ask(question, history=history or None)
     except Exception:
         log.exception("backend.ask failed")
         return jsonify(answer="Something went wrong answering that question."), 500

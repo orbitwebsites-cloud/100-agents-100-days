@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <title>Inbox Assistant</title>
 <style>
   :root { color-scheme: light dark; }
@@ -90,6 +91,9 @@ const input = document.getElementById('input');
 const clearBtn = document.getElementById('clear-btn');
 const sendBtn = form.querySelector('button');
 
+const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+const CSRF_TOKEN = csrfMeta ? csrfMeta.content : '';
+
 const HISTORY_LIMIT = 20;
 let history = [];
 
@@ -141,11 +145,7 @@ clearBtn.addEventListener('click', () => {
   input.focus();
 });
 
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const q = input.value.trim();
-  if (!q) return;
-  input.value = '';
+async function sendQuestion(q) {
   addBubble(q, 'user');
   const pending = addBubble('', 'bot', true);
 
@@ -156,7 +156,8 @@ form.addEventListener('submit', async (e) => {
 
   try {
     const res = await fetch('/api/ask', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
       body: JSON.stringify(payload)
     });
 
@@ -188,6 +189,16 @@ form.addEventListener('submit', async (e) => {
     input.disabled = false;
     input.focus();
   }
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  // sendQuestion handles all errors internally (try/catch/finally),
+  // so this fire-and-forget call can never produce an unhandled rejection.
+  void sendQuestion(q);
 });
 </script>
 </body>
