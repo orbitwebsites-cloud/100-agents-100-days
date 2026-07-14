@@ -92,8 +92,9 @@ python run_inbox.py --ask "what's out for delivery?"
 ```
 
 ```bash
+python run_inbox.py --web             # a little chat window at http://127.0.0.1:5050
 python run_inbox.py --selftest        # check the plumbing, no API key needed
-python run_inbox.py                   # interactive chat
+python run_inbox.py                   # interactive terminal chat
 ```
 
 Without `GMAIL_TOKEN` set, the assistant reads and "archives" against a
@@ -104,10 +105,12 @@ reversible; there's no hard delete in this build.
 ### How it's built
 
 ```
-run_inbox.py                CLI entry point (--ingest / --ask / --selftest)
+run_inbox.py                CLI entry point (--ingest / --web / --ask / --selftest)
 inbox_assistant/
   agent.py                  Anthropic Tool Runner loop
   cerebras_agent.py         Cerebras / OpenAI-compatible loop (same tools)
+  web.py                    tiny Flask chat window (same agent, browser instead of terminal)
+  templates/chat.html       the chat window's UI
   ingest.py                 pulls raw email, extracts fields via Claude, stores them
   prompts.py                the shared system prompt
   tools.py                  search_emails / get_order_status / archive_email

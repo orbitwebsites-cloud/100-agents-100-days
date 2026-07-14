@@ -2,8 +2,9 @@
 """Run the Inbox Assistant — ingest the sample inbox, then ask it questions.
 
     python run_inbox.py --ingest                         # load the sample inbox
+    python run_inbox.py --web                             # chat window in your browser
     python run_inbox.py --ask "what did I order from Amazon?"
-    python run_inbox.py                                   # interactive chat
+    python run_inbox.py                                   # interactive terminal chat
     python run_inbox.py --selftest                        # no API key needed
 
 With only ANTHROPIC_API_KEY set, Gmail stays in dry-run mode and the agent
@@ -71,10 +72,27 @@ def chat(backend, question: str) -> None:
     backend.ask(question)
 
 
+def web(port: int) -> int:
+    from inbox_assistant import config, web as web_mod
+
+    if config.provider() is None:
+        print("No model key set. Copy .env.example to .env and add ONE of:")
+        print("  • CEREBRAS_API_KEY   (free tier — Llama/Qwen)")
+        print("  • ANTHROPIC_API_KEY  (claude-opus-4-8)")
+        return 1
+
+    print(f"▶ Inbox Assistant chat window: http://127.0.0.1:{port}")
+    print("  Ctrl+C to stop.")
+    web_mod.run(port=port)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Inbox Assistant — ask your email questions.")
     parser.add_argument("--ask", type=str, default=None, help="Ask a single question and exit")
     parser.add_argument("--ingest", action="store_true", help="Pull + extract + store the sample inbox")
+    parser.add_argument("--web", action="store_true", help="Open a chat window in your browser")
+    parser.add_argument("--port", type=int, default=5050, help="Port for --web (default 5050)")
     parser.add_argument("--selftest", action="store_true", help="Check plumbing without the API")
     args = parser.parse_args()
 
@@ -83,6 +101,9 @@ def main() -> int:
 
     if args.ingest:
         return ingest()
+
+    if args.web:
+        return web(args.port)
 
     from inbox_assistant import config
 

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inbox Assistant</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f4f4f7; color: #1a1a1a; height: 100vh; display: flex; flex-direction: column;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #16161a; color: #e8e8ec; }
+    .bubble.bot { background: #26262e !important; color: #e8e8ec !important; }
+    .composer { background: #1e1e24 !important; border-top-color: #33333c !important; }
+    input[type=text] { background: #26262e !important; color: #e8e8ec !important; border-color: #3a3a44 !important; }
+  }
+  header {
+    padding: 14px 18px; border-bottom: 1px solid rgba(0,0,0,.08);
+    display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  }
+  header .dot { width: 9px; height: 9px; border-radius: 50%; background: #34c759; }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; }
+  header .sub { font-size: 12px; opacity: .6; margin-left: auto; }
+  #log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .bubble {
+    max-width: 72%; padding: 10px 14px; border-radius: 16px; font-size: 14px; line-height: 1.45;
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .bubble.user { align-self: flex-end; background: #2563eb; color: #fff; border-bottom-right-radius: 4px; }
+  .bubble.bot { align-self: flex-start; background: #fff; border: 1px solid rgba(0,0,0,.08); border-bottom-left-radius: 4px; }
+  .bubble.bot.pending { opacity: .55; }
+  .composer {
+    display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(0,0,0,.08);
+    background: #fff; flex-shrink: 0;
+  }
+  input[type=text] {
+    flex: 1; padding: 11px 14px; border-radius: 12px; border: 1px solid rgba(0,0,0,.15);
+    font-size: 14px; outline: none;
+  }
+  button {
+    padding: 0 18px; border-radius: 12px; border: none; background: #2563eb; color: #fff;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="dot"></span>
+    <h1>Inbox Assistant</h1>
+    <span class="sub" id="status">{{ brain }} · {{ mode }}</span>
+  </header>
+  <div id="log"></div>
+  <form class="composer" id="form">
+    <input type="text" id="input" placeholder="Ask about an order, a bill, a delivery…" autocomplete="off" autofocus>
+    <button type="submit">Send</button>
+  </form>
+
+<script>
+const log = document.getElementById('log');
+const form = document.getElementById('form');
+const input = document.getElementById('input');
+
+function addBubble(text, who, pending) {
+  const el = document.createElement('div');
+  el.className = 'bubble ' + who + (pending ? ' pending' : '');
+  el.textContent = text;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
+addBubble("Ask me things like \"what did I order from Amazon?\" or \"when does my passport expire?\"", 'bot');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  addBubble(q, 'user');
+  const pending = addBubble('…', 'bot', true);
+  form.querySelector('button').disabled = true;
+  try {
+    const res = await fetch('/api/ask', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: q})
+    });
+    const data = await res.json();
+    pending.textContent = data.answer || '(no answer)';
+    pending.classList.remove('pending');
+  } catch (err) {
+    pending.textContent = 'Error reaching the assistant.';
+    pending.classList.remove('pending');
+  }
+  form.querySelector('button').disabled = false;
+  input.focus();
+});
+</script>
+</body>
+</html>

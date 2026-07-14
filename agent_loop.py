@@ -9,8 +9,8 @@ this module just runs the loop.
 import json
 
 
-def run_anthropic(client, model: str, system: str, tools: list, user_content: str, max_tokens: int = 4096) -> None:
-    """Run an Anthropic Tool Runner loop, printing each text block as it comes."""
+def run_anthropic(client, model: str, system: str, tools: list, user_content: str, max_tokens: int = 4096) -> str:
+    """Run an Anthropic Tool Runner loop, printing and returning the reply text."""
     runner = client.beta.messages.tool_runner(
         model=model,
         max_tokens=max_tokens,
@@ -18,10 +18,13 @@ def run_anthropic(client, model: str, system: str, tools: list, user_content: st
         tools=tools,
         messages=[{"role": "user", "content": user_content}],
     )
+    replies = []
     for message in runner:
         for block in message.content:
             if block.type == "text" and block.text.strip():
                 print(f"\n🤖 {block.text.strip()}\n")
+                replies.append(block.text.strip())
+    return "\n\n".join(replies)
 
 
 def run_openai_compatible(
@@ -33,7 +36,7 @@ def run_openai_compatible(
     user_content: str,
     max_tokens: int = 4096,
     max_turns: int = 8,
-) -> None:
+) -> str:
     """Run a manual tool loop over an OpenAI-compatible chat-completions API."""
     messages: list[dict] = [
         {"role": "system", "content": system},
@@ -62,9 +65,10 @@ def run_openai_compatible(
         )
 
         if not msg.tool_calls:
-            if msg.content and msg.content.strip():
-                print(f"\n🤖 {msg.content.strip()}\n")
-            return
+            reply = (msg.content or "").strip()
+            if reply:
+                print(f"\n🤖 {reply}\n")
+            return reply
 
         for tc in msg.tool_calls:
             try:
@@ -74,4 +78,6 @@ def run_openai_compatible(
             result = dispatch(tc.function.name, args)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
-    print("\n⚠️  Reached the turn limit before the agent finished.\n")
+    warning = "Reached the turn limit before the agent finished."
+    print(f"\n⚠️  {warning}\n")
+    return warning

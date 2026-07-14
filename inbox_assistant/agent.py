@@ -14,7 +14,7 @@ from .prompts import SYSTEM_PROMPT
 from .tools import ALL_TOOLS
 
 
-def ask(question: str) -> None:
-    """Ask the Inbox Assistant a question, printing its answer (and tool use)."""
+def ask(question: str) -> str:
+    """Ask the Inbox Assistant a question. Prints and returns its answer."""
     client = anthropic.Anthropic()
-    run_anthropic(client, config.MODEL, SYSTEM_PROMPT, ALL_TOOLS, question, max_tokens=2048)
+    return run_anthropic(client, config.MODEL, SYSTEM_PROMPT, ALL_TOOLS, question, max_tokens=2048)
