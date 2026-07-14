@@ -63,9 +63,17 @@ def upsert_email(record: dict, db_path: Path | None = None) -> None:
         )
 
 
+def has_message(message_id: str, db_path: Path | None = None) -> bool:
+    """True if message_id is already in the store (used to skip re-ingesting)."""
+    with _connect(db_path) as conn:
+        row = conn.execute("SELECT 1 FROM emails WHERE message_id = ?", (message_id,)).fetchone()
+    return row is not None
+
+
 def search(query: str = "", category: str = "", include_archived: bool = False,
            limit: int = 10, db_path: Path | None = None) -> list[dict]:
     """Keyword search over subject/body/entity, newest first."""
+    limit = max(1, min(int(limit), 100))
     clauses, params = [], {}
     if query:
         clauses.append("(subject LIKE :q OR body LIKE :q OR entity LIKE :q)")
