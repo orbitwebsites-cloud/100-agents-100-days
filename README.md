@@ -82,6 +82,14 @@ search, look up an order, or archive an email, calls the tool, reads the
 result, and either answers or calls another tool — same Tool Runner pattern
 as Meeting Ops, on either brain (Cerebras or Anthropic).
 
+Two things push this past "search box with a chat UI": it runs against a
+**real Gmail inbox** over OAuth (not just the bundled sample), and it can
+**message you first** — a proactive digest that flags an expiring passport,
+a bill due, or a package out for delivery over **Telegram**, without you
+ever asking. That's a real trigger (a Telegram message, or a timer) and a
+real unprompted action — the bar the top of this README sets for what
+counts as an agent.
+
 ### Run it in 30 seconds
 
 ```bash
@@ -97,19 +105,39 @@ python run_inbox.py --selftest        # check the plumbing, no API key needed
 python run_inbox.py                   # interactive terminal chat
 ```
 
-Without `GMAIL_TOKEN` set, the assistant reads and "archives" against a
-bundled sample inbox (`samples/sample_inbox.json`) — the whole agent works
+Without a Gmail token, the assistant reads and "archives" against a bundled
+sample inbox (`samples/sample_inbox.json`) — the whole agent works
 end-to-end before you connect a real Gmail account. Archiving is always
 reversible; there's no hard delete in this build.
+
+### Go live
+
+```bash
+python run_inbox.py --gmail-auth      # one-time OAuth flow against a real Gmail inbox
+python run_inbox.py --telegram        # chat with the agent over Telegram instead of the terminal
+python run_inbox.py --digest          # check the inbox once, push a proactive alert if anything's due
+python run_inbox.py --watch           # ingest + digest on a timer, forever — the "fires on its own" mode
+```
+
+| Connector | Keys | What it does |
+|-----------|------|---------------|
+| Gmail | `GMAIL_CREDENTIALS_FILE` (OAuth Desktop client JSON) | `--gmail-auth` saves a refreshable token; after that, real reads/archives replace the sample inbox |
+| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Real trigger — message the bot for answers; `--watch` pushes proactive alerts to the same chat |
+
+Leave either blank and that piece stays in dry-run, same as every other
+connector in this repo: it prints exactly what it would do.
 
 ### How it's built
 
 ```
-run_inbox.py                CLI entry point (--ingest / --web / --ask / --selftest)
+run_inbox.py                CLI entry point (--ingest / --web / --ask / --selftest /
+                             --gmail-auth / --telegram / --digest / --watch)
 inbox_assistant/
   agent.py                  Anthropic Tool Runner loop
   cerebras_agent.py         Cerebras / OpenAI-compatible loop (same tools)
   web.py                    tiny Flask chat window (same agent, browser instead of terminal)
+  telegram_bot.py           long-poll loop — the real trigger, same agent, replies in Telegram
+  digest.py                 proactive scan (expiring docs / bills due / out-for-delivery) → Telegram
   templates/chat.html       the chat window's UI
   ingest.py                 pulls raw email, extracts fields via Claude, stores them
   prompts.py                the shared system prompt
@@ -117,15 +145,16 @@ inbox_assistant/
   store.py                  local SQLite store (stand-in for Supabase + pgvector)
   config.py                 env keys, provider pick, dry-run switch
   connectors/
-    gmail.py                real Gmail read/archive, dry-run against the sample inbox
+    gmail.py                real Gmail OAuth read/archive, dry-run against the sample inbox
+    telegram.py              real Telegram send/poll, dry-run (prints) without a bot token
 samples/sample_inbox.json
 ```
 
 `store.py` mirrors the `emails` table from the MVP plan (category, entity,
-order_id, tracking_number, expiry_date, amount, status) with keyword search
-standing in for pgvector — swapping in Supabase is a connector change, not a
-rewrite of the agent or its tools. Gmail OAuth and the Telegram bot wiring
-are the next episodes.
+order_id, tracking_number, expiry_date, amount, status, plus an `alerted`
+flag so the digest never repeats itself) with keyword search standing in for
+pgvector — swapping in Supabase is a connector change, not a rewrite of the
+agent or its tools.
 
 ---
 

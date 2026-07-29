@@ -7,13 +7,19 @@
     python run_inbox.py                                   # interactive terminal chat
     python run_inbox.py --selftest                        # no API key needed
 
-With only ANTHROPIC_API_KEY set, Gmail stays in dry-run mode and the agent
-answers from the bundled sample inbox — so it's demoable before you connect a
-real Gmail account (a later episode; see inbox_assistant/connectors/gmail.py).
+    python run_inbox.py --gmail-auth                      # one-time Gmail OAuth (real inbox)
+    python run_inbox.py --telegram                        # chat over Telegram instead of the terminal
+    python run_inbox.py --digest                          # check the inbox once, push a proactive alert
+    python run_inbox.py --watch                           # ingest + digest on a timer, forever
+
+With only ANTHROPIC_API_KEY set, Gmail and Telegram stay in dry-run mode and
+the agent answers from the bundled sample inbox — so it's demoable before you
+connect a real Gmail account or Telegram bot.
 """
 
 import argparse
 import sys
+import time
 
 
 def selftest() -> int:
@@ -72,6 +78,59 @@ def chat(backend, question: str) -> None:
     backend.ask(question)
 
 
+def gmail_auth() -> int:
+    from inbox_assistant.connectors import gmail
+
+    try:
+        gmail.authorize()
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def telegram_bot() -> int:
+    from inbox_assistant import telegram_bot as bot_mod
+
+    bot_mod.run()
+    return 0
+
+
+def digest() -> int:
+    from inbox_assistant import config, digest as digest_mod
+
+    if config.provider() is None:
+        print("No model key set — --digest still runs without one, but --ingest needs it.")
+    message = digest_mod.run_digest_once()
+    if message:
+        print(message)
+    else:
+        print("Nothing new to flag right now.")
+    return 0
+
+
+def watch(interval_minutes: int) -> int:
+    from inbox_assistant import config, digest as digest_mod, ingest as ingest_mod
+
+    if config.provider() is None:
+        print("No model key set. Copy .env.example to .env and add ONE of:")
+        print("  • CEREBRAS_API_KEY   (free tier — Llama/Qwen)")
+        print("  • ANTHROPIC_API_KEY  (claude-opus-4-8)")
+        return 1
+
+    print(f"▶ Watching the inbox every {interval_minutes} min (ingest + proactive digest). Ctrl+C to stop.")
+    try:
+        while True:
+            ingest_mod.run()
+            message = digest_mod.run_digest_once()
+            if message:
+                print(f"📨 sent digest:\n{message}")
+            time.sleep(interval_minutes * 60)
+    except KeyboardInterrupt:
+        print("\nbye")
+    return 0
+
+
 def web(port: int) -> int:
     from inbox_assistant import config, web as web_mod
 
@@ -94,13 +153,34 @@ def main() -> int:
     parser.add_argument("--web", action="store_true", help="Open a chat window in your browser")
     parser.add_argument("--port", type=int, default=5050, help="Port for --web (default 5050)")
     parser.add_argument("--selftest", action="store_true", help="Check plumbing without the API")
+    parser.add_argument("--gmail-auth", action="store_true", help="One-time Gmail OAuth flow")
+    parser.add_argument("--telegram", action="store_true", help="Chat over Telegram instead of the terminal")
+    parser.add_argument("--digest", action="store_true", help="Check the inbox once, push a proactive alert")
+    parser.add_argument("--watch", action="store_true", help="Ingest + digest on a timer, forever")
+    parser.add_argument(
+        "--interval", type=int, default=None, help="Minutes between --watch cycles (default from .env or 30)"
+    )
     args = parser.parse_args()
 
     if args.selftest:
         return selftest()
 
+    if args.gmail_auth:
+        return gmail_auth()
+
     if args.ingest:
         return ingest()
+
+    if args.digest:
+        return digest()
+
+    if args.watch:
+        from inbox_assistant import config
+
+        return watch(args.interval or config.WATCH_INTERVAL_MINUTES)
+
+    if args.telegram:
+        return telegram_bot()
 
     if args.web:
         return web(args.port)

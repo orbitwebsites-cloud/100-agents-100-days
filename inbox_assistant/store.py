@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS emails (
     expiry_date     TEXT,
     amount          REAL,
     status          TEXT,
-    archived        INTEGER NOT NULL DEFAULT 0
+    archived        INTEGER NOT NULL DEFAULT 0,
+    alerted         INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -37,6 +38,10 @@ def _connect(db_path: Path | None = None):
     conn.row_factory = sqlite3.Row
     try:
         conn.execute(SCHEMA)
+        try:
+            conn.execute("ALTER TABLE emails ADD COLUMN alerted INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # already migrated
         yield conn
         conn.commit()
     finally:
@@ -102,3 +107,30 @@ def get_by_id(message_id: str, db_path: Path | None = None) -> dict | None:
     with _connect(db_path) as conn:
         row = conn.execute("SELECT * FROM emails WHERE message_id = ?", (message_id,)).fetchone()
     return dict(row) if row else None
+
+
+def mark_alerted(message_id: str, db_path: Path | None = None) -> None:
+    with _connect(db_path) as conn:
+        conn.execute("UPDATE emails SET alerted = 1 WHERE message_id = ?", (message_id,))
+
+
+def digest_candidates(cutoff_date: str, db_path: Path | None = None) -> list[dict]:
+    """Not-yet-alerted, not-archived rows worth a proactive nudge.
+
+    Covers: travel docs expiring on/before `cutoff_date` (an ISO date),
+    bills due, and packages out for delivery.
+    """
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM emails
+            WHERE archived = 0 AND alerted = 0 AND (
+                (category = 'travel-doc' AND expiry_date IS NOT NULL AND expiry_date <= :cutoff)
+                OR (category = 'bill' AND status = 'due')
+                OR (category = 'delivery' AND status = 'out for delivery')
+            )
+            ORDER BY received_at DESC
+            """,
+            {"cutoff": cutoff_date},
+        ).fetchall()
+    return [dict(r) for r in rows]

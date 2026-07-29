@@ -140,3 +140,34 @@ def test_search_limit_clamped_to_lower_bound(db_path):
     # limit=0 (or negative) should clamp up to at least 1, not return everything/nothing weird.
     hits = store.search(limit=0, db_path=db_path)
     assert len(hits) == 1
+
+
+def test_digest_candidates_matches_travel_doc_bill_and_delivery(db_path):
+    for rec in SAMPLE_RECORDS:
+        store.upsert_email(rec, db_path=db_path)
+    ids = {e["message_id"] for e in store.digest_candidates(cutoff_date="2026-12-31", db_path=db_path)}
+    assert ids == {"gov-001", "bill-001", "ups-001"}
+
+
+def test_digest_candidates_respects_cutoff_date(db_path):
+    for rec in SAMPLE_RECORDS:
+        store.upsert_email(rec, db_path=db_path)
+    # gov-001 expires 2026-11-03 — a cutoff before that excludes it.
+    ids = {e["message_id"] for e in store.digest_candidates(cutoff_date="2026-08-01", db_path=db_path)}
+    assert ids == {"bill-001", "ups-001"}
+
+
+def test_digest_candidates_excludes_already_alerted(db_path):
+    for rec in SAMPLE_RECORDS:
+        store.upsert_email(rec, db_path=db_path)
+    store.mark_alerted("bill-001", db_path=db_path)
+    ids = {e["message_id"] for e in store.digest_candidates(cutoff_date="2026-12-31", db_path=db_path)}
+    assert "bill-001" not in ids
+
+
+def test_digest_candidates_excludes_archived(db_path):
+    for rec in SAMPLE_RECORDS:
+        store.upsert_email(rec, db_path=db_path)
+    store.archive("ups-001", db_path=db_path)
+    ids = {e["message_id"] for e in store.digest_candidates(cutoff_date="2026-12-31", db_path=db_path)}
+    assert "ups-001" not in ids
