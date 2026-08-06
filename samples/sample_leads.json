@@ -1,0 +1,23 @@
+[
+  {
+    "id": "sample-1",
+    "name": "Dana Whitfield",
+    "email": "dana@example.com",
+    "company": "Whitfield Plumbing",
+    "website": "http://neverssl.com"
+  },
+  {
+    "id": "sample-2",
+    "name": "Marcus Reed",
+    "email": "marcus@example.com",
+    "company": "Reed & Co Joinery",
+    "website": "https://example.com"
+  },
+  {
+    "id": "sample-3",
+    "name": "Priya Nair",
+    "email": "priya@example.com",
+    "company": "Nair Dental Studio",
+    "website": "http://httpforever.com"
+  }
+]

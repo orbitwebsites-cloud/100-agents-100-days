@@ -70,5 +70,79 @@ meeting_ops/
 samples/standup_transcript.txt
 ```
 
+---
+
+## Agent #3 — Lead Scout
+
+A lead fills in your contact form. Before you've even read the email, Lead Scout
+has pulled up their website and **actually measured it**:
+
+1. **Audits the site for real** — load time, SSL, mobile, SEO, broken links,
+   dead contact forms. Real numbers off the wire, not guesses.
+2. **Writes it to the CRM** — findings on the contact, deal opened in the pipeline
+3. **Builds the leave-behind** — a branded one-pager you can send
+4. **Drafts the pitch** — an email quoting *their* numbers, ready in your drafts
+
+This is the one no chatbot can fake. Ask ChatGPT how fast a stranger's website
+loads and it will guess. Lead Scout goes and looks — that's the whole agent.
+
+### See it in 10 seconds (no API key)
+
+```bash
+pip install -r requirements.txt
+python scout.py --audit-only somebusiness.com
+```
+
+That runs the audit engine on its own — real fetch, real measurements, a
+0-100 score and a findings list. No model, no key, nothing to sign up for.
+
+### Run the whole agent
+
+```bash
+cp .env.example .env          # add CEREBRAS_API_KEY (free) or ANTHROPIC_API_KEY
+python scout.py --url somebusiness.com   # work one prospect now (the demo)
+python scout.py --watch                  # poll for new leads forever (the trigger)
+python scout.py --once                   # poll once and work anything new
+python scout.py --selftest               # check the plumbing, no key needed
+```
+
+Without a HubSpot token it polls the bundled sample leads and prints exactly what
+it *would* write to the CRM — so the full loop is demoable before you connect an
+account. `--reset` forgets which leads were worked, for a clean take on camera.
+
+### Go live
+
+| Connector | Keys | What it does |
+|-----------|------|--------------|
+| HubSpot | `HUBSPOT_ACCESS_TOKEN` | The trigger (new contacts) + writes the audit note & deal |
+| PageSpeed | `PAGESPEED_API_KEY` | Adds Google's real Lighthouse mobile score *(optional)* |
+| Gmail | *(dry-run for now)* | Drafts the pitch |
+
+### How it's built
+
+```
+scout.py                   CLI (--watch / --once / --url / --audit-only / --selftest)
+lead_scout/
+  audit.py                 the audit engine — real HTTP, real measurements
+  leads.py                 the trigger: polls HubSpot for new leads
+  state.py                 watermark, so a poll isn't a re-pitch
+  agent.py                 Anthropic Tool Runner loop (claude-opus-5)
+  cerebras_agent.py        Cerebras / OpenAI-compatible loop (same tools)
+  prompts.py               the shared system prompt
+  tools.py                 the 5 tools both backends share
+  config.py                env keys, provider pick, dry-run switch
+  connectors/
+    hubspot.py             real HubSpot REST (note + deal), dry-run fallback
+    onepager.py            writes a real branded HTML audit to out/
+    gmail.py               drafts the pitch (OAuth: a later episode)
+samples/sample_leads.json
+```
+
+The sample leads point at public test sites (`neverssl.com`, `httpforever.com`,
+`example.com`) with `@example.com` addresses — so the demo never pitches a real
+business.
+
+---
+
 The build plan for all 24 agents lives in the 6-week launch spreadsheet. Meeting
 Ops is Sprint 1, Day 1 — the flagship.
