@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lead Scout</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🔍</text></svg>">
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #262d38;
+    --ink: #e6edf3; --dim: #8b949e;
+    --accent: #4c9aff; --crit: #f85149; --warn: #e3b341; --note: #8b949e; --good: #3fb950;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 1.5rem 2rem; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+  }
+  h1 { font-size: 1.3rem; margin: 0; letter-spacing: -.02em; }
+  .tag {
+    font-size: .75rem; color: var(--dim); border: 1px solid var(--line);
+    padding: .15rem .5rem; border-radius: 99px;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+
+  .bar { display: flex; gap: .6rem; flex-wrap: wrap; }
+  input[type=text] {
+    flex: 1 1 22rem; min-width: 0; background: var(--panel); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 8px; padding: .8rem 1rem; font-size: 1rem;
+  }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    background: var(--accent); color: #08131f; border: 0; border-radius: 8px;
+    padding: .8rem 1.3rem; font-size: .95rem; font-weight: 650; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .hint { color: var(--dim); font-size: .85rem; margin: .7rem 0 0; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-top: 1.75rem; align-items: start; }
+  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 1.25rem;
+  }
+  .card h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 1rem; }
+
+  .scorewrap { display: flex; align-items: center; gap: 1.25rem; }
+  .dial { position: relative; width: 116px; height: 116px; flex: none; }
+  .dial svg { transform: rotate(-90deg); }
+  .dial .val {
+    position: absolute; inset: 0; display: grid; place-content: center;
+    font-size: 2.1rem; font-weight: 700; letter-spacing: -.03em;
+  }
+  .site { font-weight: 600; word-break: break-all; }
+  .metrics { display: grid; grid-template-columns: auto 1fr; gap: .25rem .9rem; font-size: .88rem; margin-top: .6rem; }
+  .metrics dt { color: var(--dim); }
+  .metrics dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+  ul.findings { list-style: none; padding: 0; margin: 0; }
+  ul.findings li { display: flex; gap: .6rem; padding: .5rem 0; border-bottom: 1px solid var(--line); font-size: .92rem; }
+  ul.findings li:last-child { border-bottom: 0; }
+  .dot { width: .6rem; height: .6rem; border-radius: 99px; margin-top: .48rem; flex: none; }
+  .critical .dot { background: var(--crit); } .warning .dot { background: var(--warn); } .note .dot { background: var(--note); }
+  .ev { color: var(--dim); font-size: .82rem; }
+
+  pre.log {
+    margin: 0; max-height: 26rem; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    font: 13px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; color: #c9d5e1;
+  }
+  .empty { color: var(--dim); font-size: .9rem; }
+  .err { color: var(--crit); font-size: .9rem; }
+  a { color: var(--accent); }
+  .spin { display: inline-block; width: .8em; height: .8em; border: 2px solid currentColor;
+          border-right-color: transparent; border-radius: 99px; animation: s .7s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Lead Scout</h1>
+  <span class="tag">{{ agency }}</span>
+  {% if provider %}<span class="tag">brain: {{ provider }} · {{ model }}</span>
+  {% else %}<span class="tag">no model key — audit only</span>{% endif %}
+  <span class="tag">CRM: {{ 'HubSpot (live)' if hubspot_live else 'dry-run' }}</span>
+</header>
+
+<main>
+  <div class="bar">
+    <input type="text" id="url" placeholder="somebusiness.com" autofocus autocomplete="off">
+    <button id="auditBtn">Audit the site</button>
+    <button id="runBtn" class="ghost" {% if not provider %}disabled title="Add a model key to .env"{% endif %}>
+      Work the lead
+    </button>
+  </div>
+  <p class="hint">
+    <strong>Audit the site</strong> measures it — no API key needed.
+    <strong>Work the lead</strong> turns the agent loose: audit → CRM note → deal → one-pager → pitch email.
+  </p>
+  <p class="err" id="err" hidden></p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Score</h2>
+      <div id="scorePanel"><p class="empty">Enter a website and hit Audit.</p></div>
+    </div>
+
+    <div class="card">
+      <h2>What we found</h2>
+      <div id="findPanel"><p class="empty">Nothing yet.</p></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.25rem">
+    <h2>Agent activity</h2>
+    <pre class="log" id="log"></pre>
+    <p class="empty" id="logEmpty">Hit “Work the lead” and watch it happen.</p>
+    <p id="deliverable" hidden style="margin:1rem 0 0"></p>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const urlEl = $('url'), auditBtn = $('auditBtn'), runBtn = $('runBtn');
+const errEl = $('err'), logEl = $('log'), logEmpty = $('logEmpty'), deliv = $('deliverable');
+
+const ICON = { critical: 'critical', warning: 'warning', note: 'note' };
+
+function showError(msg) { errEl.textContent = msg; errEl.hidden = !msg; }
+
+function colorFor(score) {
+  return score >= 70 ? 'var(--good)' : score >= 40 ? 'var(--warn)' : 'var(--crit)';
+}
+
+function renderScore(a) {
+  if (!a.reachable) {
+    $('scorePanel').innerHTML =
+      `<p class="site">${escapeHtml(a.url)}</p><p class="err">Didn't respond — ${escapeHtml(a.error || 'unreachable')}</p>`;
+    return;
+  }
+  const c = colorFor(a.score), circ = 2 * Math.PI * 52, off = circ * (1 - a.score / 100);
+  $('scorePanel').innerHTML = `
+    <div class="scorewrap">
+      <div class="dial">
+        <svg width="116" height="116">
+          <circle cx="58" cy="58" r="52" fill="none" stroke="var(--line)" stroke-width="9"></circle>
+          <circle cx="58" cy="58" r="52" fill="none" stroke="${c}" stroke-width="9" stroke-linecap="round"
+                  stroke-dasharray="${circ}" stroke-dashoffset="${circ}"
+                  style="transition:stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1)"></circle>
+        </svg>
+        <div class="val" style="color:${c}">${a.score}</div>
+      </div>
+      <div>
+        <p class="site">${escapeHtml(a.final_url || a.url)}</p>
+        <dl class="metrics">
+          <dt>Load</dt><dd>${(a.load_ms / 1000).toFixed(2)}s</dd>
+          <dt>Page weight</dt><dd>${Math.round(a.page_bytes / 1000)} KB</dd>
+          <dt>Built on</dt><dd>${escapeHtml(a.platform)}</dd>
+          <dt>Secure</dt><dd>${a.https ? 'yes' : 'NO'}${a.ssl_days_left != null ? ` · cert ${a.ssl_days_left}d` : ''}</dd>
+          <dt>Mobile</dt><dd>${a.has_viewport ? 'yes' : 'NO'}</dd>
+          <dt>Contact form</dt><dd>${a.has_form ? 'yes' : 'no'}</dd>
+          <dt>Broken links</dt><dd>${a.broken_links.length} of ${a.links_checked}</dd>
+          ${a.pagespeed_score != null ? `<dt>PageSpeed</dt><dd>${a.pagespeed_score}/100</dd>` : ''}
+        </dl>
+      </div>
+    </div>`;
+  requestAnimationFrame(() => {
+    const ring = $('scorePanel').querySelectorAll('circle')[1];
+    if (ring) ring.style.strokeDashoffset = off;
+  });
+}
+
+function renderFindings(a) {
+  const f = a.findings || [];
+  $('findPanel').innerHTML = f.length
+    ? `<ul class="findings">${f.map(x => `
+        <li class="${ICON[x.severity] || 'note'}"><span class="dot"></span>
+          <span>${escapeHtml(x.message)}${x.evidence ? `<br><span class="ev">${escapeHtml(x.evidence)}</span>` : ''}</span>
+        </li>`).join('')}</ul>`
+    : '<p class="empty">Nothing wrong found. Rare.</p>';
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function doAudit() {
+  const url = urlEl.value.trim();
+  if (!url) return showError('Enter a website address.');
+  showError(''); deliv.hidden = true;
+  auditBtn.disabled = true;
+  auditBtn.innerHTML = '<span class="spin"></span> Measuring…';
+  $('scorePanel').innerHTML = '<p class="empty">Fetching the site…</p>';
+  $('findPanel').innerHTML = '<p class="empty">…</p>';
+  try {
+    const res = await fetch('/api/audit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const a = await res.json();
+    if (!res.ok) throw new Error(a.error || 'Audit failed.');
+    renderScore(a); renderFindings(a);
+  } catch (e) {
+    showError(e.message);
+    $('scorePanel').innerHTML = '<p class="empty">—</p>';
+    $('findPanel').innerHTML = '<p class="empty">—</p>';
+  } finally {
+    auditBtn.disabled = false; auditBtn.textContent = 'Audit the site';
+  }
+}
+
+let es = null;
+function doRun() {
+  const url = urlEl.value.trim();
+  if (!url) return showError('Enter a website address.');
+  showError(''); deliv.hidden = true;
+  logEl.textContent = ''; logEmpty.hidden = true;
+  runBtn.disabled = true; auditBtn.disabled = true;
+  runBtn.innerHTML = '<span class="spin"></span> Working…';
+
+  if (es) es.close();
+  es = new EventSource('/api/run?url=' + encodeURIComponent(url));
+
+  es.addEventListener('line', e => {
+    logEl.textContent += JSON.parse(e.data).text + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  });
+  es.addEventListener('error', e => {
+    // Server-sent 'error' events carry a payload; transport drops don't.
+    if (e.data) { showError(JSON.parse(e.data).message); finish(); }
+  });
+  es.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    if (d.onepager) {
+      deliv.innerHTML = `✅ Done. <a href="${d.onepager}" target="_blank" rel="noopener">Open the one-pager →</a>`;
+      deliv.hidden = false;
+    }
+    finish();
+  });
+  es.onerror = () => finish();  // connection closed
+}
+
+function finish() {
+  if (es) { es.close(); es = null; }
+  runBtn.disabled = false; runBtn.textContent = 'Work the lead';
+  auditBtn.disabled = false;
+  if (!logEl.textContent) logEmpty.hidden = false;
+}
+
+auditBtn.onclick = doAudit;
+runBtn.onclick = doRun;
+urlEl.addEventListener('keydown', e => { if (e.key === 'Enter') doAudit(); });
+</script>
+</body>
+</html>
