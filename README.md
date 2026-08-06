@@ -86,7 +86,22 @@ has pulled up their website and **actually measured it**:
 This is the one no chatbot can fake. Ask ChatGPT how fast a stranger's website
 loads and it will guess. Lead Scout goes and looks — that's the whole agent.
 
-### See it in 10 seconds (no API key)
+### The web UI (easiest)
+
+**Windows:** double-click `start.bat`. It installs what's missing and opens
+`http://localhost:5000`.
+
+**Mac/Linux:**
+
+```bash
+pip install -r requirements.txt
+python web.py
+```
+
+Paste a website, hit **Audit the site** — no API key needed for that. **Work the
+lead** turns the agent loose and streams its actions live as it works.
+
+### See it in 10 seconds (no API key, terminal)
 
 ```bash
 pip install -r requirements.txt
