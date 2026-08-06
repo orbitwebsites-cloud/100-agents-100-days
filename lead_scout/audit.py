@@ -72,6 +72,8 @@ class Audit:
     robots_txt: bool = False
     sitemap_xml: bool = False
     platform: str = "unknown"
+    visible_text_chars: int = 0
+    client_rendered: bool = False
     links_checked: int = 0
     broken_links: list[str] = field(default_factory=list)
     pagespeed_score: int | None = None
@@ -113,6 +115,14 @@ def _ssl_days_left(host: str) -> int | None:
         return (expires - datetime.now(timezone.utc)).days
     except Exception:
         return None
+
+
+def _visible_text(html: str) -> str:
+    """Roughly what a reader would see — tags, scripts and styles stripped."""
+    stripped = re.sub(r"<(script|style|noscript)\b[^>]*>.*?</\1>", " ", html, flags=re.I | re.S)
+    stripped = re.sub(r"<!--.*?-->", " ", stripped, flags=re.S)
+    stripped = re.sub(r"<[^>]+>", " ", stripped)
+    return re.sub(r"\s+", " ", stripped).strip()
 
 
 def _detect_platform(html: str, headers: dict) -> str:
@@ -225,6 +235,19 @@ def audit_site(url: str, check_links: bool = True) -> dict:
     )
     a.platform = _detect_platform(html, resp.headers)
 
+    # A page whose HTML carries almost no readable text but plenty of scripts
+    # builds itself in the browser. We only ever see the raw HTML, so anything
+    # that lives in the rendered DOM — headings, forms, images — is invisible
+    # to us. Say so rather than reporting it as missing.
+    a.visible_text_chars = len(_visible_text(html))
+    a.client_rendered = a.visible_text_chars < 300 and bool(
+        re.search(r"<script[^>]+src=", html, re.I)
+    ) and bool(
+        # An empty mount point, or a framework's hydration marker.
+        re.search(r'<(div|main)[^>]+id=["\'](root|app|__next)["\'][^>]*>\s*</\1>', html, re.I)
+        or re.search(r"__NEXT_DATA__|window\.__NUXT__|ng-version|data-reactroot", html, re.I)
+    )
+
     if a.https and host:
         a.ssl_days_left = _ssl_days_left(host)
 
@@ -287,7 +310,14 @@ def _grade(a: Audit) -> None:
     if not a.has_viewport:
         add(Finding("critical", "not_mobile", "No mobile viewport tag — the site is not responsive.", ""))
 
-    if not a.has_form and not a.has_email_link and not a.has_phone_link:
+    if a.client_rendered:
+        add(Finding(
+            "note", "client_rendered",
+            "The page builds itself in the browser, so headings, forms and images "
+            "can't be checked from the HTML — verify those by eye.",
+            f"only {a.visible_text_chars} characters of text in the raw HTML",
+        ))
+    elif not a.has_form and not a.has_email_link and not a.has_phone_link:
         add(Finding("critical", "no_contact", "No contact form, phone link, or email link on the homepage.", ""))
     elif not a.has_form:
         add(Finding("warning", "no_form", "No contact form on the homepage — visitors have to work to reach them.", ""))
@@ -303,10 +333,11 @@ def _grade(a: Audit) -> None:
     if not a.meta_description:
         add(Finding("warning", "no_meta_description", "No meta description — Google writes their search snippet for them.", ""))
 
-    if a.h1_count == 0:
-        add(Finding("warning", "no_h1", "No H1 heading on the homepage.", ""))
-    elif a.h1_count > 1:
-        add(Finding("note", "many_h1", f"{a.h1_count} H1 headings — should be one.", ""))
+    if not a.client_rendered:
+        if a.h1_count == 0:
+            add(Finding("warning", "no_h1", "No H1 heading on the homepage.", ""))
+        elif a.h1_count > 1:
+            add(Finding("note", "many_h1", f"{a.h1_count} H1 headings — should be one.", ""))
 
     if a.images_total and a.images_missing_alt:
         share = a.images_missing_alt / a.images_total

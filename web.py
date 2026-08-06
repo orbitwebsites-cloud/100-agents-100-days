@@ -54,6 +54,27 @@ def _sse(event: str, **data) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _explain(err: str) -> str:
+    """Turn the provider's raw error into something you can act on."""
+    if "model_not_found" in err or "Model does not exist" in err:
+        if config.provider() == "cerebras":
+            try:
+                options = config.available_models()
+            except Exception:
+                options = []
+            listing = ("  Available to your key: " + ", ".join(options)) if options else ""
+            return (
+                f"The model {config.CEREBRAS_MODEL!r} isn't available on your Cerebras account. "
+                f"Set CEREBRAS_MODEL in your .env to one that is, then restart.{listing}"
+            )
+        return f"The model {config.MODEL!r} isn't available on your Anthropic account."
+    if "authentication" in err.lower() or "401" in err or "invalid_api_key" in err:
+        return "That API key was rejected. Check the key in your .env file."
+    if "rate" in err.lower() and "limit" in err.lower():
+        return "Rate limited by the provider — wait a moment and try again."
+    return err
+
+
 # ── pages ────────────────────────────────────────────────────
 
 
@@ -160,7 +181,7 @@ def api_run():
                     yield ": keepalive\n\n"
 
             if failure:
-                yield _sse("error", message=failure[0])
+                yield _sse("error", message=_explain(failure[0]))
                 return
 
             state.mark_seen(lead["id"])

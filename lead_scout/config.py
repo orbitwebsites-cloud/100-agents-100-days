@@ -50,6 +50,25 @@ def provider() -> str | None:
     return None
 
 
+def available_models() -> list[str]:
+    """Model ids this key can actually reach, newest-looking first.
+
+    Cerebras rotates its lineup, so a hardcoded default eventually 404s. Ask the
+    endpoint instead of guessing.
+    """
+    import requests
+
+    if not CEREBRAS_API_KEY:
+        return []
+    resp = requests.get(
+        f"{CEREBRAS_BASE_URL.rstrip('/')}/models",
+        headers={"Authorization": f"Bearer {CEREBRAS_API_KEY}"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return sorted(m["id"] for m in resp.json().get("data", []))
+
+
 def hubspot_live() -> bool:
     return bool(HUBSPOT_ACCESS_TOKEN)
 

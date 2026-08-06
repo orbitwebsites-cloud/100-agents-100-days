@@ -102,6 +102,7 @@ def main() -> int:
     parser.add_argument("--url", help="Work one prospect's site right now (demo mode)")
     parser.add_argument("--audit-only", metavar="URL", help="Run just the audit — no model needed")
     parser.add_argument("--selftest", action="store_true", help="Check plumbing without the API")
+    parser.add_argument("--models", action="store_true", help="List models your key can reach")
     parser.add_argument("--reset", action="store_true", help="Forget which leads were already worked")
     parser.add_argument(
         "--interval", type=int, default=config.POLL_INTERVAL, help="Seconds between polls with --watch"
@@ -113,6 +114,19 @@ def main() -> int:
         print("State cleared — every lead looks new again.")
         if not (args.watch or args.once or args.url or args.selftest or args.audit_only):
             return 0
+
+    if args.models:
+        if not config.CEREBRAS_API_KEY:
+            print("Set CEREBRAS_API_KEY in .env first — this lists what that key can reach.")
+            return 1
+        models = config.available_models()
+        print(f"Models available to your Cerebras key ({len(models)}):\n")
+        for m in models:
+            print(f"  {m}{'   ← currently configured' if m == config.CEREBRAS_MODEL else ''}")
+        if config.CEREBRAS_MODEL not in models:
+            print(f"\n⚠️  Your CEREBRAS_MODEL is {config.CEREBRAS_MODEL!r}, which isn't in that list.")
+            print("   Put one of the above in .env as CEREBRAS_MODEL= and restart.")
+        return 0
 
     if args.selftest:
         return selftest()
