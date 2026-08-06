@@ -57,7 +57,7 @@ def main() -> int:
     prov = config.provider()
     if prov is None:
         print("No model key set. Copy .env.example to .env and add ONE of:")
-        print("  • CEREBRAS_API_KEY   (free tier — Llama/Qwen)")
+        print("  • CEREBRAS_API_KEY   (free tier — open models)")
         print("  • ANTHROPIC_API_KEY  (claude-opus-4-8)")
         print("Or run `python run.py --selftest` to check the plumbing without a key.", file=sys.stderr)
         return 1

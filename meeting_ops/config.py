@@ -15,7 +15,7 @@ load_dotenv()
 # ── Model provider ───────────────────────────────────────────
 # Two ways to run the agent's brain:
 #   • Anthropic (claude-opus-4-8) — set ANTHROPIC_API_KEY
-#   • Cerebras (free tier, Llama/Qwen) — set CEREBRAS_API_KEY
+#   • Cerebras (free tier — GPT-OSS/Qwen/Gemma) — set CEREBRAS_API_KEY
 # Whichever key is present wins; Cerebras takes priority if both are set.
 MODEL = "claude-opus-4-8"
 
@@ -25,7 +25,7 @@ CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
 CEREBRAS_BASE_URL = os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
 # Check https://inference-docs.cerebras.ai for the current model list — override
 # with CEREBRAS_MODEL in .env. Pick a model that supports tool calling.
-CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama-3.3-70b")
+CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
 
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")

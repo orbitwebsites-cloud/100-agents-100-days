@@ -137,8 +137,8 @@ def main() -> int:
     prov, backend, model = _backend()
     if prov is None:
         print("No model key set. Copy .env.example to .env and add ONE of:")
-        print("  • CEREBRAS_API_KEY   (free tier — Llama/Qwen)")
-        print("  • ANTHROPIC_API_KEY  (claude-opus-4-8)")
+        print("  • CEREBRAS_API_KEY   (free tier — open models)")
+        print("  • ANTHROPIC_API_KEY  (claude-opus-5)")
         print("Or run `python scout.py --audit-only acme.com` to see the audit with no key.", file=sys.stderr)
         return 1
 

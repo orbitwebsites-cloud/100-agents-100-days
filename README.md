@@ -19,7 +19,7 @@ It's a real agent loop: the model reads the transcript and *calls the tools
 itself* until the work is done — it doesn't just describe the notes, it takes the
 actions. Runs on either brain:
 
-- **Cerebras** (free tier — Llama/Qwen) via the OpenAI-compatible API
+- **Cerebras** (free tier — GPT-OSS / Qwen / Gemma) via the OpenAI-compatible API
 - **Anthropic** (`claude-opus-4-8`) via the Tool Runner
 
 Whichever key you put in `.env` is the one it uses (Cerebras wins if both are set).

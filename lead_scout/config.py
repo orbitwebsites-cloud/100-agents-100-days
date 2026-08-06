@@ -15,7 +15,7 @@ load_dotenv()
 # ── Model provider ───────────────────────────────────────────
 # Two ways to run the agent's brain:
 #   • Anthropic (claude-opus-5) — set ANTHROPIC_API_KEY
-#   • Cerebras (free tier, Llama/Qwen) — set CEREBRAS_API_KEY
+#   • Cerebras (free tier — GPT-OSS/Qwen/Gemma) — set CEREBRAS_API_KEY
 # Whichever key is present wins; Cerebras takes priority if both are set.
 MODEL = "claude-opus-5"
 
@@ -23,7 +23,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
 CEREBRAS_BASE_URL = os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
-CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama-3.3-70b")
+CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
 
 # ── HubSpot — the trigger source and where findings get written ──
 HUBSPOT_ACCESS_TOKEN = os.getenv("HUBSPOT_ACCESS_TOKEN")

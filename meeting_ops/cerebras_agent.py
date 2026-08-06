@@ -1,7 +1,7 @@
 """The Meeting Ops agent loop on Cerebras (or any OpenAI-compatible endpoint).
 
 Same agent, same tools, same connectors — a different brain. Cerebras serves
-open models (Llama/Qwen) over the OpenAI chat-completions API with tool calling,
+open models over the OpenAI chat-completions API with tool calling,
 so we run a manual tool loop: ask the model, execute any tool calls it makes,
 feed the results back, repeat until it's done.
 """
