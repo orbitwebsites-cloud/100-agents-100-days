@@ -1,0 +1,26 @@
+CI RUN #4127 — FAILED
+repo: 100-agents-100-days
+branch: main
+job: pytest
+
+======================= FAILURES =======================
+test_create_issue_without_assignee_omits_owner_line
+
+    def test_create_issue_without_assignee_omits_owner_line():
+        result = linear.create_issue("Wire up checkout error states", "From standup", assignee="")
+>       assert "Owner (from transcript):" not in result
+E       AssertionError: assert 'Owner (from transcript): \n\nFrom standup' not in \
+E         'linear:dry-run://ENG-000'
+
+meeting_ops/connectors/linear.py:34: in create_issue
+    body = (f"Owner (from transcript): {assignee}\n\n{description}").strip()
+
+FAILED meeting_ops/connectors/linear.py::test_create_issue_without_assignee_omits_owner_line
+1 failed in 0.41s
+==========================================================
+
+file: meeting_ops/connectors/linear.py
+function: create_issue
+error: the "Owner (from transcript):" line is being written into the issue
+       body even when assignee is an empty string, instead of only when an
+       assignee was actually stated in the transcript.

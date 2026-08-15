@@ -70,5 +70,67 @@ meeting_ops/
 samples/standup_transcript.txt
 ```
 
+## Agent #4 — Commit Coroner
+
+Every CI failure produces a stack trace. Almost nothing does the next step:
+figuring out *which commit* actually caused it, and telling someone. Commit
+Coroner does that step, autonomously:
+
+1. **Reads the failure** — the test name, file, and error from a CI report
+2. **Pulls real git history** — the actual recent commits that touched the
+   failing file, straight off the repo on disk (no API key needed for this part)
+3. **Inspects real diffs** — reads the actual patch of any commit it's
+   suspicious of before naming it, the same discipline a human does when
+   git-bisecting a regression
+4. **Names a culprit and files the autopsy** — opens a **GitHub** issue with
+   the verdict, the evidence, and a suggested fix (or an honest "inconclusive")
+5. **Raises the alert** — posts the incident to **Slack** immediately, instead
+   of waiting for someone to notice the GitHub notification
+
+This is deliberately not another "summarize my error log" bot — those exist
+everywhere and don't act. Commit Coroner performs the bisection-by-reasoning
+itself against real commit objects, then takes the two follow-up actions
+(file + alert) without a human closing the loop. That combination — genuine
+git forensics feeding an autonomous incident report — isn't something you'll
+find as a packaged product yet.
+
+### Run it in 30 seconds
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env                # add CEREBRAS_API_KEY (free) or ANTHROPIC_API_KEY
+python run_coroner.py               # runs on the bundled sample CI failure
+```
+
+```bash
+python run_coroner.py --selftest                 # check the plumbing, no API key needed
+python run_coroner.py --failure path/to/report.txt # your own CI failure report
+```
+
+### Go live
+
+| Connector | Keys | What it does |
+|-----------|------|---------------|
+| Git forensics | *(none — reads the local repo)* | Real commit log + real diffs |
+| GitHub | `GITHUB_TOKEN`, `GITHUB_REPO` | Opens the autopsy report as an issue |
+| Slack | `SLACK_WEBHOOK_URL` | Posts the incident alert |
+
+### How it's built
+
+```
+run_coroner.py               CLI entry point (--failure / --selftest)
+commit_coroner/
+  agent.py                   Anthropic Tool Runner loop
+  cerebras_agent.py          Cerebras / OpenAI-compatible loop (same tools)
+  prompts.py                 the shared system prompt
+  tools.py                   the 4 tools + schemas both backends share
+  config.py                  env keys, provider pick, dry-run switch
+  connectors/
+    git_forensics.py         real `git log` / `git show` against the repo — always live
+    github.py                real GitHub Issues REST, dry-run fallback
+    slack.py                 real Slack Incoming Webhook, dry-run fallback
+samples/ci_failure_report.txt
+```
+
 The build plan for all 24 agents lives in the 6-week launch spreadsheet. Meeting
 Ops is Sprint 1, Day 1 — the flagship.
