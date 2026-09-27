@@ -299,7 +299,25 @@ def _stem(word: str) -> str:
     return w
 
 
+_CODE_LINE = re.compile(r"(\t| {2,})\S")
+_FILE_PATH = re.compile(r"[\w.~-]*(?:[/\\][\w.~-]+)+\.\w{1,5}\b")
+
+
+def _intent_text(text_: str) -> str:
+    """Drop what the user pasted (indented code, file paths, traceback boilerplate) and keep what they asked.
+
+    Otherwise `app/api/orders.py` routes a stack trace to the API designer and `cart.discount` to e-commerce.
+    """
+    lines = text_.splitlines()
+    prose = [ln for ln in lines if not _CODE_LINE.match(ln)]
+    if prose and len(prose) < len(lines):
+        text_ = "\n".join(prose)
+    text_ = re.sub(r"\(most recent call (?:last|first)\)", " ", _FILE_PATH.sub(" ", text_))
+    return re.sub(r"([a-z])(Error|Exception|Warning)\b", r"\1 \2", text_)  # AttributeError → Attribute Error
+
+
 def _stems(text_: str) -> list[str]:
+    text_ = _intent_text(text_)
     return [_stem(t) for t in re.findall(r"[a-z0-9]+", text_.lower()) if len(t) > 1 and t not in _STOP]
 
 
@@ -324,7 +342,7 @@ def rank_agents(query: str) -> list[tuple[float, Agent]]:
     df = {t: sum(1 for _, ti, bo in index if t in ti or t in bo) for t in terms}
     scored = []
     for a, title, body in index:
-        score = sum(math.log(1 + n / df[t]) * ((6 if t in title else 0) + min(body[t], 3)) for t in terms if df[t])
+        score = sum(math.log(1 + n / df[t]) * ((3 if t in title else 0) + min(body[t], 3)) for t in terms if df[t])
         if score:
             scored.append((score, a))
     scored.sort(key=lambda x: -x[0])

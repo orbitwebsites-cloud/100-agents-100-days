@@ -255,6 +255,14 @@ def test_http_mcp_end_to_end(live_server):
         ("reorder point for my SKUs", "inventory-planner"),
         ("what does this stack trace mean", "bug-hunter"),
         ("summarize this meeting transcript", "meeting-ops"),
+        # From live runs: pasted code/paths and incidental title words ("pricing deck") used to misroute these.
+        ("Getting this in prod, what's going on?\n\nTraceback (most recent call last):\n"
+         "  File \"app/api/orders.py\", line 88, in create_order\n    total = compute_total(cart)\n"
+         "  File \"app/billing/totals.py\", line 41, in compute_total\n"
+         "    return sum(i.price * i.qty for i in cart.items) - cart.discount.amount\n"
+         "AttributeError: 'NoneType' object has no attribute 'amount'", "bug-hunter"),
+        ("Turn this into action items with owners and dates:\nPriya: I'll send the revised pricing deck by "
+         "Thursday.\nMarcus: I can get the Stripe migration done end of next week.", "meeting-ops"),
     ],
 )
 def test_router_finds_the_right_agent(query, expected):
