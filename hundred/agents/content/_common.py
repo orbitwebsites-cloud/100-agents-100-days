@@ -9,6 +9,7 @@ several editors lint against.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 from ...core import ToolError
 from ...lib import text
@@ -250,15 +251,24 @@ VAGUE_QUANTIFIERS = [
 ]
 
 
+@lru_cache(maxsize=64)
+def phrase_pattern(phrases: tuple[str, ...]) -> re.Pattern:
+    """One compiled alternation for a phrase list (longest first), whole-word, case-insensitive."""
+    alts = sorted({p.lower() for p in phrases if p}, key=len, reverse=True)
+    return re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(a) for a in alts) + r")(?![\w-])", re.I)
+
+
 def find_phrases(s: str, phrases: list[str]) -> list[dict]:
-    """Case-insensitive whole-word matches of each phrase, with positions and counts."""
-    low = s.lower()
-    hits: list[dict] = []
-    for p in phrases:
-        pat = r"(?<![\w-])" + re.escape(p.lower()) + r"(?![\w-])"
-        positions = [m.start() for m in re.finditer(pat, low)]
-        if positions:
-            hits.append({"phrase": p, "count": len(positions), "first_at": positions[0]})
+    """Case-insensitive whole-word matches of each phrase, with positions and counts (single pass)."""
+    if not phrases:
+        return []
+    counts: dict[str, int] = {}
+    first: dict[str, int] = {}
+    for m in phrase_pattern(tuple(phrases)).finditer(s):
+        p = m.group(0).lower()
+        counts[p] = counts.get(p, 0) + 1
+        first.setdefault(p, m.start())
+    hits = [{"phrase": p, "count": n, "first_at": first[p]} for p, n in counts.items()]
     hits.sort(key=lambda h: (-h["count"], h["first_at"]))
     return hits
 

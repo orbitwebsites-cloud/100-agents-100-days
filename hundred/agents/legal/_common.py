@@ -8,7 +8,7 @@ to a licensed lawyer.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 
 from ...core import ToolError
 from ...lib import dates
@@ -75,6 +75,14 @@ def add_months(d: date, months: int) -> date:
     y, m = d.year + (d.month - 1 + months) // 12, (d.month - 1 + months) % 12 + 1
     last = [31, 29 if y % 4 == 0 and (y % 100 != 0 or y % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
     return d.replace(year=y, month=m, day=min(d.day, last))
+
+
+def term_end(start: date, months: int) -> date:
+    """Last day of a term of `months` starting on `start` (Jan 31 + 1 month → Feb 28; Oct 1 + 12 → Sep 30)."""
+    candidate = add_months(start, months)
+    if candidate.day != start.day:  # clamped to a shorter month: the term ends on that last day
+        return candidate
+    return candidate - timedelta(days=1)
 
 
 def excerpt(text: str, match: re.Match, width: int = 160) -> str:

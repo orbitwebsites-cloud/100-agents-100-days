@@ -202,6 +202,8 @@ REPLACEMENTS: list[tuple[str, str]] = [
 ]
 for _long, _short in NOMINALISATIONS:
     REPLACEMENTS.append((_long, _short))
+JUDGEMENT_CALLS = {"approximately", "additional", "sufficient", "numerous", "assistance", "facilitate", "in terms of", "commence", "commenced", "terminate", "terminated", "in accordance with", "notwithstanding"}
+QUOTE_RE = re.compile(r"\"[^\"\n]{1,400}\"|“[^”\n]{1,400}”")
 
 TRANSITIONS = {
     "however", "therefore", "moreover", "furthermore", "consequently", "meanwhile", "nevertheless", "instead",
@@ -380,34 +382,29 @@ def find_replacements(draft: str, aggressive: bool = False) -> dict:
         aggressive: Also apply the judgement calls (approximately → about, additional → more, sufficient → enough) that occasionally change nuance.
     """
     c.guard(draft, "Draft")
-    judgement = {"approximately", "additional", "sufficient", "numerous", "assistance", "facilitate", "in terms of", "commence", "commenced", "terminate", "terminated", "in accordance with", "notwithstanding"}
-    quote_re = re.compile(r"\"[^\"\n]{1,400}\"|“[^”\n]{1,400}”")
-    out = draft
-    edits: list[dict] = []
-    for long_p, short_p in REPLACEMENTS:
-        if long_p in judgement and not aggressive:
-            continue
-        pat = re.compile(r"(?<![\w-])" + re.escape(long_p) + r"(?![\w-])(?P<tail>[ ,]*)", re.I)
-        quoted = [m.span() for m in quote_re.finditer(out)]
-        count = 0
+    active = [(l, s) for l, s in REPLACEMENTS if aggressive or l not in JUDGEMENT_CALLS]
+    lookup = {l.lower(): s for l, s in active}
+    pat = re.compile(c.phrase_pattern(tuple(lookup)).pattern + r"(?P<tail>[ ,]*)", re.I)
+    quoted = [m.span() for m in QUOTE_RE.finditer(draft)]
+    counts: dict[str, int] = {}
 
-        def sub(m: re.Match) -> str:
-            nonlocal count
-            if any(a <= m.start() < b for a, b in quoted):
-                return m.group(0)
-            count += 1
-            src = m.group(0)
-            if short_p:
-                rep = short_p[0].upper() + short_p[1:] if src[0].isupper() else short_p
-                return rep + m.group("tail")
-            # deletion: drop the phrase and the comma/space after it; the caller re-capitalises below
-            return "\u0001" if src[0].isupper() else ""
+    def sub(m: re.Match) -> str:
+        if any(a <= m.start() < b for a, b in quoted):
+            return m.group(0)
+        src = m.group(0)[: len(m.group(0)) - len(m.group("tail"))]
+        key = src.lower()
+        counts[key] = counts.get(key, 0) + 1
+        short_p = lookup[key]
+        if short_p:
+            rep = short_p[0].upper() + short_p[1:] if src[0].isupper() else short_p
+            return rep + m.group("tail")
+        # deletion: drop the phrase and the comma/space after it; re-capitalise the next word if it opened a sentence
+        return "\u0001" if src[0].isupper() else ""
 
-        out = pat.sub(sub, out)
-        if "\u0001" in out:
-            out = re.sub(r"\u0001(\w)", lambda m: m.group(1).upper(), out).replace("\u0001", "")
-        if count:
-            edits.append({"from": long_p, "to": short_p or "(deleted)", "count": count})
+    out = pat.sub(sub, draft)
+    if "\u0001" in out:
+        out = re.sub(r"\u0001(\w)", lambda m: m.group(1).upper(), out).replace("\u0001", "")
+    edits = [{"from": k, "to": lookup[k] or "(deleted)", "count": n} for k, n in counts.items()]
     out = re.sub(r"[ \t]{2,}", " ", out)
     before_w, after_w = len(text.words(draft)), len(text.words(out))
     total = sum(e["count"] for e in edits)
