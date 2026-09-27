@@ -120,6 +120,13 @@ AGENT = Agent(
 )
 
 
+def _wilson(x: int, n: int, z: float) -> tuple[float, float]:
+    """Wilson score interval for a single proportion (well-behaved at small counts and near 0 %/100 %)."""
+    centre = (x + z * z / 2) / (n + z * z)
+    half = z / (n + z * z) * math.sqrt(x * (n - x) / n + z * z / 4)
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
 def _check_arm(n: int, x: int, label: str) -> None:
     if n <= 0:
         raise ToolError(f"{label}: visitors must be > 0.")
@@ -185,9 +192,12 @@ def significance_test(
         verdict = f"Not significant (p = {p_value:.3f}). Inconclusive, not 'no effect' — see the CI."
     if rel is not None and abs(rel) > 0.25:
         verdict += " Lift > 25% relative — Twyman's law: verify instrumentation before trusting it."
+    z_arm = norm_ppf(1 - alpha / 2)
+    w1, w2 = _wilson(x1, n1, z_arm), _wilson(x2, n2, z_arm)
     return {
-        "control": {"visitors": n1, "conversions": x1, "rate_pct": round(100 * p1, 3)},
-        "variant": {"visitors": n2, "conversions": x2, "rate_pct": round(100 * p2, 3)},
+        "control": {"visitors": n1, "conversions": x1, "rate_pct": round(100 * p1, 3), "rate_ci_pct": [round(100 * w1[0], 3), round(100 * w1[1], 3)]},
+        "variant": {"visitors": n2, "conversions": x2, "rate_pct": round(100 * p2, 3), "rate_ci_pct": [round(100 * w2[0], 3), round(100 * w2[1], 3)]},
+        "rate_ci_method": f"Wilson score, {round(100 * (1 - alpha))}% two-sided, per arm",
         "absolute_lift_pp": round(100 * diff, 3),
         "absolute_lift_ci_pp": [round(100 * ci_abs[0], 3), round(100 * ci_abs[1], 3)],
         "relative_lift_pct": round(100 * rel, 2) if rel is not None else None,
@@ -211,16 +221,19 @@ def significance_test(
 @AGENT.tool
 def sample_size(
     baseline_rate_pct: float,
-    mde_relative_pct: float,
+    mde_relative_pct: float = 0.0,
     alpha: float = 0.05,
     power: float = 0.8,
     variants: int = 2,
     daily_visitors: int = 0,
     two_sided: bool = True,
+    mde_absolute_pp: float = 0.0,
+    start_date: str = "",
 ) -> dict:
-    """Visitors per arm and test duration needed to detect a relative lift at given alpha and power.
+    """Visitors per arm and test duration needed to detect a lift at given alpha and power, with the stop date.
 
     Call before a test starts, and after one ends to judge whether it was adequately powered.
+    Give the MDE as a relative lift (mde_relative_pct) or in percentage points (mde_absolute_pp).
 
     Args:
         baseline_rate_pct: Control conversion rate in percent (e.g. 3.2 for 3.2%).
@@ -230,11 +243,19 @@ def sample_size(
         variants: Total arms including control (default 2). More arms split traffic.
         daily_visitors: Total eligible visitors per day across all arms; 0 to skip duration.
         two_sided: Two-sided test (default True).
+        mde_absolute_pp: Alternative to mde_relative_pct: the MDE in percentage points (e.g. 0.5 for 3.2% → 3.7%).
+        start_date: Date the test started / starts, YYYY-MM-DD; with daily_visitors, returns the date it reaches sample.
     """
     if not 0 < baseline_rate_pct < 100:
         raise ToolError("baseline_rate_pct must be between 0 and 100 (exclusive).")
+    if mde_absolute_pp and mde_relative_pct:
+        raise ToolError("Give the MDE once: mde_relative_pct or mde_absolute_pp, not both.")
+    if mde_absolute_pp:
+        if mde_absolute_pp <= 0:
+            raise ToolError("mde_absolute_pp must be > 0.")
+        mde_relative_pct = 100 * mde_absolute_pp / baseline_rate_pct
     if mde_relative_pct <= 0:
-        raise ToolError("mde_relative_pct must be > 0.")
+        raise ToolError("mde_relative_pct (or mde_absolute_pp) must be > 0.")
     if not 0 < alpha < 0.5 or not 0.5 <= power < 1:
         raise ToolError("alpha must be in (0, 0.5) and power in [0.5, 1).")
     if variants < 2 or variants > 10:
@@ -273,7 +294,22 @@ def sample_size(
         )
         if days > 56:
             out["warning"] = f"{days} days is too long — raise the MDE, pick a higher-traffic metric, or test fewer arms."
-    out["summary"] = f"Need {per_arm:,} visitors per arm ({total:,} total) to detect +{mde_relative_pct}% relative at {int(power * 100)}% power, α={alpha}."
+        if start_date:
+            from datetime import timedelta
+
+            from ...lib import dates
+
+            s0 = dates.parse_date(start_date)
+            out["start_date"] = s0.isoformat()
+            out["sample_reached_date"] = (s0 + timedelta(days=days - 1)).isoformat()
+            out["stop_date"] = (s0 + timedelta(days=out["recommended_runtime_days"] - 1)).isoformat()
+            out["stop_date_note"] = "Last day of the test (inclusive), after rounding up to whole weeks."
+    out["method"] = (
+        "Two-proportion z-test, pooled variance under H0 (Fleiss, no continuity correction) — the same test "
+        "significance_test runs. Evan Miller's calculator uses the baseline variance under H0 and returns ~5-8% fewer "
+        "visitors (e.g. 1,030 vs 1,094 per arm at 20% baseline, +5 pp)."
+    )
+    out["summary"] = f"Need {per_arm:,} visitors per arm ({total:,} total) to detect +{round(mde_relative_pct, 2)}% relative (+{round(100 * (p2 - p1), 3)} pp) at {int(power * 100)}% power, α={alpha}."
     return out
 
 
