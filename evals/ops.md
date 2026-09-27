@@ -24,9 +24,9 @@ The checklist column is written as M / P / X / O:
 | Agent | Comparable & price (monthly, [annual]) | Checklist M/P/X/O | Correctness checks (independent) | Verdict (overlapping job) | Fixes made |
 |---|---|---|---|---|---|
 | **meeting-ops** (free) | Fireflies Pro $18 [$10]; also Fathom Premium $20, Otter Pro $16.99 | 5 / 4 / 0 / 3 | Action-item recall 6/6 (sample) + 9/9 (messy Otter export); 0 invented; 13/13 due dates; 3/3 decisions; retraction and reassignment caught | **AT PAR** (was BELOW: wrong due date on the shipped sample) | "EOD Thursday" resolved to *today*; "next Tuesday" came out 13 days away; "Attendees" was counted as a speaker; Otter/Fireflies/VTT exports now parsed; decisions, retractions and meeting date added; month-name dates; playbook reassignment rule |
-| **project-planner** | Smartsheet Pro $12 [$9] | 5 / 2 / 1 / 0 | 48/48 CPM values (ES/EF/LS/LF/TF/FF); calendar end date; PERT E/σ/P80/P90 and dates; 5/5 slips; typed-link variant | **AT PAR**, ABOVE on schedule risk | SS/FF/SF + lag/lead links; PERT now returns calendar dates and P(plan holds); playbook no longer labels the most-likely plan date "P50" |
+| **project-planner** | Smartsheet Pro $12 [$9] | 5 / 2 / 1 / 0 | 24/24 float values (TF + FF), length, critical path; calendar end date; PERT E/σ/P80/P90 and dates; 5/5 slips; typed-link variant | **AT PAR**, ABOVE on schedule risk | SS/FF/SF + lag/lead links; PERT now returns calendar dates and P(plan holds); playbook no longer labels the most-likely plan date "P50" |
 | **time-blocker** | Reclaim Starter $12 [$10] | 3 / 3 / 0 / 2 | 5/5 DST-week conversions; slot search matches brute force on 2 dates; audit 835 min / 31% / 3 fragments / 5 back-to-back; pack-day invariants | **AT PAR** (was BELOW: audit said RED 58% for a 31% week) | Audit counted focus blocks and all-day items as meetings and dropped meeting-free days; pack_day put prep after the call and made 5-min deep slivers; fall-back ambiguity warning |
-| **inbox-triage** | Superhuman Pro $15 [$12] | 3 / 2 / 0 / 3 | 15/15 actions vs evaluator labels (11/15 before fixes); 5/5 deadlines; reply length | **AT PAR** | Cold-pitch detection; thanks-only → archive; "Reply now" only when urgent or VIP; greeting/sign-off not counted as sentences |
+| **inbox-triage** | Superhuman Pro $15 [$12] | 3 / 2 / 0 / 3 | 15/15 actions vs evaluator labels (10/15 before fixes); 5/5 deadlines; reply length | **AT PAR** | Cold-pitch detection; thanks-only → archive; "Reply now" only when urgent or VIP; greeting/sign-off not counted as sentences |
 | **sop-writer** | Scribe Pro Personal $35 [$25] | 2 / 2 / 0 / 3 | Cycle time (18 / 1,728 min / 1.04% PCE / 2 handoffs); review dates incl. Aug 31 + 6 mo → Feb 28; RACI 2/2 invalid rows; lint 5/5 planted defects | **AT PAR** on writing a text SOP; Scribe's screen capture is out of scope | "Support agent:" actor prefix not recognised; "Issue the refund" not treated as irreversible; a 24 h wait reported as "3.0 workdays" |
 | **okr-coach** | Perdoo Premium €6.40/user (annual/quarterly only); Weekdone ~$9.86 | 3 / 4 / 0 / 1 | 4 KRs: progress/status/need-per-week; regression slope/R²/projection/hit date; check-in and scoring calendar | **AT PAR** on coaching and grading; tracking is out of scope | Period now inclusive (Q4 = 92 d; last-day need-rate was 0); stay-above/below KR types; holidays (scoring had landed on Jan 1) |
 | **status-reporter** | Asana Starter $13.49 [$10.99] status updates; Weekdone | 4 / 1 / 1 / 2 | 4 metrics × (RAG, previous RAG, Δ); milestone slip with holidays; lint on a real draft | **AT PAR** | Milestone/week-over-week slips ignored holidays (5 wd instead of 3, contradicting project-planner); lint false positives (asks-before-progress, table read as a 30-word sentence) |
@@ -235,7 +235,7 @@ Plan = 26 d, chain P50 = 28.3 d, σ = 2.2 → P80 = 30.2 d: 4.2-day buffer after
 | Best SF–London–Bangalore slot, Oct 27 | 14:00 UTC (SF 07:00, Arjun 19:30), pain 2 | ✔ |
 | Same on Nov 3 (after US DST ends) | no 07:00–20:00 overlap | ✔ |
 | 2026-11-01 01:30 New York | ambiguous (happens twice) | silently EDT → **warning** |
-| Week meeting minutes Mon–Fri | 195, 160, 240, 240, 0 = 835 min = 30.9% AMBER | **1,555 min, 58% RED** → ✔ |
+| Week meeting minutes Mon–Fri | 195, 160, 240, 240, 0 = 835 min = 30.9% AMBER | **25.9 h, 58% RED** → ✔ |
 | Fragments < 30 min / back-to-back | 3 / 5 | 4 / 6 → ✔ |
 | Prep task before 13:00 call | must end ≤ 13:00 | 14:10–14:40 → 11:45–12:15 |
 | Deep blocks ≥ 25 min | yes | 5-min sliver at 09:35 → none |
@@ -304,7 +304,7 @@ Founder alex@northwind.io has 15 emails on Tue 2026-09-29. VIPs: the board inves
 
 | Check | Truth | Before | After |
 |---|---|---|---|
-| Actions (15 emails) | 3 reply now, 3 today, 7 archive, 2 unsubscribe | 11/15 (cold pitch "Reply today" 65; VIP thanks "Reply today"; coffee and renewal "Reply now" while tagged Q2) | **15/15** |
+| Actions (15 emails) | 3 reply now, 3 today, 7 archive, 2 unsubscribe | 10/15 (cold pitch "Reply today" 65; VIP thanks "Reply today"; coffee, renewal and receipts "Reply now" while tagged Q2) | **15/15** |
 | Deadlines | Thu 10-01, today 09-29, 09-30, 10-15, Fri 10-02 | "by October 15" unresolved (no month names) | 5/5 |
 | Reply-now order | outage (today) → offer (tomorrow) → deck (Thu) | same | same |
 | 4-sentence reply with greeting and sign-off | 4 sentences, ready | 6 → "Not ready" | 4 → ready |
