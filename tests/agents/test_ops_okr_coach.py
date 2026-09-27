@@ -45,10 +45,10 @@ def test_grade_progress_status_and_run_rate():
         ],
         period_start="2026-10-01", period_end="2026-12-31", as_of="2026-11-15",
     )
-    assert out["period"]["elapsed_pct"] == 49.5
+    assert out["period"]["elapsed_pct"] == 48.9  # 45 of Q4's 92 days are behind us on Nov 15
     act, churn, nps = out["key_results"]
     assert act["progress_pct"] == 40.0 and act["status"] == "on track" and act["score"] == 0.4
-    assert act["needed_per_week"] == round(12 / (46 / 7), 2)
+    assert act["needed_per_week"] == round(12 / (47 / 7), 2)  # Nov 15..Dec 31 inclusive = 47 days
     assert churn["direction"] == "down" and churn["progress_pct"] == 12.5 and churn["status"] == "off track"
     assert nps["status"] == "done" and nps["score"] == 1.0
     assert out["committed_at_risk"] == [] and out["worst"]["name"] == "Churn"
@@ -85,3 +85,8 @@ def test_okr_calendar_dates():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("lint_okrs").call({"objectives": "Grow revenue"})
+
+
+def test_grade_on_last_day_still_needs_a_rate():
+    out = call("grade_progress", key_results=[{"name": "A", "start": 0, "target": 10, "current": 9}], period_start="2026-10-01", period_end="2026-12-31", as_of="2026-12-31")
+    assert out["period"]["days"] == 92 and out["key_results"][0]["needed_per_week"] == 7.0  # 1 unit in the 1 day left

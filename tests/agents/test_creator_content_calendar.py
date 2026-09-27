@@ -109,7 +109,8 @@ def test_capacity_check_scales_plan_down():
     assert out["fits"] is False
     assert out["hours_needed"] == round((2 * 360 + 5 * 75) / 60, 1)
     fitted = {f["platform"]: f["posts_per_week"] for f in out["fit_plan"]}
-    assert fitted["youtube"] == 1 and fitted["tiktok"] >= 1
+    # one 360-min video alone exceeds the 300-min week, so YouTube goes every other week and TikTok fills the rest
+    assert fitted["youtube"] == 0.5 and fitted["tiktok"] == 1 and out["fit_plan_hours"] <= 5
     ok = call("capacity_check", hours_per_week=5, platforms=[{"platform": "x", "posts_per_week": 5, "minutes_per_post": 12}])
     assert ok["fits"] is True and ok["hours_needed"] == round(5 * 12 * (1 - 0.3 * 0.75) / 60, 1)
 

@@ -244,10 +244,10 @@ def grade_progress(key_results: list[dict], period_start: str, period_end: str, 
     if p1 <= p0:
         raise ToolError("period_end must be after period_start.")
     today = dates.parse_date(as_of) if as_of else date.today()
-    total_days = (p1 - p0).days
-    elapsed_days = int(clamp((today - p0).days, 0, total_days))
+    total_days = (p1 - p0).days + 1  # period_end is the last day OF the period (Q4 = 92 days)
+    elapsed_days = int(clamp((today - p0).days, 0, total_days))  # days fully behind us; today still counts as left
     elapsed_pct = round(100 * elapsed_days / total_days, 1)
-    weeks_left = max(0.0, (p1 - max(today, p0)).days / 7)
+    weeks_left = max(0.0, ((p1 - max(today, p0)).days + 1) / 7) if today <= p1 else 0.0
     weeks_gone = max(elapsed_days / 7, 1e-9)
     rows = []
     for i, kr in enumerate(krs, 1):

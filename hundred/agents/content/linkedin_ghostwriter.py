@@ -71,9 +71,12 @@ AGENT = Agent(
        from experience; a stance to agree or disagree with; a "what would you add?". Not
        "Thoughts?". No link in the body — write the first comment separately with the link.
     5. **Format.** Call `linkedin_ghostwriter__format_post` on the draft. It strips markdown
-       LinkedIn can't render (**bold**, headings, [links]), puts one sentence per line where
-       the paragraph is long, normalises bullets, moves hashtags to the end and collapses
-       extra blank lines. Use its output as the post.
+       LinkedIn can't render (headings, [links]; **bold** is stripped, or converted to Unicode
+       bold with `unicode_bold: true` — only for 2-4 words, since screen readers and search
+       can't read it), puts one sentence per line where the paragraph is long, normalises
+       bullets, lifts every hashtag (including ones glued to the end of a sentence) onto one
+       line at the end, capped at `max_hashtags` (default 3), and collapses extra blank lines.
+       Use its output as the post.
     6. **Check.** Call `linkedin_ghostwriter__post_check`. Fix every flag: over 3,000 chars,
        weak fold text, more than 5 hashtags or hashtags mid-body, external links in the body,
        emoji > 8, paragraphs over 4 lines, markdown residue, an "I"-heavy ratio with no "you",

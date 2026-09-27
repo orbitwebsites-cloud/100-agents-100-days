@@ -352,7 +352,7 @@ def check_section_limits(sections: list[dict]) -> dict:
 
 _SMART_NUMBER = re.compile(r"\b\d[\d,.]*\s*%?|\bpercent\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|twenty|fifty|hundred)\b", re.I)
 _SMART_DATE = re.compile(r"\b(?:by|before|within|during|in)\s+(?:\d{4}-\d{2}-\d{2}|(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}|q[1-4]\s*\d{4}|(?:month|year|quarter|week)s?\s+\d+|\d+\s+(?:months|weeks|years)|the end of|20\d{2})\b|\b20\d{2}\b", re.I)
-_SMART_MEASURE = re.compile(r"\bas measured by|measured (?:by|through|via)|using|per\b|survey|assessment|attendance|records?|data|pre-?/?post|tracked|log", re.I)
+_SMART_MEASURE = re.compile(r"\bas measured by|measured (?:by|through|via)|\busing\b|\bper\b|\bsurveys?\b|\bassessments?\b|\battendance\b|\brecords?\b|\bdata\b|\bpre-?/?post\b|\btracked\b|\blogs?\b|\brubric\b|\btranscripts?\b", re.I)
 _SMART_WHO = re.compile(r"\b(?:youth|students?|participants?|families|children|adults|residents|patients|clients|teachers|women|men|veterans|seniors|households|farmers|members|organi[sz]ations?|schools?|communit(?:y|ies)|people)\b", re.I)
 _VAGUE = re.compile(r"\b(empower|transform|raise awareness|enhance|improve|support|strengthen|promote|foster|engage|build capacity)\b", re.I)
 
