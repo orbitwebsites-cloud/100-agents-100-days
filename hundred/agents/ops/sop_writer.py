@@ -155,6 +155,7 @@ _VERIFY = re.compile(r"\b(verify|confirm|check that|check the|ensure|validate|do
 _IRREVERSIBLE = re.compile(r"\b(send|delete|remove|pay|refund|deploy|publish|submit|approve|charge|wire|transfer|release|terminate|cancel|purge|drop|overwrite)\b", re.I)
 _SYSTEM = re.compile(r"\b(in|on|via|using|open|from)\s+[A-Z][\w-]+|<[^>]+>", re.I)
 _ROLE_TOKEN = re.compile(r"\b([A-Z][a-z]+(?: [A-Z][a-z]+)?)\s*:")
+_ACTION_VERBS = {"send", "email", "click", "open", "update", "save", "export", "notify", "create", "delete", "close", "submit", "record", "log", "check", "verify", "attach", "upload", "download", "file", "forward", "call", "review", "approve", "assign", "add", "remove", "enter", "select", "print", "copy", "paste", "move", "mark", "set", "run", "start", "stop", "restart", "archive", "escalate", "post", "reply", "confirm", "schedule", "book", "cancel", "refund", "charge", "pay", "ship", "deploy", "merge", "tag", "label", "flag", "import", "sync", "scan", "sign"}
 
 
 @AGENT.tool
@@ -200,8 +201,9 @@ def lint_steps(steps: list[str], roles: list[str] = []) -> dict:
             if not (_ELSE.search(body) or _ELSE.search(nxt[:40]) or re.search(r"\bgo to step \d+\b.*\bgo to step \d+\b|\bstep \d+\b.*\bstep \d+\b", body, re.I)):
                 issues.append("decision step with no else-branch — add 'Otherwise: go to step N'")
         conj = len(re.findall(r"\b(and then|then|, and|; and| and )\b", body, re.I))
-        verbs_after_and = re.findall(r"\b(?:and|then)\s+(\w+)", body, re.I)
-        if conj >= 2 or (conj >= 1 and any(v.lower() not in text.STOPWORDS and not v.lower().endswith("ed") and len(v) > 3 for v in verbs_after_and) and n > 10):
+        verbs_after_and = [v.lower() for v in re.findall(r"\b(?:and|then)\s+(\w+)", body, re.I)]
+        chained_verb = any(v in _ACTION_VERBS or (v.endswith("ing") and v not in text.STOPWORDS and len(v) > 5) for v in verbs_after_and)
+        if conj >= 2 or chained_verb or (conj >= 1 and any(v not in text.STOPWORDS and not v.endswith("ed") and len(v) > 3 for v in verbs_after_and) and n > 12):
             issues.append("more than one action — split into separate steps so each can be verified")
         vague = sorted({v.lower() for v in _VAGUE.findall(body)})
         if vague:
@@ -214,7 +216,7 @@ def lint_steps(steps: list[str], roles: list[str] = []) -> dict:
             issues.append("'should/may/try' — SOPs say 'do' or give the condition")
         if _VERIFY.search(body):
             has_verify = True
-        if _IRREVERSIBLE.search(body):
+        if _IRREVERSIBLE.match(body):  # leading verb only — "Open the refund request" is not a refund
             has_irreversible = True
             nxt = steps[i] if i < len(steps) else ""
             if not (_VERIFY.search(nxt) or _VERIFY.search(body)):
@@ -228,7 +230,7 @@ def lint_steps(steps: list[str], roles: list[str] = []) -> dict:
     if len(steps) < 3:
         doc_issues.append("fewer than 3 steps — is this a procedure or a single instruction?")
         deduct += 5
-    if has_irreversible and not has_verify:
+    if has_irreversible and not has_verify and len(steps) >= 3:
         doc_issues.append("no verification step anywhere, yet the procedure has irreversible actions")
         deduct += 8
     if not any(_SYSTEM.search(s) for s in steps):
@@ -419,9 +421,11 @@ def sop_control_block(title: str, owner: str, effective_date: str, version: str 
     elif ct == "major":
         major, minor = major + 1, 0
     new_version = f"{major}.{minor}"
-    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:40]
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    if len(slug) > 32:  # cut at a word boundary
+        slug = slug[:32].rsplit("-", 1)[0] if "-" in slug[:32] else slug[:32]
     dept = re.sub(r"[^A-Z0-9]", "", department.upper())[:6]
-    sop_id = f"SOP-{dept + '-' if dept else ''}{slug.upper()[:24]}"
+    sop_id = f"SOP-{dept + '-' if dept else ''}{slug.upper()}"
     y, mo = divmod(eff.month - 1 + review_months, 12)
     try:
         next_review = eff.replace(year=eff.year + y, month=mo + 1)

@@ -151,7 +151,8 @@ def _sentiment(txt: str, rating: float | None) -> str:
         return "negative"
     if rating >= 4:
         return "mixed" if neg >= 2 and neg >= pos else "positive"
-    return "mixed" if pos and neg else lex
+    # 3 stars: mixed unless the words are clearly one-sided
+    return lex if abs(pos - neg) >= 2 else "mixed"
 
 
 @AGENT.tool
@@ -239,7 +240,7 @@ def tag_reviews(reviews: list[dict], today: str = "") -> dict:
         issues.append({"issue": t, "reviews": len(rs), "share_pct": pct(len(rs) / n), "avg_rating": round(sum(rs) / len(rs), 2), "evidence": issue_quotes.get(t, "")})
     untagged = [r["id"] for r in rows if not r["issue_tags"]]
     queue = sorted(rows, key=lambda r: -r["urgency_score"])
-    upstream = [i for i in issues if i["share_pct"] >= 10 and i["issue"] != "praise_quality" and i["avg_rating"] <= 3.5]
+    upstream = [i for i in issues if i["reviews"] >= 3 and i["share_pct"] >= 10 and i["issue"] != "praise_quality" and i["avg_rating"] <= 3.5]
     return {
         "reviews": rows,
         "queue_order": [r["id"] for r in queue],

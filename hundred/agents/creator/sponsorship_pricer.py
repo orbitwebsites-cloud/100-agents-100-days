@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import statistics
-from typing import Literal
 
 from ...core import Agent, ToolError
 from ._common import money, pct
@@ -173,8 +172,8 @@ def _usage_uplift(days: int, perpetual: bool) -> float:
     return up
 
 
-def _price(platform: str, deliverable: str, views: float, engagement_rate_pct: float, niche: str, usage_days: int, perpetual_usage: bool, exclusivity_months: int, whitelisting_days: int, rush: bool, production_hours: float, hourly_floor: float) -> dict:
-    lo, mid, hi = CPM_TABLE[platform][deliverable]
+def _price(platform: str, deliverable: str, views: float, engagement_rate_pct: float, niche: str, usage_days: int, perpetual_usage: bool, exclusivity_months: int, whitelisting_days: int, rush: bool, production_hours: float, hourly_floor: float, cpm: tuple[float, float, float] | None = None) -> dict:
+    lo, mid, hi = cpm or CPM_TABLE[platform][deliverable]
     base = {"low": views / 1000 * lo, "mid": views / 1000 * mid, "high": views / 1000 * hi}
     mult, lines = 1.0, []
     nm = NICHE_MULT.get(niche.strip().lower().replace(" ", "_"), None)
@@ -276,18 +275,9 @@ def rate_card(
         raise ToolError("engagement_rate_pct must be 0-100")
     if usage_days < 0 or exclusivity_months < 0 or whitelisting_days < 0 or production_hours < 0 or hourly_floor < 0 or cpm_override < 0:
         raise ToolError("Days, months, hours and rates cannot be negative")
-    if cpm_override:
-        CPM_TABLE[p][d]  # validate
-        saved = CPM_TABLE[p][d]
-        CPM_TABLE[p][d] = (cpm_override * 0.75, cpm_override, cpm_override * 1.35)
-        try:
-            out = _price(p, d, median_views, engagement_rate_pct, niche, usage_days, perpetual_usage, exclusivity_months, whitelisting_days, rush, production_hours, hourly_floor)
-        finally:
-            CPM_TABLE[p][d] = saved
-        out["cpm_source"] = "creator override"
-    else:
-        out = _price(p, d, median_views, engagement_rate_pct, niche, usage_days, perpetual_usage, exclusivity_months, whitelisting_days, rush, production_hours, hourly_floor)
-        out["cpm_source"] = "market starting point — replace with closed-deal CPMs"
+    cpm = (cpm_override * 0.75, cpm_override, cpm_override * 1.35) if cpm_override else None
+    out = _price(p, d, median_views, engagement_rate_pct, niche, usage_days, perpetual_usage, exclusivity_months, whitelisting_days, rush, production_hours, hourly_floor, cpm)
+    out["cpm_source"] = "creator override" if cpm else "market starting point — replace with closed-deal CPMs"
     out["verdict"] = f"Quote {out['quote_mid']:,.0f} (walk-away {out['quote_low']:,.0f}, stretch {out['quote_high']:,.0f}) for a {p} {d} on {median_views:,.0f} median views; effective CPM {out['effective_cpm_mid']:.0f}."
     return out
 

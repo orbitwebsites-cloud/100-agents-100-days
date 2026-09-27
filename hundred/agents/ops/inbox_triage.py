@@ -121,11 +121,17 @@ AGENT = Agent(
     """,
 )
 
-_NOREPLY = re.compile(r"(no-?reply|do-?not-?reply|notification|notifications|newsletter|digest|mailer|marketing|updates?@|news@|info@|hello@|alerts?@|billing@|support@|team@)", re.I)
+_NEWSLETTER_SENDER = re.compile(r"(newsletter|digest|marketing|news@|updates?@|hello@|info@|team@|community@)", re.I)
+_AUTO_SENDER = re.compile(r"(no-?reply|do-?not-?reply|notifications?@|alerts?@|mailer|billing@|system@|bot@|calendar-notification|jira@|github\.com|linear\.app|slack\.com)", re.I)
 _NEWSLETTER_BODY = re.compile(r"\b(unsubscribe|view (this )?(email )?in (your )?browser|manage (your )?preferences|you are receiving this|email preferences|opt out)\b", re.I)
 _AUTOMATED_SUBJ = re.compile(r"\b(receipt|invoice|your order|password|verify your|confirm your|weekly digest|daily digest|summary|report is ready|new sign-?in|security alert|automatic reply|out of office|delivery status)\b", re.I)
 _ASK = re.compile(r"\b(can you|could you|would you|will you|please|need you to|need your|let me know|i need|we need|are you able|do you have|thoughts\?|your input|your approval|sign off|approve|confirm|review)\b", re.I)
-_DEADLINE = re.compile(r"\b(by (eod|eow|eom|tomorrow|today|tonight|noon|end of (the )?(day|week|month)|mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}(/\d{1,2})?)|due (on|by)?|deadline|asap|urgent|time.sensitive|before (the |our )?(meeting|call|launch|friday|monday)|today|tomorrow|eod|eow|within \d+ (hours?|days?))\b", re.I)
+_DEADLINE = re.compile(
+    r"\b(?:(?:by|before|until|no later than|due|due by|due on|on|deadline(?: is|:)?)\s+(?:the |our |my |this |next |end of (?:the )?)?(?:\w+ )?"
+    r"(?:eod|eow|eom|eoq|tomorrow|today|tonight|noon|day|week|month|quarter|mon|tue|tues|wed|thu|thurs|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday|meeting|call|launch|\d{1,2}(?:/\d{1,2})?|\d{4}-\d{2}-\d{2})"
+    r"|asap|urgent(?:ly)?|time.sensitive|today|tomorrow|eod|eow|within \d+ (?:hours?|days?|business days?))\b",
+    re.I,
+)
 _MONEY = re.compile(r"(\$|€|£)\s?\d|\b(invoice|payment|contract|renewal|refund|pricing|quote|proposal|offer|budget)\b", re.I)
 _FYI = re.compile(r"^\s*(fyi|fwd?:|for your information|no action)\b", re.I)
 _THANKS_ONLY = re.compile(r"^\s*(thanks|thank you|thx|ty|cheers|great|perfect|sounds good|got it|ok|okay|noted)[\s!.,]*(\w+[\s!.,]*){0,4}$", re.I)
@@ -178,8 +184,8 @@ def score_priority(emails: list[dict], me: str = "", vips: list[str] = [], as_of
         text_all = f"{subject}\n{body}"
         sender_l = sender_raw.lower()
         is_vip = any(v and (v in sender_l or v == _domain(sender)) for v in vip_list)
-        newsletter = bool(_NOREPLY.search(sender) or _NEWSLETTER_BODY.search(body))
-        automated = bool(_AUTOMATED_SUBJ.search(subject)) and not is_vip
+        newsletter = bool(_NEWSLETTER_SENDER.search(sender) or _NEWSLETTER_BODY.search(body))
+        automated = not newsletter and not is_vip and bool(_AUTO_SENDER.search(sender) or _AUTOMATED_SUBJ.search(subject))
         if is_vip:
             score += 30
             reasons.append("VIP sender")
@@ -449,7 +455,9 @@ def plan_session(items: list[dict], minutes_available: int, two_minute_rule: boo
     deferred_out = []
     for n in deferred:
         late = n["deadline"] and n["deadline"] <= next_session
-        deferred_out.append({**n, "deadline": n["deadline"].isoformat() if n["deadline"] else None, "defer_to": (today.isoformat() + " (later today — deadline!)") if late else next_session.isoformat(), "risk": "deadline before next session" if late else None})
+        hot = n["action"].lower() in ("reply now", "do")
+        risk = "deadline before next session" if late else "reply-now item deferred — do it right after the session" if hot else None
+        deferred_out.append({**n, "deadline": n["deadline"].isoformat() if n["deadline"] else None, "defer_to": (today.isoformat() + " (later today)") if (late or hot) else next_session.isoformat(), "risk": risk})
     at_risk = [d for d in deferred_out if d["risk"]]
     total_work = sum(n["minutes"] for n in work)
     sessions_needed = -(-total_work // max(1, budget))

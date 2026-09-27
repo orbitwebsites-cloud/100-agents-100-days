@@ -140,6 +140,12 @@ PAUSE_MARKS = [
     (re.compile(r"\[(slide|next slide|click)\]", re.I), 1.5),
 ]
 PACE = {"ceremonial": 110, "conversational": 130, "energetic": 155}
+HEADING_LINE = re.compile(r"^\s{0,3}#{1,6}\s+.*$|^\s*[A-Z][A-Z0-9 &/_-]{2,40}:?\s*$|^\s*\[(?:OPENING|BODY|CLOSE|CLOSING|INTRO|PART \d+|SECTION \d+|STORY|ASK|TOAST)[^\]]{0,40}\]\s*$", re.M)
+
+
+def _spoken_text(script: str) -> str:
+    """The words the room hears: no section headings, no stage directions, no markdown."""
+    return c.STAGE_DIR_RE.sub(" ", c.strip_markdown(HEADING_LINE.sub("", script)))
 
 
 def _script_sections(script: str) -> list[dict]:
@@ -184,7 +190,7 @@ def timing(script: str, wpm: int = 130, slot_minutes: float = 0.0, pace: Literal
     if slot_minutes < 0 or slot_minutes > 180:
         raise ToolError("slot_minutes must be 0-180.")
     secs = _script_sections(script)
-    words = c.spoken_words(script)
+    words = text.words(_spoken_text(script))
     if len(words) < 10:
         raise ToolError("Fewer than 10 spoken words.")
     pause_s = 0.0
@@ -206,8 +212,8 @@ def timing(script: str, wpm: int = 130, slot_minutes: float = 0.0, pace: Literal
             dur += len(rx.findall(s["body"])) * secs_each
         rows.append({"section": s["title"][:50], "start": c.mmss(t), "duration": c.mmss(dur), "words": s["words"], "share_pct": c.pct(s["words"], len(words))})
         t += dur
-    sents = text.sentences(c.STAGE_DIR_RE.sub(" ", c.strip_markdown(script)))
-    long_breath = [{"words": len(text.words(x)), "sentence": x[:160]} for x in sents if len(text.words(x)) > 20]
+    sents = text.sentences(_spoken_text(script))
+    long_breath =[{"words": len(text.words(x)), "sentence": x[:160]} for x in sents if len(text.words(x)) > 20]
     flags: list[str] = []
     delta = None
     target_s = None
@@ -256,7 +262,7 @@ def rhetoric_check(script: str) -> dict:
         script: The speech text.
     """
     c.guard(script, "Script")
-    plain = c.STAGE_DIR_RE.sub(" ", c.strip_markdown(script))
+    plain = _spoken_text(script)
     sents = text.sentences(plain)
     if len(sents) < 3:
         raise ToolError("Need at least 3 sentences.")
@@ -286,6 +292,17 @@ def rhetoric_check(script: str) -> dict:
     units = [u for u in re.split(r"(?<=[.!?;:])\s+|\n+", plain) if len(text.words(u)) >= 2]
     starts = [" ".join(_norm_words(u)[:2]) for u in units]
     ends = [" ".join(_norm_words(u)[-2:]) for u in units]
+    # sentence-level tricolon: three consecutive short units with parallel shape (same opener or same ending)
+    i = 0
+    while i + 2 < len(units):
+        trio = units[i:i + 3]
+        short = all(len(text.words(u)) <= 8 for u in trio) and len({" ".join(_norm_words(u)) for u in trio}) == 3
+        parallel =(starts[i] == starts[i + 1] == starts[i + 2] and starts[i]) or (ends[i] == ends[i + 1] == ends[i + 2] and ends[i])
+        if short and parallel:
+            found["tricolon"].append({"sentence": i + 1, "part": part(min(n - 1, int(i * n / max(1, len(units))))), "text": " ".join(trio)[:160]})
+            i += 3
+        else:
+            i += 1
     i = 0
     while i < len(units):
         j = i
@@ -393,7 +410,7 @@ def structure_map(script: str, wpm: int = 130) -> dict:
         open_w, close_w = opening["words"], close["words"]
         open_text, close_text = c.strip_markdown(opening["body"]), c.strip_markdown(close["body"])
     else:
-        paras = c.paragraphs(c.STAGE_DIR_RE.sub(" ", c.strip_markdown(script)))
+        paras = c.paragraphs(_spoken_text(script))
         if len(paras) < 3:
             raise ToolError("Need headings or at least 3 paragraphs to map opening / body / close.")
         open_text, close_text = paras[0], paras[-1]
@@ -428,7 +445,7 @@ def structure_map(script: str, wpm: int = 130) -> dict:
     if not callbacks:
         flags.append("No callback: no phrase from the opening returns in the close.")
     close_nums = set(re.findall(r"\d[\d,.]*", close_text))
-    body_nums = set(re.findall(r"\d[\d,.]*", c.strip_markdown(script)[: -len(close_text) or None]))
+    body_nums = set(re.findall(r"\d[\d,.]*", _spoken_text(script)[: -len(close_text) or None]))
     new_in_close = sorted(close_nums - body_nums)
     if new_in_close:
         flags.append(f"New numbers appear only in the close ({', '.join(new_in_close[:4])}) — the close shouldn't introduce information.")
@@ -496,12 +513,12 @@ def speakability(script: str) -> dict:
         script: The speech text.
     """
     c.guard(script, "Script")
-    plain = c.STAGE_DIR_RE.sub(" ", c.strip_markdown(script))
+    plain = _spoken_text(script)
     ws = text.words(plain)
     if len(ws) < 10:
         raise ToolError("Fewer than 10 spoken words.")
     sents = text.sentences(plain)
-    long_s = [{"words": len(text.words(s)), "sentence": s[:160]} for s in sents if len(text.words(s)) > 20]
+    long_s =[{"words": len(text.words(s)), "sentence": s[:160]} for s in sents if len(text.words(s)) > 20]
     hard_words = sorted({w.lower() for w in ws if text.syllables(w) >= 4 and not w.isupper()})
     numbers = []
     for m in re.finditer(r"(?<![\w.])\d[\d,]*(?:\.\d+)?%?(?![\w])", plain):

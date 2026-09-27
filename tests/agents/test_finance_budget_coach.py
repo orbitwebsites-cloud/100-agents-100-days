@@ -62,11 +62,16 @@ def test_debt_payoff_avalanche_vs_snowball_and_minimums():
     sn = call("debt_payoff", debts=debts, extra_monthly=335, method="snowball", start_date="2026-10-01")
     assert av["attack_order"] == ["Card A", "Card B", "Card C"]
     assert sn["attack_order"] == ["Card B", "Card A", "Card C"]
-    assert av["months_to_debt_free"] == 28
-    assert av["debt_free_date"] == "2029-02"
+    assert av["months_to_debt_free"] == 24
+    assert av["debt_free_date"] == "2028-10"
+    assert av["total_interest"] == 2752.36
     assert av["total_interest"] < sn["total_interest"]
     assert av["minimums_only"]["months"] == 64
-    assert av["interest_saved_vs_minimums"] > 5000
+    assert av["interest_saved_vs_minimums"] == 5332.33
+    # month 1 by hand: interest 87.47 + 18.24 + 120.42 = 226.13; 13,800 + 226.13 − 700 = 13,326.13
+    assert av["balance_curve"][0]["total_balance"] == 13326.13
+    # rollover: Card B's minimum keeps flowing after it clears, so Card C dies in month 24 under both methods
+    assert [d["paid_off_month"] for d in sn["debts"]] == [13, 4, 24]
 
 
 def test_debt_payoff_never_pays_off():

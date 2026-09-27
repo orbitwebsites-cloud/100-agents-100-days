@@ -340,13 +340,17 @@ def categorize(transactions: list[dict], rules: list[dict] | None = None) -> dic
         raise ToolError("at most 300 rules")
     out, uncategorised, low_conf = [], [], []
     by_cat = defaultdict(lambda: ZERO)
+    cache: dict[tuple[str, bool], tuple[str, str, float]] = {}  # bank exports repeat merchants with varying reference numbers
     for i, t in enumerate(rows, 1):
         if not isinstance(t, dict):
             raise ToolError(f"transactions[{i}] must be an object")
         desc = str(t.get("description", ""))
         merchant = str(t.get("merchant") or _merchant(desc))
         amt = D(t.get("amount", 0), f"transactions[{i}].amount")
-        cat, why, conf = _apply_rules(desc, merchant, amt, user_rules)
+        key = (re.sub(r"\d+", "", f"{desc} {merchant}".lower()), amt > 0)
+        if key not in cache:
+            cache[key] = _apply_rules(desc, merchant, amt, user_rules)
+        cat, why, conf = cache[key]
         row = {**t, "merchant": merchant, "amount": money(amt), "category": cat, "rule": why, "confidence": conf}
         out.append(row)
         if cat == "Uncategorised":
@@ -557,15 +561,15 @@ def flag_anomalies(transactions: list[dict], duplicate_window_days: int = 3, out
     by_m: dict[str, list[dict]] = defaultdict(list)
     for it in items:
         by_m[it["merchant"]].append(it)
-    seen_dupes = set()
     for merchant, lst in by_m.items():
         lst.sort(key=lambda x: x["date"])
-        for a_idx, a in enumerate(lst):
-            for b in lst[a_idx + 1:]:
-                if (b["date"] - a["date"]).days > duplicate_window_days:
-                    break
-                if a["amount"] == b["amount"] and a["amount"] < 0 and (a["i"], b["i"]) not in seen_dupes:
-                    seen_dupes.add((a["i"], b["i"]))
+        same_amount: dict[Decimal, list[dict]] = defaultdict(list)
+        for x in lst:
+            if x["amount"] < 0:
+                same_amount[x["amount"]].append(x)
+        for grp in same_amount.values():
+            for a, b in zip(grp, grp[1:]):  # already date-sorted: consecutive pairs are the only candidates
+                if (b["date"] - a["date"]).days <= duplicate_window_days:
                     flags.append({"type": "duplicate", "merchant": merchant.title(), "amount": money(-a["amount"]), "dates": [a["date"].isoformat(), b["date"].isoformat()], "rows": [a["i"], b["i"]], "disposition": "confirm not double-charged; request refund if so"})
         spends = [-x["amount"] for x in lst if x["amount"] < 0]
         if len(spends) >= 3:

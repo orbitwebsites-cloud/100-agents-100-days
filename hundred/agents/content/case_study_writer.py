@@ -201,9 +201,15 @@ def format_metrics(metrics: list[dict]) -> dict:
         elif fold is not None and fold >= 2:
             framing = "x-fold"
             fx = math.floor(fold * 10) / 10
-            phrase = f"{fx:g}x {'more' if hib else 'fewer'} {name}" if fx != int(fx) else f"{int(fx)}x {'more' if hib else 'fewer'} {name}"
-            if not hib:
-                phrase = f"cut {name} {fx:g}x (from {_fmt_num(before, unit)} to {_fmt_num(after, unit)})"
+            span = f"(from {_fmt_num(before, unit)} to {_fmt_num(after, unit)})"
+            if 1.95 <= fold < 2.1:
+                phrase = f"{'doubled' if hib else 'halved'} {name} {span}"
+            elif 2.95 <= fold < 3.1:
+                phrase = f"{'tripled' if hib else 'cut'} {name} {'' if hib else '3x '}{span}".replace("  ", " ")
+            elif hib:
+                phrase = f"{fx:g}x more {name} {span}"
+            else:
+                phrase = f"cut {name} {fx:g}x {span}"
         elif pct_change is not None:
             framing = "percent"
             verb = ("grew" if delta > 0 else "cut") if hib else ("cut" if delta < 0 else "grew")

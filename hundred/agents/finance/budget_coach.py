@@ -222,12 +222,14 @@ def _simulate(debts: list[dict], extra: Decimal, method: str, start: date) -> di
             s["balance"] += i
             s["interest_paid"] += i
             total_interest += i
-        # minimums
-        pool = extra if method != "minimum" else ZERO
+        # minimums; with rollover methods, the minimums of already-cleared debts keep flowing into the pool
+        pool = ZERO
+        if method != "minimum":
+            pool = extra + sum(s["min"] for s in state if s["balance"] <= 0)
         for s in open_debts:
             pay = min(s["min"], s["balance"])
             s["balance"] -= pay
-            pool += s["min"] - pay  # leftover minimum from a nearly-paid debt rolls forward
+            pool += s["min"] - pay  # leftover minimum from a nearly-paid debt rolls forward this month too
         # rollover targets
         if method != "minimum":
             order = sorted(

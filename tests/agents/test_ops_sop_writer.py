@@ -88,7 +88,7 @@ def test_cycle_time_pce_and_handoffs():
 
 def test_sop_control_block_version_and_review_date():
     out = call("sop_control_block", title="Customer refund processing", owner="Head of Support", effective_date="2026-01-31", version="1.3", review_months=12, change_type="major", department="cs", as_of="2026-09-27")
-    assert out["sop_id"] == "SOP-CS-CUSTOMER-REFUND-PROCESSIN" and out["version"] == "2.0" and out["previous_version"] == "1.3"
+    assert out["sop_id"] == "SOP-CS-CUSTOMER-REFUND-PROCESSING" and out["version"] == "2.0" and out["previous_version"] == "1.3"
     assert out["next_review_date"] == "2027-01-31" and out["days_until_review"] == 126 and out["status"] == "active"
     assert out["requires_retraining"] is True
     minor = call("sop_control_block", title="X", owner="Y", effective_date="2025-08-31", version="2.0", review_months=6, change_type="minor", as_of="2026-09-27")
