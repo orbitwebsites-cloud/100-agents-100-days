@@ -67,7 +67,8 @@ AGENT = Agent(
        role. Fix everything it flags: clichés, sentences starting with "I" over 40%, word
        count outside 250-350, missing company/role mention, passive voice, reading grade
        above 11. Then call `cover_letter__requirement_coverage` with the letter and the top
-       three requirement texts. Any requirement with `covered: false` gets a sentence.
+       three requirement texts. Any requirement with `status` "missing" or "partial" gets an
+       evidence sentence that names its `skills_missing` (or says honestly you lack them).
     5. **Iterate once**, re-run `cover_letter__check_letter`, and only deliver a draft that
        scores ≥ 80. Report the score.
     6. **Deliver** the letter plus a 2-line "why this works" note and the subject line to use
@@ -153,6 +154,8 @@ CLICHES = {
     "unique opportunity": "cut",
     "your innovative company": "name the actual product/launch",
     "results-driven": "cut — show results",
+    "fast learner": "cut — show something you learned fast and what it produced",
+    "quick learner": "cut — show something you learned fast and what it produced",
 }
 I_START_RE = re.compile(r"^\W*I\b", re.I)
 
@@ -176,7 +179,7 @@ def extract_requirements(job_description: str, top_n: int = 3) -> dict:
         raise ToolError("No requirement lines found — paste the full posting including the requirements/qualifications section.")
     freq = extract_skill_terms(job_description)
     for r in reqs:
-        term_weight = sum(freq.get(t, 0) for t in r["skills"])
+        term_weight = sum(freq.get(t, 0) for t in r["skills"] if t not in r.get("nice_skills", []))
         tier_weight = {"must": 3.0, "unclear": 1.5, "nice": 0.5, "duty": 0.0}[r["tier"]]
         r["rank_score"] = round(tier_weight * (1 + term_weight) - 0.02 * r["n"], 2)
     must = [r for r in reqs if r["tier"] == "must"]
@@ -203,20 +206,42 @@ def extract_requirements(job_description: str, top_n: int = 3) -> dict:
 def _coverage(letter: str, requirements: list[str]) -> list[dict]:
     sents = text.sentences(letter)
     sent_terms = [(s, set(extract_skill_terms(s)) | {w.lower() for w in text.words(s) if w.lower() not in text.STOPWORDS and len(w) > 3}) for s in sents]
+    letter_skills = set(extract_skill_terms(letter))
     rows = []
     for i, req in enumerate(requirements, 1):
         rq_skills = set(extract_skill_terms(req))
         rq_words = {w.lower() for w in text.words(req) if w.lower() not in text.STOPWORDS and len(w) > 3}
-        best, best_score, best_hits = None, 0.0, []
-        for s, st in sent_terms:
+        best, best_i, best_score, best_hits = None, -1, 0.0, []
+        for j, (s, st) in enumerate(sent_terms):
             skill_hits = rq_skills & st
             word_hits = rq_words & st
             score = 2.0 * len(skill_hits) + len(word_hits)
             if score > best_score:
-                best, best_score, best_hits = s, score, sorted(skill_hits | word_hits)
-        covered = best_score >= 2 or (bool(rq_skills) and any(rq_skills & st for _, st in sent_terms))
-        has_number = bool(best and re.search(r"\d", best))
-        rows.append({"n": i, "requirement": req[:300], "covered": covered, "evidence_sentence": best[:300] if best else None, "matched_terms": best_hits, "quantified": has_number})
+                best, best_i, best_score, best_hits = s, j, score, sorted(skill_hits | word_hits)
+        # A requirement is answered only when MORE than half of its skill terms appear:
+        # naming the job title ("Product Manager position") or one of two skills is a mention, not an answer.
+        skills_hit = sorted(rq_skills & letter_skills)
+        if rq_skills:
+            share = len(skills_hit) / len(rq_skills)
+            status = "covered" if share > 0.5 and best_score >= 2 else "partial" if skills_hit else "missing"
+        else:
+            status = "covered" if best_score >= 2 else "missing"
+        # Evidence often spans two sentences ("I design the tests. One lifted conversion 23%.").
+        window = " ".join(s for s, _ in sent_terms[best_i : best_i + 2]) if best_i >= 0 else ""
+        has_number = bool(re.search(r"\d", window))
+        rows.append(
+            {
+                "n": i,
+                "requirement": req[:300],
+                "covered": status == "covered",
+                "status": status,
+                "skills_in_letter": skills_hit,
+                "skills_missing": sorted(rq_skills - letter_skills),
+                "evidence_sentence": best[:300] if best else None,
+                "matched_terms": best_hits,
+                "quantified": has_number,
+            }
+        )
     return rows
 
 
@@ -225,7 +250,8 @@ def requirement_coverage(letter: str, requirements: list[str]) -> dict:
     """Check which of the target requirements the letter actually answers, and whether each answer carries a number.
 
     Matches each requirement's skill terms and key words to the letter's sentences.
-    Call after drafting; add a sentence for anything `covered: false`.
+    Call after drafting; add an evidence sentence for anything with status "partial" or "missing"
+    (partial = the letter names some of the requirement's skills but not most of them).
 
     Args:
         letter: The cover letter draft.
@@ -239,13 +265,17 @@ def requirement_coverage(letter: str, requirements: list[str]) -> dict:
     rows = _coverage(letter, reqs)
     covered = sum(1 for r in rows if r["covered"])
     quantified = sum(1 for r in rows if r["covered"] and r["quantified"])
+    partial = [r["n"] for r in rows if r["status"] == "partial"]
     return {
         "requirements": rows,
         "covered": covered,
+        "partial": partial,
         "total": len(rows),
         "coverage_pct": pct(covered, len(rows)),
         "quantified_answers": quantified,
-        "verdict": f"{covered}/{len(rows)} requirements answered, {quantified} with a number. "
+        "verdict": f"{covered}/{len(rows)} requirements answered, {quantified} with a number"
+        + (f"; {len(partial)} only mentioned (see skills_missing)" if partial else "")
+        + ". "
         + ("Ready." if covered == len(rows) and quantified >= min(2, len(rows)) else "Add evidence sentences for the gaps and a number to each answer."),
     }
 
@@ -268,12 +298,20 @@ def check_letter(letter: str, job_description: str = "", company: str = "", role
     cliches = scan_lexicon(letter, CLICHES)
     passive = text.passive_sentences(letter)
     read = text.readability(letter)
-    paragraphs = [p for p in re.split(r"\n\s*\n", letter.strip()) if len(text.words(p)) >= 4]
+    # Body paragraphs only: the greeting line and the sign-off/contact block are not paragraphs.
+    paragraphs = [
+        p
+        for p in re.split(r"\n\s*\n", letter.strip())
+        if len(text.words(p)) >= 4
+        and not re.match(r"^\s*(dear|hi|hello|to whom|greetings)\b", p, re.I)
+        and not (re.search(r"@|\(\d{3}\)|linkedin\.com", p) and len(text.words(p)) <= 25)
+        and not re.match(r"^\s*(sincerely|best|regards|kind regards|warm regards|thank you|thanks|yours)\b[^.!?]*$", p, re.I)
+    ]
     low = letter.lower()
     company_mentions = low.count(company.lower()) if company.strip() else None
     role_found = (role.lower() in low) if role.strip() else None
     opening = sents[0] if sents else ""
-    greeting = re.search(r"^\s*(dear|hi|hello)\b.*$", letter.strip(), re.I | re.M)
+    greeting = re.search(r"^\s*(dear|hi|hello|to whom)\b.*$", letter.strip(), re.I | re.M)
     jd_overlap = None
     if job_description.strip():
         jd_terms = set(extract_skill_terms(job_description))

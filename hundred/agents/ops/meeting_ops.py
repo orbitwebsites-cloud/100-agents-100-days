@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
-from datetime import date, timedelta
+from datetime import date
 
 from ...core import Agent, ToolError
 from ...lib import dates, text
+from ._common import resolve_relative_date
 
 AGENT = Agent(
     slug="meeting-ops",
@@ -46,13 +47,21 @@ AGENT = Agent(
 
     ## Procedure
     1. **Profile the transcript.** Call `meeting_ops__transcript_stats` with the raw
-       transcript. It returns speakers, talk share, duration estimate and every line that
-       contains commitment language ("I'll", "by Friday", "let's", "can you"). Those lines
-       are your candidate action items — read each one in context.
-    2. **Resolve dates.** For every relative deadline ("Friday", "end of next week",
-       "EOD tomorrow", "in two weeks") call `meeting_ops__resolve_due_dates` with the
-       phrases and the meeting date (ask for it only if it isn't in the transcript;
-       otherwise assume today and say so). Never compute dates yourself.
+       transcript (plain "Name: text", Otter/Fireflies exports with "Name  0:42" lines, or
+       Zoom .vtt all work). It returns speakers, talk share, duration estimate, the meeting
+       date if the header states one, every line with commitment language ("I'll", "by
+       Friday", "can you", "someone should"), every line with decision language ("let's go
+       with", "we're killing"), and retractions ("scratch that"). Candidates are your
+       checklist: read each one in context, together with the lines that follow it — a
+       commitment can be reassigned ("Aisha, can you take it instead?") or withdrawn two
+       lines later, and the later state wins.
+    2. **Resolve dates.** For every deadline phrase ("Friday", "EOD Thursday", "next
+       Tuesday", "Oct 15th", "end of next week", "in two weeks") call
+       `meeting_ops__resolve_due_dates` with the phrases exactly as spoken and the meeting
+       date (use `detected_meeting_date`; if it is null, ask once, or assume today and say
+       so). Never compute dates yourself. If a result has `confirm: true`, keep the date but
+       mark it "(confirm)"; a phrase with no date ("once it's merged") stays undated — a
+       condition is not a due date.
     3. **Classify every candidate** as exactly one of:
        - **Decision** — something the group agreed is now true ("we're going with Stripe").
        - **Action item** — a specific person committed to a specific deliverable.
@@ -100,26 +109,65 @@ AGENT = Agent(
     - Summarising the conversation chronologically ("First, Sam talked about…"). Report outcomes.
     - Tasks like "Look into X" with no deliverable — rewrite to what "done" looks like.
     - Inventing due dates. No date stated → "no date — confirm" flag, not a guess.
+    - Keeping the first owner of a task that was reassigned later in the meeting, or a
+      commitment the speaker withdrew ("scratch that"). The last word in the transcript wins.
+    - Turning "someone should…" into a task for whoever said it. No named owner = open question.
     - Padding the TL;DR. If it was a status meeting with no decisions, say so.
     """,
 )
 
-SPEAKER_RE = re.compile(r"^\s*(?:\[?[\d:]{4,8}\]?\s*)?([A-Z][\w .'-]{0,40}?)\s*(?:\([^)]*\))?\s*:\s+(.+)$")
+SPEAKER_RE = re.compile(r"^\s*(?:\[?[\d:.]{4,12}\]?\s*)?([A-Z][\w .'-]{0,40}?)\s*(?:\([^)]*\))?\s*:\s+(.+)$")
+# Otter/Fireflies-style exports put the speaker and a timestamp on their own line, text below.
+SPEAKER_HEADER_RE = re.compile(r"^\s*([A-Z][\w.'-]*(?: [A-Z0-9][\w.'-]*){0,3})\s*(?:\([^)]*\))?(?:\s{2,}|\s*[-–—|]\s*|\s+(?=[\[(]))\[?\(?(\d{1,2}:\d{2}(?::\d{2})?)\)?\]?\s*$")
+VTT_NOISE_RE = re.compile(r"^\s*(WEBVTT|NOTE\b|\d+\s*$|[\d:.]+\s*-->\s*[\d:.]+)")
+# "Attendees: …", "Date: …" are header fields, not speakers.
+HEADER_LABELS = {
+    "attendees", "attendee", "participants", "present", "date", "time", "agenda", "location", "subject", "title",
+    "meeting", "notes", "note", "action items", "action item", "summary", "recording", "duration", "absent", "cc",
+    "re", "topic", "transcript", "host", "organizer", "next meeting", "decisions",
+}
 COMMIT_RE = re.compile(
-    r"\b(I'?ll|I will|I can|I'm going to|we'?ll|we will|let'?s|can you|could you|will you|"
-    r"you'?ll|action item|todo|to-do|follow up|by (?:mon|tues|wednes|thurs|fri|satur|sun)day|"
-    r"by (?:eod|eow|end of|tomorrow|next)|owner|assign|take (?:that|this) on|on it)\b",
+    r"\b(I'?ll|I will|I can|I'm going to|I'm on it|I owe|I need to|I have to|let me|will do|we'?ll|we will|let'?s|"
+    r"can you|could you|will you|would you mind|you'?ll|action item|todo|to-do|follow up|"
+    r"by (?:mon|tues?|wed(?:nes)?|thurs?|fri|satur|sun)(?:day)?|"
+    r"by (?:eod|eow|cob|end of|tomorrow|next|the \d)|owner|assign|take (?:that|this|it) on|I'?ll take|on it|"
+    r"someone (?:should|needs to|has to)|who(?:'s| is) (?:going to|taking|owning))\b",
     re.I,
 )
-WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+DECISION_RE = re.compile(
+    r"\b(we(?:'ve| have)? decided|decision is|let'?s go with|we'?re going with|going with|agreed|we agree|"
+    r"final (?:answer|call)|locked in|that'?s settled|we'?ll stick with|let'?s keep|let'?s kill|we'?re killing|"
+    r"let'?s (?:not|drop|cut|move|push|ship)|approved|sign(?:ed)? off)\b",
+    re.I,
+)
+RETRACT_RE = re.compile(r"\b(scratch that|never ?mind|actually,? no|forget (?:that|it)|not needed anymore|no longer needed|cancel that)\b", re.I)
+_DATE_IN_HEADER = [
+    re.compile(r"\b(\d{4}-\d{2}-\d{2})\b"),
+    re.compile(r"\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4})\b", re.I),
+    re.compile(r"\b(\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?,?\s+\d{4})\b", re.I),
+]
+
+
+def _detect_meeting_date(transcript: str) -> str | None:
+    head = "\n".join(transcript.splitlines()[:8])
+    for rx in _DATE_IN_HEADER:
+        m = rx.search(head)
+        if m:
+            d, _rule = resolve_relative_date(m.group(1), date(2000, 1, 1))
+            if d:
+                return d.isoformat()
+    return None
 
 
 @AGENT.tool
 def transcript_stats(transcript: str) -> dict:
-    """Profile a meeting transcript: speakers, talk share, length, and candidate commitment lines.
+    """Profile a meeting transcript: speakers, talk share, length, commitment and decision candidate lines, meeting date.
 
-    Call first. Works with "Name: text" lines (optionally timestamped). Returns the lines
-    containing commitment language so no action item is missed.
+    Call first. Works with "Name: text" lines (optionally timestamped), Otter/Fireflies exports
+    ("Name  0:42" on its own line, text below) and Zoom .vtt captions. Header fields such as
+    "Attendees:" are not counted as speakers. Returns every line with commitment language
+    (so no action item is missed), lines with decision language, retractions ("scratch that"),
+    and the meeting date if the header states one.
 
     Args:
         transcript: The raw meeting transcript text.
@@ -129,81 +177,77 @@ def transcript_stats(transcript: str) -> dict:
     if len(transcript) > 400_000:
         raise ToolError("Transcript too long (400k chars max). Split it into parts.")
     words_by_speaker: Counter[str] = Counter()
-    candidates = []
+    candidates, decisions, retractions = [], [], []
     unattributed = 0
+    current: str | None = None
     for n, line in enumerate(transcript.splitlines(), 1):
-        if not line.strip():
+        if not line.strip() or VTT_NOISE_RE.match(line):
+            continue
+        hdr = SPEAKER_HEADER_RE.match(line)
+        if hdr and hdr.group(1).strip().lower() not in HEADER_LABELS:
+            current = hdr.group(1).strip()
             continue
         m = SPEAKER_RE.match(line)
-        speaker, said = (m.group(1).strip(), m.group(2)) if m else (None, line)
+        if m and m.group(1).strip().lower() in HEADER_LABELS:
+            continue  # "Attendees: …", "Date: …"
+        if m:
+            speaker, said = m.group(1).strip(), m.group(2)
+            current = speaker
+        elif current and not line.lstrip().startswith(("[", "(")) or (current and len(line) > 60):
+            speaker, said = current, line
+        else:
+            speaker, said = None, line
         if speaker:
             words_by_speaker[speaker] += len(text.words(said))
         else:
             unattributed += 1
+        item = {"line": n, "speaker": speaker, "text": said.strip()[:400]}
         if COMMIT_RE.search(said):
-            candidates.append({"line": n, "speaker": speaker, "text": said.strip()[:400]})
+            candidates.append(item)
+        if DECISION_RE.search(said):
+            decisions.append(item)
+        if RETRACT_RE.search(said):
+            retractions.append(item)
     total = sum(words_by_speaker.values()) or len(text.words(transcript))
     share = {s: round(100 * w / total, 1) for s, w in words_by_speaker.most_common()}
+    detected = _detect_meeting_date(transcript)
     return {
         "speakers": list(share),
         "talk_share_pct": share,
         "total_words": total,
         "estimated_minutes": round(len(text.words(transcript)) / 150),
+        "detected_meeting_date": detected,
         "commitment_candidates": candidates,
+        "decision_candidates": decisions,
+        "retractions": retractions,
         "unattributed_lines": unattributed,
-        "note": "Each candidate still needs judgement: confirm owner + deliverable in context.",
+        "note": "Each candidate still needs judgement: confirm owner + deliverable in context, drop anything retracted "
+        "or reassigned later in the meeting, and pass detected_meeting_date to resolve_due_dates"
+        + ("" if detected else " (no date in the header — ask, or assume today and say so)")
+        + ".",
     }
-
-
-def _resolve(phrase: str, base: date) -> tuple[date | None, str]:
-    p = phrase.lower().strip()
-    if re.search(r"\b(today|eod|end of (the )?day)\b", p) and "tomorrow" not in p:
-        return base, "same day"
-    if "tomorrow" in p:
-        return base + timedelta(days=1), "next day"
-    m = re.search(r"\bin (\d+|a|one|two|three|four) (day|week|month)s?\b", p)
-    if m:
-        n = {"a": 1, "one": 1, "two": 2, "three": 3, "four": 4}.get(m.group(1)) or int(m.group(1))
-        unit = m.group(2)
-        days = n * {"day": 1, "week": 7, "month": 30}[unit]
-        return base + timedelta(days=days), f"+{n} {unit}(s)"
-    m = re.search(r"\bin (\d+) business days?\b", p)
-    if m:
-        return dates.add_business_days(base, int(m.group(1))), "business days"
-    if re.search(r"\b(eow|end of (?:the |next )?week)\b", p):
-        d = base + timedelta(days=(4 - base.weekday()) % 7)
-        return (d + timedelta(days=7) if "next" in p else d), "Friday"
-    if re.search(r"\bend of (the )?month|eom\b", p):
-        nxt = (base.replace(day=28) + timedelta(days=4)).replace(day=1)
-        return nxt - timedelta(days=1), "last day of month"
-    if re.search(r"\bnext week\b", p):
-        return base + timedelta(days=7 - base.weekday()), "Monday next week"
-    for i, day in enumerate(WEEKDAYS):
-        if re.search(rf"\b{day[:3]}(?:{day[3:]})?\b", p):
-            ahead = (i - base.weekday()) % 7 or 7
-            if "next" in p and ahead < 7:
-                ahead += 7
-            return base + timedelta(days=ahead), day.title()
-    m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", p)
-    if m:
-        return dates.parse_date(m.group(1)), "explicit"
-    return None, "unrecognised — confirm with owner"
 
 
 @AGENT.tool
 def resolve_due_dates(phrases: list[str], meeting_date: str = "") -> dict:
-    """Turn relative deadlines ("by Friday", "end of next week", "in 2 weeks") into calendar dates.
+    """Turn relative deadlines ("by Friday", "EOD Thursday", "next Tuesday", "Oct 15th", "in 2 weeks") into calendar dates.
+
+    A named weekday beats a same-day word ("EOD Thursday" is Thursday, not today). "next <day>"
+    means that day in the next calendar week; when a speaker could have meant the nearer one, the
+    rule says "confirm". Phrases with no date ("once it's merged") return null — never guess.
 
     Args:
         phrases: Deadline phrases exactly as spoken in the meeting.
-        meeting_date: The meeting date as YYYY-MM-DD. Defaults to today.
+        meeting_date: The meeting date as YYYY-MM-DD (use transcript_stats' detected_meeting_date). Defaults to today.
     """
     base = dates.parse_date(meeting_date) if meeting_date else date.today()
     out = []
     for phrase in phrases[:100]:
-        d, rule = _resolve(phrase, base)
-        out.append({"phrase": phrase, "due": d.isoformat() if d else None, "weekday": d.strftime("%a") if d else None, "rule": rule})
-    return {"meeting_date": base.isoformat(), "resolved": out}
+        d, rule = resolve_relative_date(str(phrase), base)
+        if d is None:
+            rule = "unrecognised — confirm with owner"
+        out.append({"phrase": phrase, "due": d.isoformat() if d else None, "weekday": d.strftime("%a") if d else None, "rule": rule, "confirm": d is None or "confirm" in rule})
+    return {"meeting_date": base.isoformat(), "meeting_weekday": base.strftime("%A"), "assumed_today": not meeting_date, "resolved": out}
 
 
 VAGUE_VERBS = re.compile(r"^(look into|think about|consider|check on|explore|touch base|circle back|discuss)\b", re.I)

@@ -57,11 +57,15 @@ AGENT = Agent(
 
     ## Procedure
     1. **Forecast demand per SKU.** Call `inventory_planner__forecast_demand` with the
-       period history. It returns average and standard deviation of demand per day (the
-       inputs the safety-stock formula needs), trend, seasonal indices if there are ≥ 24
-       months, and a forecast for the horizon. Use its `daily_demand_mean` and
-       `daily_demand_std`, not your own averages. If history is < 4 periods, say the
-       forecast is low-confidence and use a wider service level margin.
+       period history (ending with the last complete period) and `lead_time_days`. It
+       returns the demand std dev per day (the σd the safety-stock formula needs), trend,
+       seasonal indices if there are ≥ 24 months, a forecast for the horizon, and the
+       forecast demand over the coming lead time. Its `use_for_reorder_point` field tells
+       you which daily demand to use: for seasonal or trending SKUs use
+       `forecast_daily_demand_over_lead_time` — the historical average under-orders ahead
+       of a peak and over-orders ahead of a trough; for stable SKUs `daily_demand_mean`.
+       Always use its `daily_demand_std`, never your own averages. If history is < 4
+       periods, say the forecast is low-confidence and use a wider service level margin.
     2. **Classify the catalogue** with `inventory_planner__abc_xyz_classify` when there are
        ≥ 5 SKUs. A = the SKUs that make the first 80% of revenue; XYZ = demand stability.
        AX gets the tightest control (highest service level, most frequent review); CZ gets
@@ -76,7 +80,9 @@ AGENT = Agent(
        correctly (all-units discount) and reports the cheapest feasible quantity plus what
        the MOQ costs you versus the pure EOQ. Cap the order at ~90 days of forecast demand
        for fashion/seasonal goods unless the price break justifies it, and say so.
-    5. **Date everything** with `inventory_planner__stock_cover`. It projects the stockout
+    5. **Date everything** with `inventory_planner__stock_cover`. Pass the forecast
+       (`forecast_per_period` + `period`) for seasonal/trending SKUs so the burn rate
+       follows the peak. It projects the stockout
        date from on-hand, incoming shipments and forecast demand, and back-calculates the
        last order date (stockout date − lead time − safety buffer). Any SKU whose last
        order date is in the past is a red alert at the top of the output.
@@ -122,6 +128,10 @@ AGENT = Agent(
 
     ## Anti-patterns
     - Using a monthly average as "daily demand" without dividing by days in period.
+    - Using the 12- or 24-month average as lead-time demand for a seasonal SKU right before
+      its peak — the ROP says "not yet" while the peak eats the stock.
+    - Sizing annual demand for EOQ from last year's total on a growing SKU; use the
+      12-period forecast total.
     - Ignoring lead-time variability, or adding safety stock as a flat "2 weeks extra".
     - Safety stock computed as z × σd × LT (linear) instead of z × σd × √LT — this
       over-stocks by a factor of √LT and is the most common spreadsheet error.
@@ -139,18 +149,48 @@ def _period_days(period: str) -> float:
     return {"daily": 1.0, "weekly": 7.0, "monthly": 365.0 / 12.0}[period]
 
 
+def _seasonal_decompose(xs: list[float]) -> tuple[list[float], float, float]:
+    """Classical multiplicative decomposition (Hyndman & Athanasopoulos, FPP3 §3.4).
+
+    1. 2×12 centred moving average = trend-cycle; 2. seasonal ratio x / CMA averaged per month
+    and normalised to mean 1; 3. least-squares trend on the *deseasonalised* series.
+    Fitting a straight line to raw seasonal data instead biases the slope by where the peaks
+    fall (a Q4 peak at the start of the window drags the trend negative even when the SKU is
+    growing year on year) — the forecast then under-shoots every peak.
+    """
+    n = len(xs)
+    ratios: list[list[float]] = [[] for _ in range(12)]
+    for i in range(6, n - 6):
+        cma = (0.5 * xs[i - 6] + sum(xs[i - 5 : i + 6]) + 0.5 * xs[i + 6]) / 12
+        if cma > 0:
+            ratios[i % 12].append(xs[i] / cma)
+    raw = [mean(v) if v else 1.0 for v in ratios]
+    norm = mean(raw) or 1.0
+    seasonal = [r / norm for r in raw]
+    ds = [x / seasonal[i % 12] if seasonal[i % 12] > 0 else x for i, x in enumerate(xs)]
+    mx = (n - 1) / 2
+    md = mean(ds)
+    mxx = sum((i - mx) ** 2 for i in range(n))
+    slope = sum((i - mx) * (d - md) for i, d in enumerate(ds)) / mxx if mxx else 0.0
+    return seasonal, slope, md - slope * mx
+
+
 @AGENT.tool
-def forecast_demand(history: list[float], period: str = "monthly", horizon_periods: int = 3, recent_weight_periods: int = 0) -> dict:
+def forecast_demand(history: list[float], period: str = "monthly", horizon_periods: int = 3, recent_weight_periods: int = 0, lead_time_days: float = 0.0) -> dict:
     """Forecast demand from a units-sold history and return the daily mean/std the safety-stock formula needs.
 
     Fits a linear trend (least squares) and, with 24+ monthly points, multiplicative seasonal
-    indices. Also returns demand std dev converted to daily terms. Call first for every SKU.
+    indices by classical decomposition (centred moving average, trend fitted on the
+    deseasonalised series). History must end with the last *complete* period; forecast period 1
+    is the one starting now. Pass lead_time_days to get the forecast demand over the coming lead
+    time — use that (not the historical average) for reorder points on trending/seasonal SKUs.
 
     Args:
         history: Units sold per period, oldest first (e.g. 12 monthly totals).
         period: Period length of each history point: "daily", "weekly" or "monthly".
         horizon_periods: How many future periods to forecast (1-24).
         recent_weight_periods: If > 0, compute the baseline from only the last N periods (use after a step change, e.g. a viral spike or delisting).
+        lead_time_days: Optional supplier lead time in days; returns lead_time_demand_forecast and forecast_daily_demand_over_lead_time.
     """
     if period not in ("daily", "weekly", "monthly"):
         raise ToolError("period must be 'daily', 'weekly' or 'monthly'.")
@@ -162,34 +202,32 @@ def forecast_demand(history: list[float], period: str = "monthly", horizon_perio
         raise ToolError("History contains negative units.")
     if not 1 <= horizon_periods <= 24:
         raise ToolError("horizon_periods must be 1-24.")
+    if lead_time_days < 0 or lead_time_days > 730:
+        raise ToolError("lead_time_days must be 0-730.")
     xs = [float(h) for h in history]
     base = xs[-recent_weight_periods:] if 0 < recent_weight_periods < len(xs) else xs
     n = len(xs)
-    # least-squares trend on the full series
-    mx = (n - 1) / 2
-    mxy = sum((i - mx) * (x - mean(xs)) for i, x in enumerate(xs))
-    mxx = sum((i - mx) ** 2 for i in range(n))
-    slope = mxy / mxx if mxx else 0.0
-    intercept = mean(xs) - slope * mx
     seasonal: list[float] | None = None
     if period == "monthly" and n >= 24:
-        # ratio-to-moving-average seasonal indices, normalised to mean 1
-        idx = [[] for _ in range(12)]
-        for i, x in enumerate(xs):
-            trend_val = intercept + slope * i
-            if trend_val > 0:
-                idx[i % 12].append(x / trend_val)
-        raw = [mean(v) if v else 1.0 for v in idx]
-        norm = mean(raw) or 1.0
-        seasonal = [round(r / norm, 3) for r in raw]
-    forecast = []
-    for k in range(1, horizon_periods + 1):
+        seasonal, slope, intercept = _seasonal_decompose(xs)
+    else:
+        # least-squares trend on the full series
+        mx = (n - 1) / 2
+        mxy = sum((i - mx) * (x - mean(xs)) for i, x in enumerate(xs))
+        mxx = sum((i - mx) ** 2 for i in range(n))
+        slope = mxy / mxx if mxx else 0.0
+        intercept = mean(xs) - slope * mx
+
+    def _fc(k: int) -> float:
+        """Forecast for future period k (1 = the period starting now)."""
         i = n - 1 + k
         # after a declared step change the trend line is meaningless: use the flat recent baseline
         val = intercept + slope * i if recent_weight_periods == 0 else mean(base)
         if seasonal:
             val *= seasonal[i % 12]
-        forecast.append(round(max(0.0, val), 1))
+        return max(0.0, val)
+
+    forecast = [round(_fc(k), 1) for k in range(1, horizon_periods + 1)]
     days = _period_days(period)
     base_mean = mean(base)
     raw_std = stdev(base)
@@ -217,7 +255,7 @@ def forecast_demand(history: list[float], period: str = "monthly", horizon_perio
         confidence = "medium (CV 0.5-1)"
     else:
         confidence = "good (CV < 0.5)"
-    return {
+    out = {
         "periods": n,
         "period": period,
         "baseline_per_period": round(base_mean, 2),
@@ -229,15 +267,39 @@ def forecast_demand(history: list[float], period: str = "monthly", horizon_perio
         "coefficient_of_variation": round(cv, 3),
         "trend_units_per_period": round(slope, 3),
         "trend_pct_per_period": round(trend_pct_per_period, 2),
-        "seasonal_indices": seasonal,
+        "seasonal_indices": [round(s, 3) for s in seasonal] if seasonal else None,
         "forecast": forecast,
         "forecast_total": round(sum(forecast), 1),
+        "forecast_daily_by_period": [round(f / days, 3) for f in forecast],
         "confidence": confidence,
-        "summary": (
-            f"{daily_mean:.1f} units/day (σ {daily_std:.1f}/day), trend {trend_pct_per_period:+.1f}%/period, "
-            f"next {horizon_periods} {period} periods ≈ {sum(forecast):.0f} units. Confidence: {confidence}."
-        ),
     }
+    shifts = bool(seasonal) or abs(trend_pct_per_period) >= 2.0
+    if lead_time_days > 0:
+        # integrate the per-period forecast over the next lead_time_days
+        remaining, k, ltd = lead_time_days, 1, 0.0
+        while remaining > 1e-9:
+            take = min(days, remaining)
+            ltd += _fc(k) * take / days
+            remaining -= take
+            k += 1
+        out["lead_time_days"] = lead_time_days
+        out["lead_time_demand_forecast"] = round(ltd, 1)
+        out["forecast_daily_demand_over_lead_time"] = round(ltd / lead_time_days, 3)
+        out["lead_time_demand_at_historical_average"] = round(daily_mean * lead_time_days, 1)
+    out["use_for_reorder_point"] = (
+        "forecast_daily_demand_over_lead_time (seasonal/trending SKU — the historical average misstates lead-time demand)"
+        if shifts else "daily_demand_mean (stable SKU)"
+    )
+    lt_note = (
+        f" Lead-time demand over {lead_time_days:g} days: {out['lead_time_demand_forecast']:.0f} units "
+        f"({out['forecast_daily_demand_over_lead_time']:.1f}/day) vs {out['lead_time_demand_at_historical_average']:.0f} at the historical average."
+        if lead_time_days > 0 else ""
+    )
+    out["summary"] = (
+        f"{daily_mean:.1f} units/day historical average (σ {daily_std:.1f}/day), trend {trend_pct_per_period:+.1f}%/period, "
+        f"next {horizon_periods} {period} periods ≈ {sum(forecast):.0f} units.{lt_note} Confidence: {confidence}."
+    )
+    return out
 
 
 @AGENT.tool
@@ -409,32 +471,47 @@ def economic_order_quantity(
 @AGENT.tool
 def stock_cover(
     on_hand: float,
-    daily_demand: float,
-    lead_time_days: float,
+    daily_demand: float = 0.0,
+    lead_time_days: float = 0.0,
     safety_stock: float = 0.0,
     incoming: list[dict] | None = None,
     today: str = "",
     daily_demand_std: float = 0.0,
+    forecast_per_period: list[float] | None = None,
+    period: str = "monthly",
 ) -> dict:
     """Project the stockout date and the last safe order date from on-hand stock, incoming shipments and demand.
 
-    Simulates day by day so incoming POs are counted when they land, not before. Returns days
-    of cover, the date stock hits safety stock, the date it hits zero, and order-by date.
+    Simulates day by day so incoming POs are counted when they land, not before. For seasonal or
+    trending SKUs pass forecast_per_period (forecast_demand's `forecast`, period 1 starting today)
+    so the burn rate follows the forecast instead of a flat average. Returns days of cover, the
+    date stock hits safety stock, the date it hits zero, and order-by date.
 
     Args:
         on_hand: Sellable units in stock today.
-        daily_demand: Forecast average units sold per day.
+        daily_demand: Forecast average units sold per day (flat). Ignored when forecast_per_period is given.
         lead_time_days: Supplier lead time in days.
         safety_stock: Safety stock level (units) — the buffer you do not want to dip into.
         incoming: Optional list of {"qty": units, "arrives": "YYYY-MM-DD"} purchase orders in transit.
         today: Today's date as YYYY-MM-DD (defaults to the real today).
         daily_demand_std: Optional daily demand std dev; adds a pessimistic (+1σ) stockout date.
+        forecast_per_period: Optional per-period demand forecast starting today (e.g. monthly units); the last value repeats beyond the list.
+        period: Length of each forecast_per_period value: "daily", "weekly" or "monthly".
     """
     oh = require_positive("on_hand", on_hand, allow_zero=True)
     d = require_positive("daily_demand", daily_demand, allow_zero=True)
     lt = require_positive("lead_time_days", lead_time_days, allow_zero=True)
     ss = require_positive("safety_stock", safety_stock, allow_zero=True)
     start = dates.parse_date(today) if today else date.today()
+    profile: list[float] | None = None
+    pdays = 1.0
+    if forecast_per_period:
+        if period not in ("daily", "weekly", "monthly"):
+            raise ToolError("period must be 'daily', 'weekly' or 'monthly'.")
+        if len(forecast_per_period) > 2000 or any(float(f) < 0 for f in forecast_per_period):
+            raise ToolError("forecast_per_period must be ≤ 2000 non-negative values.")
+        pdays = _period_days(period)
+        profile = [float(f) / pdays for f in forecast_per_period]
     arrivals: dict[date, float] = {}
     for po in (incoming or [])[:100]:
         try:
@@ -446,7 +523,12 @@ def stock_cover(
             raise ToolError("incoming shipment qty must be > 0.")
         arrivals[arr] = arrivals.get(arr, 0.0) + qty
 
-    def simulate(rate: float) -> tuple[date | None, date | None]:
+    def rate_on(day: int) -> float:
+        if profile is None:
+            return d
+        return profile[min(int(day / pdays), len(profile) - 1)]
+
+    def simulate(extra: float) -> tuple[date | None, date | None]:
         stock = oh
         hit_ss = zero = None
         for day in range(0, 730):
@@ -457,15 +539,18 @@ def stock_cover(
             if stock <= 0:
                 zero = cur
                 break
-            stock -= rate
+            stock -= rate_on(day) + extra
         return hit_ss, zero
 
-    if d == 0:
+    if (profile is None and d == 0) or (profile is not None and not any(profile)):
         return {"days_of_cover": None, "stockout_date": None, "verdict": "No demand — stock never runs out; check for dead stock instead."}
-    hit_ss, zero = simulate(d)
-    pess = simulate(d + daily_demand_std)[1] if daily_demand_std > 0 else None
+    hit_ss, zero = simulate(0.0)
+    pess = simulate(daily_demand_std)[1] if daily_demand_std > 0 else None
     total_incoming = sum(arrivals.values())
-    days_cover = (oh + total_incoming) / d
+    if profile is None:
+        days_cover = (oh + total_incoming) / d
+    else:
+        days_cover = float((zero - start).days) if zero else 730.0
     order_by = (zero - timedelta(days=math.ceil(lt))) if zero else None
     order_by_safe = (hit_ss - timedelta(days=math.ceil(lt))) if hit_ss else None
     status = "ok"
@@ -477,6 +562,7 @@ def stock_cover(
         "today": start.isoformat(),
         "on_hand": oh,
         "incoming_units": total_incoming,
+        "demand_basis": "forecast profile" if profile is not None else "flat daily demand",
         "days_of_cover_incl_incoming": round(days_cover, 1),
         "weeks_of_cover": round(days_cover / 7, 1),
         "date_hits_safety_stock": hit_ss.isoformat() if hit_ss else None,
@@ -581,7 +667,7 @@ def inventory_health(skus: list[dict], period_days: int = 90, lead_time_days: fl
     """Audit sell-through, weeks of supply, turns and dead/overstock value across SKUs to find cash to free and stockout risks.
 
     Args:
-        skus: List of {"sku": str, "on_hand": units, "units_sold": units sold in the period, "unit_cost": float, "received": units received in period (optional)}.
+        skus: List of {"sku": str, "on_hand": units, "units_sold": units sold in the period, "unit_cost": float, "received": units received in period (optional), "forecast_units_next_period": forecast units for the NEXT period_days (optional — use for seasonal SKUs so weeks of supply reflect the coming peak or trough, not the trailing period)}.
         period_days: Length of the sales period the units_sold figure covers (default 90).
         lead_time_days: Typical replenishment lead time — SKUs with less cover than this are stockout risks.
         seasonal: True for fashion/seasonal goods (overstock threshold 12 weeks instead of 26).
@@ -606,6 +692,16 @@ def inventory_health(skus: list[dict], period_days: int = 90, lead_time_days: fl
             raise ToolError(f"negative values for {s.get('sku')!r}")
         received = s.get("received")
         weekly = sold / period_days * 7
+        trailing_weekly = weekly
+        fc = s.get("forecast_units_next_period")
+        if fc not in (None, ""):
+            try:
+                fc = float(fc)
+            except (TypeError, ValueError):
+                raise ToolError(f"forecast_units_next_period must be numeric for {s.get('sku')!r}") from None
+            if fc < 0:
+                raise ToolError(f"negative forecast for {s.get('sku')!r}")
+            weekly = fc / period_days * 7
         wos = (oh / weekly) if weekly > 0 else None
         denom = float(received) if received not in (None, 0, "") else (sold + oh)
         sell_through = sold / denom if denom > 0 else None
@@ -614,7 +710,7 @@ def inventory_health(skus: list[dict], period_days: int = 90, lead_time_days: fl
         value = oh * cost
         totals["stock_value"] += value
         flags, action = [], "hold"
-        if sold == 0 and oh > 0:
+        if sold == 0 and oh > 0 and not weekly:
             flags.append("dead (0 sold)")
             totals["dead_value"] += value
             totals["dead_skus"] += 1
@@ -634,6 +730,8 @@ def inventory_health(skus: list[dict], period_days: int = 90, lead_time_days: fl
                 "sku": str(s.get("sku", "?")),
                 "on_hand": oh,
                 "weekly_velocity": round(weekly, 2),
+                "velocity_basis": "forecast" if fc not in (None, "") else "trailing",
+                "trailing_weekly_velocity": round(trailing_weekly, 2),
                 "weeks_of_supply": round(wos, 1) if wos is not None else None,
                 "sell_through_pct": pct(sell_through) if sell_through is not None else None,
                 "annualised_turns": round(turns, 1) if turns is not None else None,

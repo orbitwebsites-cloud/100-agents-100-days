@@ -58,42 +58,57 @@ def money(x: float) -> float:
 # ── lexicon scanning ──────────────────────────────────────────────────────
 
 
-_LEXICON_CACHE: dict[tuple[str, ...], tuple[re.Pattern, dict[str, str]]] = {}
+_LEXICON_CACHE: dict[tuple[str, ...], tuple[re.Pattern, dict[str, str], list[str]]] = {}
 
 
-def _lexicon_regex(lexicon: dict[str, str]) -> tuple[re.Pattern, dict[str, str]]:
+def _lexicon_regex(lexicon: dict[str, str]) -> tuple[re.Pattern, dict[str, str], list[str]]:
+    """Compile a lexicon once. A term ending in '*' is a stem ("compet*" matches
+    competitive, competition, compete) — the convention of the Gaucher-Friesen-Kay
+    word lists; every other term matches as a whole word/phrase."""
     key = tuple(lexicon)
     hit = _LEXICON_CACHE.get(key)
     if hit:
         return hit
     terms = sorted(lexicon, key=len, reverse=True)  # longest first so "hard worker" beats "hard"
-    pat = re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(t) for t in terms) + r")(?![\w-])", re.I)
-    lookup = {t.lower(): t for t in terms}
-    _LEXICON_CACHE[key] = (pat, lookup)
-    return pat, lookup
+    alts = [re.escape(t[:-1]) + r"[\w-]*" if t.endswith("*") else re.escape(t) for t in terms]
+    pat = re.compile(r"(?<![\w-])(?:" + "|".join(alts) + r")(?![\w-])", re.I)
+    lookup = {t.lower(): t for t in terms if not t.endswith("*")}
+    stems = sorted((t for t in terms if t.endswith("*")), key=len, reverse=True)
+    _LEXICON_CACHE[key] = (pat, lookup, stems)
+    return pat, lookup, stems
+
+
+def _resolve_term(matched: str, lookup: dict[str, str], stems: list[str]) -> str:
+    low = matched.lower()
+    if low in lookup:
+        return lookup[low]
+    return next((t for t in stems if low.startswith(t[:-1].lower())), matched)
 
 
 def scan_lexicon(body: str, lexicon: dict[str, str]) -> list[dict]:
-    """Find every lexicon term (word-bounded, case-insensitive) in body in one pass.
+    """Find every lexicon term (word-bounded, case-insensitive; 'stem*' = prefix) in body in one pass.
 
     lexicon maps term -> suggestion/reason. Terms are ours (not user input), so the
-    compiled regex is safe. Returns [{term, count, suggestion, sample}] sorted by count.
+    compiled regex is safe. Returns [{term, count, suggestion, sample, matched}] sorted by count;
+    `matched` lists the surface forms found (useful for stems).
     """
     if not body or not lexicon:
         return []
-    pat, lookup = _lexicon_regex(lexicon)
+    pat, lookup, stems = _lexicon_regex(lexicon)
     counts: Counter = Counter()
     first: dict[str, int] = {}
+    forms: dict[str, set[str]] = {}
     for m in pat.finditer(body):
-        term = lookup[m.group(0).lower()]
+        term = _resolve_term(m.group(0), lookup, stems)
         counts[term] += 1
         first.setdefault(term, m.start())
+        forms.setdefault(term, set()).add(m.group(0).lower())
     hits = []
     for term, n in counts.items():
         pos = first[term]
         lo, hi = max(0, pos - 40), min(len(body), pos + len(term) + 40)
         sample = re.sub(r"\s+", " ", body[lo:hi]).strip()
-        hits.append({"term": term, "count": n, "suggestion": lexicon[term], "sample": f"…{sample}…"})
+        hits.append({"term": term, "count": n, "suggestion": lexicon[term], "sample": f"…{sample}…", "matched": sorted(forms[term])})
     hits.sort(key=lambda h: (-h["count"], h["term"]))
     return hits
 
@@ -175,6 +190,7 @@ customer success|account management|onboarding|retention|churn|nps|customer supp
 financial modeling|fp&a|budgeting|variance analysis|gaap|ifrs|audit|tax|treasury
 accounts payable|accounts receivable|quickbooks|netsuite|sap|oracle|workday|erp|p&l|cash flow
 valuation|dcf|m&a|due diligence|fundraising|investor relations|bookkeeping|payroll
+payments|fintech|e-commerce|ecommerce|marketplace
 project management|program management|pmp|prince2|stakeholder management|change management
 operations|supply chain|logistics|procurement|inventory management|vendor management|lean|six sigma
 process improvement|people management|team leadership|hiring|recruiting|talent acquisition
@@ -195,7 +211,10 @@ SKILL_LEXICON: frozenset[str] = frozenset(t.strip() for line in _SKILL_LINES.str
 _ACRONYM_RE = re.compile(r"\b[A-Z][A-Z0-9&/+#.]{1,7}\b")
 _TECH_TOKEN_RE = re.compile(r"(?<![\w.])(?:[A-Za-z]+[#+]{1,2}|\.[A-Za-z]{2,}|[A-Za-z]+\.(?:js|py|net|io))(?![\w])")
 _CAMEL_RE = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b")
-_GENERIC_ACRONYMS = frozenset("THE AND FOR YOU OUR ARE NOT WITH FROM THIS THAT WILL EEO USA US UK EU".split())
+# Generic caps, roman numerals (title levels "PM II") and location codes are not skills.
+_GENERIC_ACRONYMS = frozenset(
+    "THE AND FOR YOU OUR ARE NOT WITH FROM THIS THAT WILL EEO USA US UK EU II III IV VP HQ NY NYC SF LA DC CA TX WA MA CO IL GA FL NJ PST EST CET".split()
+)
 # Capitalised word mid-sentence (after a lowercase word) — catches product/company names like "Stripe".
 _PROPER_RE = re.compile(r"(?<=[a-z,;] )([A-Z][a-z]{2,})(?![\w.])")
 _COMMON_CAPS = frozenset(
@@ -275,6 +294,7 @@ MUST_CUES = re.compile(
 NICE_CUES = re.compile(r"\b(preferred|nice[- ]to[- ]have|bonus|plus|ideally|desirable|a plus|good to have|not required|optional)\b", re.I)
 YEARS_RE = re.compile(r"(\d{1,2})\s*\+?\s*(?:-|–|to)?\s*(\d{1,2})?\s*\+?\s*(?:years?|yrs?)\b", re.I)
 DEGREE_RE = re.compile(r"\b(bachelor'?s?|master'?s?|mba|ph\.?d|doctorate|b\.?s\.?|b\.?a\.?|m\.?s\.?|degree)\b", re.I)
+CLAUSE_SPLIT_RE = re.compile(r"[;,(]|\s[—–-]\s")
 BULLET_RE = re.compile(r"^\s*(?:[-*•·▪◦o]|\d{1,2}[.)])\s+")
 HEADING_CUES = re.compile(
     r"^(?:what you.ll do|what you will do|what you.ll be doing|responsibilities|the role|in this role|day[- ]to[- ]day|"
@@ -324,11 +344,22 @@ def split_requirements(jd: str) -> list[dict]:
             continue
         body = BULLET_RE.sub("", raw).strip() if is_bullet else line
         tier = current_tier
+        nice_skills: set[str] = set()
         if tier != "duty":
-            if NICE_CUES.search(body):
-                tier = "nice"
-            elif MUST_CUES.search(body):
+            # Tier each clause on its own: "5+ years of PM experience, ideally in B2B SaaS"
+            # is a must-have (PM) with a nice-to-have qualifier (B2B SaaS), not a nice-to-have line.
+            clause_tiers = []
+            for clause in CLAUSE_SPLIT_RE.split(body):
+                if not clause.strip():
+                    continue
+                ct = "nice" if NICE_CUES.search(clause) else "must" if MUST_CUES.search(clause) else current_tier
+                clause_tiers.append((ct, clause))
+            if any(ct == "must" for ct, _ in clause_tiers):
                 tier = "must"
+                must_sk = {t for ct, c in clause_tiers if ct != "nice" for t in extract_skill_terms(c)}
+                nice_skills = {t for ct, c in clause_tiers if ct == "nice" for t in extract_skill_terms(c)} - must_sk
+            elif any(ct == "nice" for ct, _ in clause_tiers):
+                tier = "nice"
         if not is_bullet and tier == "unclear":
             continue  # prose outside a requirements section
         n += 1
@@ -343,6 +374,7 @@ def split_requirements(jd: str) -> list[dict]:
                 "degree": bool(DEGREE_RE.search(body)),
                 "section": section,
                 "skills": sorted(extract_skill_terms(body)),
+                "nice_skills": sorted(nice_skills),
             }
         )
         if len(out) >= 200:

@@ -68,8 +68,10 @@ AGENT = Agent(
        Quote runway on *net* burn, and say gross burn separately.
     4. **Stress it.** Call `cashflow_forecaster__stress_test` with the weekly net flows from step 1
        and three shocks: collections slip 2-4 weeks, revenue down 20-30%, one surprise cost equal to a
-       payroll. Report the minimum cash under each. If any scenario breaches zero inside 13 weeks, the
-       plan section leads with the mitigation, not the base case.
+       payroll. Pass the same `min_cash_buffer` as step 1. Report the minimum cash under each and
+       the first week under the buffer. If any scenario breaches zero inside 13 weeks, the plan
+       section leads with the mitigation, not the base case; if one only breaches the buffer, name
+       the lever that restores it and its week.
     5. **Review last week** (when actuals exist). Call `cashflow_forecaster__variance_review` with
        forecast and actual by week. Anything off by more than 10% or $10k gets a named cause and a
        change to the next forecast's assumption. Accuracy should improve week over week.
@@ -96,7 +98,7 @@ AGENT = Agent(
     | Wk | Week of | Inflows | Outflows | Net | Closing | vs buffer |
 
     ## Stress scenarios
-    | Scenario | Min cash | Week | Breach? |
+    | Scenario | Min cash | Week | Under buffer from | Below zero? |
 
     ## Variance (last week)
     <forecast vs actual, biggest miss, assumption changed>
@@ -158,7 +160,7 @@ def _placements(item: dict, start: date, weeks: int, idx: int) -> list[tuple[int
         if any(not 1 <= x <= 31 for x in days):
             raise ToolError(f"item[{idx}]: days must be 1-31")
         m = start.replace(day=1)
-        for k in range(0, 5):
+        for k in range(0, weeks // 4 + 3):  # enough calendar months to cover a 26-week horizon
             month_start = add_months(m, k)
             for dd in days:
                 try:
@@ -286,7 +288,7 @@ def runway(
         monthly_expenses: Total cash expenses this month (gross burn).
         revenue_growth_pct: Month-over-month revenue growth, e.g. 8 for 8%.
         expense_growth_pct: Month-over-month expense growth (hiring), e.g. 2.
-        start_month: YYYY-MM-DD anchor for the calendar; defaults to today.
+        start_month: YYYY-MM-DD of month 1 (the month the revenue/expense figures describe); defaults to today.
         max_months: Projection horizon (12-120).
     """
     c = D(cash, "cash")
@@ -299,6 +301,8 @@ def runway(
     if not 12 <= max_months <= 120:
         raise ToolError("max_months must be 12-120")
     start = parse_iso(start_month, "start_month") if start_month else date.today()
+    # month 1 is the current month (the one monthly_revenue/monthly_expenses describe), so month m is start + (m - 1)
+    label = lambda m: month_label(add_months(start, m - 1))  # noqa: E731
     net_burn = exp - rev
     simple_runway = float(c / net_burn) if net_burn > 0 else None
     bal, r, e = c, rev, exp
@@ -314,7 +318,7 @@ def runway(
         if zero_month is None and bal <= 0:
             zero_month = m
         if m <= 24:
-            path.append({"month": month_label(add_months(start, m)), "revenue": money(r), "expenses": money(e), "net_burn": money(burn), "cash": money(bal)})
+            path.append({"month": label(m), "revenue": money(r), "expenses": money(e), "net_burn": money(burn), "cash": money(bal)})
         if zero_month and breakeven_month:
             break
         r *= 1 + g_r
@@ -336,8 +340,8 @@ def runway(
             cash_needed = money(-need) if need < 0 else 0.0
     verdict = (
         f"{status[0].upper()}{status[1:]}: "
-        + (f"revenue covers expenses in month {breakeven_month} ({month_label(add_months(start, breakeven_month))})" if breakeven_month else f"revenue never covers expenses within {max_months} months")
-        + (f"; cash runs out in month {zero_month} ({month_label(add_months(start, zero_month))})." if zero_month else "; cash never runs out on this path.")
+        + (f"revenue covers expenses in month {breakeven_month} ({label(breakeven_month)})" if breakeven_month else f"revenue never covers expenses within {max_months} months")
+        + (f"; cash runs out in month {zero_month} ({label(zero_month)})." if zero_month else "; cash never runs out on this path.")
         + (f" Need ~${cash_needed:,.0f} more to reach breakeven." if cash_needed else "")
     )
     return {
@@ -345,8 +349,9 @@ def runway(
         "gross_burn_now": money(exp),
         "runway_months_simple": round(simple_runway, 1) if simple_runway is not None else None,
         "runway_months_with_growth": zero_month,
-        "zero_cash_month": month_label(add_months(start, zero_month)) if zero_month else None,
-        "breakeven_month": month_label(add_months(start, breakeven_month)) if breakeven_month else None,
+        "zero_cash_month": label(zero_month) if zero_month else None,
+        "breakeven_month": label(breakeven_month) if breakeven_month else None,
+        "calendar_note": f"month 1 = {label(1)} (the month the revenue/expense inputs describe); cash is checked at each month end",
         "status": status,
         "additional_cash_to_breakeven": cash_needed,
         "peak_monthly_burn": money(peak_burn),
@@ -436,6 +441,7 @@ def stress_test(
     revenue_drop_pct: float = 25,
     surprise_cost: float = 0,
     surprise_cost_week: int = 4,
+    min_cash_buffer: float = 0,
 ) -> dict:
     """Run base, delayed-collections, revenue-drop, surprise-cost and combined scenarios and report minimum cash.
 
@@ -451,6 +457,7 @@ def stress_test(
         revenue_drop_pct: Percent reduction of inflows in the drop scenario, e.g. 25.
         surprise_cost: One-off unexpected outflow amount (0 to skip that scenario).
         surprise_cost_week: Week the surprise lands.
+        min_cash_buffer: The buffer from thirteen_week_forecast (e.g. one payroll); each scenario also reports the first week under it.
     """
     cash = D(opening_cash, "opening_cash")
     if not weekly_inflows or len(weekly_inflows) != len(weekly_outflows):
@@ -468,16 +475,19 @@ def stress_test(
     surprise = require_nonneg(D(surprise_cost, "surprise_cost"), "surprise_cost")
     if not 1 <= surprise_cost_week <= n:
         raise ToolError(f"surprise_cost_week must be 1-{n}")
+    buffer = require_nonneg(D(min_cash_buffer, "min_cash_buffer"), "min_cash_buffer")
 
     def run(ins, outs):
-        bal, low, low_wk, breach = cash, cash, 0, None
+        bal, low, low_wk, breach, under = cash, cash, 0, None, None
         for w in range(n):
             bal += ins[w] - outs[w]
             if bal < low:
                 low, low_wk = bal, w + 1
             if breach is None and bal < 0:
                 breach = w + 1
-        return {"min_cash": money(low), "min_week": low_wk, "ending_cash": money(bal), "breach_week": breach}
+            if under is None and buffer > 0 and bal < buffer:
+                under = w + 1
+        return {"min_cash": money(low), "min_week": low_wk, "ending_cash": money(bal), "breach_week": breach, "buffer_breach_week": under}
 
     def delayed(ins, k):
         return [ZERO] * k + ins[: n - k] if k else list(ins)
@@ -499,16 +509,26 @@ def stress_test(
         scenarios["surprise_cost"] = run(inflows, surprised(outflows))
     scenarios["combined"] = run(delayed(dropped(inflows), collections_delay_weeks), surprised(outflows) if surprise > 0 else outflows)
     breaches = [k for k, v in scenarios.items() if v["breach_week"]]
+    under_buffer = [k for k, v in scenarios.items() if v["buffer_breach_week"]]
     worst = min(scenarios.items(), key=lambda kv: kv[1]["min_cash"])
     cushion = money(min(v["min_cash"] for v in scenarios.values()))
+    buffer_note = (
+        f" {len(under_buffer)} scenario(s) dip under the ${money(buffer):,.0f} buffer ({', '.join(under_buffer)}) — "
+        f"top-up needed to hold the buffer in the worst case: ${money(max(buffer - Decimal(str(cushion)), ZERO)):,.0f}."
+        if under_buffer
+        else (f" All scenarios hold the ${money(buffer):,.0f} buffer." if buffer > 0 else "")
+    )
     return {
         "scenarios": scenarios,
         "scenarios_breaching_zero": breaches,
+        "scenarios_below_buffer": under_buffer,
+        "buffer": money(buffer),
         "worst_case": {"scenario": worst[0], **worst[1]},
         "cash_needed_to_survive_worst": money(-Decimal(str(cushion))) if cushion < 0 else 0.0,
         "verdict": (
             f"{len(breaches)} of {len(scenarios)} scenarios go below zero (worst: {worst[0]}, ${worst[1]['min_cash']:,.2f} in week {worst[1]['min_week']}). "
-            + (f"Line up ${money(-Decimal(str(cushion))):,.0f} of levers or credit before week {min(v['breach_week'] for v in scenarios.values() if v['breach_week'])}." if breaches else "Base plan survives every shock; keep the buffer.")
+            + (f"Line up ${money(-Decimal(str(cushion))):,.0f} of levers or credit before week {min(v['breach_week'] for v in scenarios.values() if v['breach_week'])}." if breaches else "Cash stays above zero in every shock.")
+            + buffer_note
         ),
     }
 
@@ -547,7 +567,10 @@ def variance_review(rows: list[dict], tolerance_pct: float = 10, tolerance_abs: 
             big = abs(var) >= tol_a
             wide = p >= tol_p
             if (big and wide) or abs(var) >= 2 * tol_a or p >= 2 * tol_p:
-                direction = "short" if (label == "inflow" and var < 0) or (label == "outflow" and var > 0) else "favourable"
+                if label == "inflow":
+                    direction = "short" if var < 0 else "ahead (favourable)"
+                else:
+                    direction = "over forecast" if var > 0 else "under forecast (favourable)"
                 issues.append(f"{label} {direction} by ${money(abs(var)):,.2f} ({ratio_to_pct(p)}%)")
         row_out = {"week": r.get("week", i), "line": r.get("line"), "inflow_variance": money(var_in), "outflow_variance": money(var_out), "net_variance": money(net_var), "issues": issues}
         out.append(row_out)

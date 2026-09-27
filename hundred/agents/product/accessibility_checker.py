@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from html.parser import HTMLParser
 
@@ -111,7 +112,9 @@ AGENT = Agent(
     ```
 
     ## Anti-patterns
-    - "Looks readable to me." Compute it; #777 on white fails AA by a hair (4.48:1).
+    - "Looks readable to me." Compute it; #777 on white fails AA by a hair (4.47:1).
+    - Rounding a ratio up to a pass. Ratios are truncated, not rounded: 4.499:1 is reported as
+      4.49:1 and FAILS 4.5:1 (WebAIM shows the same). Never write "4.5:1" for a failing pair.
     - alt text that repeats the caption or says "image of". Describe function, or alt="" if decorative.
     - Fixing contrast by making everything black. Use the nearest passing shade and keep hierarchy.
     - Treating aria-* as a fix for div-buttons. Use <button>; ARIA is the last resort.
@@ -171,6 +174,11 @@ def flatten(fg: tuple[int, int, int, float], bg: tuple[int, int, int]) -> tuple[
     return tuple(round(a * c + (1 - a) * bc) for c, bc in zip((r, g, b), bg))  # type: ignore[return-value]
 
 
+def trunc2(r: float) -> float:
+    """Truncate (not round) a ratio to 2 decimals, as WebAIM's checker does: 4.4999 shows 4.49, never 4.5."""
+    return math.floor(r * 100 + 1e-9) / 100
+
+
 def hexstr(rgb: tuple[int, int, int]) -> str:
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
@@ -184,7 +192,9 @@ def contrast_ratio(foreground: str, background: str, font_px: float = 16.0, bold
     """Exact WCAG 2.x contrast ratio between two colours with AA/AAA and non-text (3:1) verdicts.
 
     Accepts hex (#rgb, #rrggbb, #rrggbbaa), rgb()/rgba() and basic names. Alpha in the foreground is
-    flattened onto the background first. Black on white returns 21.0.
+    flattened onto the background first. Black on white returns 21.0. The displayed ratio is truncated
+    to two decimals (WebAIM convention), so a ratio of 4.499 is shown as 4.49 and fails 4.5:1 — never
+    rounded up to a misleading "4.5 — FAIL".
 
     Args:
         foreground: Text/icon colour, e.g. "#767676".
@@ -199,7 +209,7 @@ def contrast_ratio(foreground: str, background: str, font_px: float = 16.0, bold
     bg = (bg4[0], bg4[1], bg4[2]) if bg4[3] >= 1 else flatten(bg4, (255, 255, 255))
     fgf = flatten(fg, bg)
     r = ratio(fgf, bg)
-    r2 = round(r, 2)
+    r2 = trunc2(r)
     large = _is_large(float(font_px), bool(bold))
     aa_needed = 3.0 if large else 4.5
     aaa_needed = 4.5 if large else 7.0
@@ -245,7 +255,7 @@ def suggest_color(foreground: str, background: str, target_ratio: float = 4.5, a
     fg = flatten(fg4, bg)
     current = ratio(fg, bg)
     if current >= target_ratio:
-        return {"already_passes": True, "current_ratio": round(current, 2), "target_ratio": target_ratio, "suggestion": hexstr(fg if which == "foreground" else bg), "verdict": f"Already {round(current, 2)}:1 ≥ {target_ratio}:1"}
+        return {"already_passes": True, "current_ratio": trunc2(current), "target_ratio": target_ratio, "suggestion": hexstr(fg if which == "foreground" else bg), "verdict": f"Already {trunc2(current)}:1 ≥ {target_ratio}:1"}
     fixed, other = (fg, bg) if which == "foreground" else (bg, fg)
 
     def walk(toward: tuple[int, int, int]) -> tuple[tuple[int, int, int], float, int] | None:
@@ -262,19 +272,45 @@ def suggest_color(foreground: str, background: str, target_ratio: float = 4.5, a
     for label, res in (("darker", darker), ("lighter", lighter)):
         if res:
             cand, r, step = res
-            options.append({"direction": label, "color": hexstr(cand), "ratio": round(r, 2), "change_pct": step})
+            options.append({"direction": label, "color": hexstr(cand), "ratio": trunc2(r), "change_pct": step})
     if not options:
         raise ToolError("No shade of that colour reaches the target ratio against the other colour — change the other colour too.")
     best = min(options, key=lambda o: o["change_pct"])
     return {
         "already_passes": False,
-        "current_ratio": round(current, 2),
+        "current_ratio": trunc2(current),
         "target_ratio": target_ratio,
         "adjusted": which,
         "suggestion": best["color"],
         "options": options,
         "verdict": f"{hexstr(fixed)} → {best['color']} ({best['direction']} by {best['change_pct']}%) reaches {best['ratio']}:1",
     }
+
+
+AUTOCOMPLETE_FIELDS = frozenset(
+    """name honorific-prefix given-name additional-name family-name honorific-suffix nickname username
+    new-password current-password one-time-code organization-title organization street-address
+    address-line1 address-line2 address-line3 address-level4 address-level3 address-level2 address-level1
+    country country-name postal-code cc-name cc-given-name cc-additional-name cc-family-name cc-number
+    cc-exp cc-exp-month cc-exp-year cc-csc cc-type transaction-currency transaction-amount language bday
+    bday-day bday-month bday-year sex url photo tel tel-country-code tel-national tel-area-code tel-local
+    tel-local-prefix tel-local-suffix tel-extension email impp webauthn""".split()
+)
+_AC_MODIFIERS = {"shipping", "billing", "home", "work", "mobile", "fax", "pager"}
+
+
+def _autocomplete_ok(value: str) -> bool:
+    """HTML autofill detail tokens: [section-*] [shipping|billing] [home|work|…] field-name [webauthn], or on/off."""
+    toks = value.strip().lower().split()
+    if not toks:
+        return True
+    if toks in (["on"], ["off"]):
+        return True
+    if toks[-1] == "webauthn" and len(toks) > 1:
+        toks = toks[:-1]
+    if toks[-1] not in AUTOCOMPLETE_FIELDS:
+        return False
+    return all(t.startswith("section-") or t in _AC_MODIFIERS for t in toks[:-1])
 
 
 class _Auditor(HTMLParser):
@@ -299,6 +335,11 @@ class _Auditor(HTMLParser):
         self.skip_link_candidate = False
         self.first_link_seen = False
         self.label_depth = 0
+        self.heading_open: list | None = None  # [level, has_content]
+        self.svg_depth = 0
+        self.idrefs: list[tuple[str, str, str]] = []  # (element, attribute, referenced id) for non-control elements
+        self.referenced_ids: set[str] = set()
+        self.pending_names: list[tuple[str, str, list[str]]] = []  # (tag, element, aria-labelledby ids)
 
     def _add(self, sev: str, crit: str, el: str, problem: str, fix: str) -> None:
         self.findings.append({"severity": sev, "criterion": crit, "element": el[:120], "problem": problem, "fix": fix})
@@ -310,16 +351,37 @@ class _Auditor(HTMLParser):
             self.html_seen = True
             if attrs.get("lang", "").strip():
                 self.has_lang = True
-        if tag == "title":
+        if tag == "svg":
+            self.svg_depth += 1
+            label = attrs.get("aria-label", "").strip()
+            if label and self.stack:
+                self.stack[-1][2].append(label)
+            if label and self.heading_open:
+                self.heading_open[1] = True
+        if tag == "title" and not self.svg_depth:
             self.in_title = True
             self.has_title = True
         if "id" in attrs and attrs["id"]:
             self.ids[attrs["id"]] = self.ids.get(attrs["id"], 0) + 1
+        refs = {a: attrs.get(a, "").split() for a in ("aria-labelledby", "aria-describedby") if attrs.get(a, "").strip()}
+        for ids in refs.values():
+            self.referenced_ids.update(ids)
+        if tag not in {"input", "select", "textarea", "a", "button"}:
+            for a, ids in refs.items():
+                for i in ids:
+                    self.idrefs.append((el, a, i))
         if tag in self.HEADINGS:
             self.headings.append(int(tag[1]))
+            self.heading_open = [int(tag[1]), bool(attrs.get("aria-label", "").strip())]
         if tag == "img":
             self.images += 1
             alt = attrs.get("alt")
+            if alt and alt.strip():
+                # an <img alt> inside a link/button/heading IS its accessible name (axe link-name/button-name agree)
+                if self.stack:
+                    self.stack[-1][2].append(alt)
+                if self.heading_open:
+                    self.heading_open[1] = True
             role = attrs.get("role", "")
             if alt is None and role != "presentation" and "aria-hidden" not in attrs:
                 self._add("blocker", "1.1.1", f"<img src={attrs.get('src', '')[:40]!r}>", "no alt attribute", "add alt describing the image's function, or alt=\"\" if decorative")
@@ -330,13 +392,17 @@ class _Auditor(HTMLParser):
         if tag in {"input", "select", "textarea"}:
             itype = attrs.get("type", "text").lower()
             if not (tag == "input" and itype in {"hidden", "submit", "button", "reset", "image"}):
-                self.controls.append({"tag": tag, "id": attrs.get("id", ""), "aria": bool(attrs.get("aria-label") or attrs.get("aria-labelledby")), "title": bool(attrs.get("title")), "in_label": self.label_depth > 0, "type": itype, "placeholder": attrs.get("placeholder", "")})
+                cid = attrs.get("id", "")
+                self.controls.append({"tag": tag, "id": cid, "first_with_id": bool(cid) and self.ids.get(cid) == 1, "aria": bool(attrs.get("aria-label", "").strip()), "labelledby": attrs.get("aria-labelledby", "").split(), "title": bool(attrs.get("title")), "in_label": self.label_depth > 0, "type": itype, "placeholder": attrs.get("placeholder", "")})
+            if "autocomplete" in attrs and not _autocomplete_ok(attrs["autocomplete"]):
+                self._add("major", "1.3.5", f"<{tag} name={attrs.get('name', '')[:30]!r}>", f"invalid autocomplete value {attrs['autocomplete']!r}", "use a valid HTML autofill token (e.g. email, given-name, tel, new-password) so browsers and assistive tech can identify the field's purpose")
             if tag == "input" and itype == "image" and not attrs.get("alt"):
                 self._add("blocker", "1.1.1", "<input type=image>", "image button without alt", "add alt with the button's action")
         if tag == "label":
             self.label_depth += 1
             if attrs.get("for"):
                 self.labels_for.add(attrs["for"])
+                self.referenced_ids.add(attrs["for"])
         if tag == "iframe" and not attrs.get("title"):
             self._add("major", "4.1.2", el, "iframe without title", "add title describing the embedded content")
         if "tabindex" in attrs:
@@ -366,17 +432,27 @@ class _Auditor(HTMLParser):
             self.title_text += data
         if self.stack:
             self.stack[-1][2].append(data)
+        if self.heading_open and data.strip():
+            self.heading_open[1] = True
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "title":
             self.in_title = False
+        if tag == "svg" and self.svg_depth:
+            self.svg_depth -= 1
+        if tag in self.HEADINGS and self.heading_open:
+            if not self.heading_open[1]:
+                self._add("minor", "1.3.1 / 2.4.6", f"<{tag}>", "empty heading (no text)", "remove the empty heading or give it text — screen-reader users navigate by headings")
+            self.heading_open = None
         if tag == "label" and self.label_depth:
             self.label_depth -= 1
         if tag in {"a", "button"} and self.stack and self.stack[-1][0] == tag:
             _, attrs, texts = self.stack.pop()
             name = " ".join(texts).strip() or attrs.get("aria-label", "").strip() or attrs.get("title", "").strip()
             el = f"<{tag} href={attrs.get('href', '')[:30]!r}>" if tag == "a" else "<button>"
-            if not name and "aria-labelledby" not in attrs:
+            if not name and attrs.get("aria-labelledby", "").strip():
+                self.pending_names.append((tag, el, attrs["aria-labelledby"].split()))
+            elif not name:
                 self._add("blocker", "2.4.4" if tag == "a" else "4.1.2", el, f"{tag} has no accessible name (empty or icon-only)", "add visible text or aria-label")
             elif tag == "a" and re.fullmatch(r"(click here|here|read more|more|learn more|link|this)\.?", name, re.I):
                 self._add("minor", "2.4.4", el, f"link text {name!r} is not descriptive", "say where the link goes: 'Read the pricing FAQ'")
@@ -420,14 +496,33 @@ def lint_html(html: str) -> dict:
     elif full_doc:
         f.append({"severity": "major", "criterion": "1.3.1", "element": "headings", "problem": "no headings at all", "fix": "add an h1 and section headings"})
     for c in p.controls:
-        labelled = c["aria"] or (c["id"] and c["id"] in p.labels_for) or c["in_label"] or c["title"]
+        broken = [i for i in c["labelledby"] if i not in p.ids]
+        labelledby_ok = bool(c["labelledby"]) and not broken
+        # label[for] resolves to the FIRST element with that id only — a later duplicate is unlabelled
+        for_ok = bool(c["id"]) and c["id"] in p.labels_for and c["first_with_id"]
+        labelled = c["aria"] or labelledby_ok or for_ok or c["in_label"] or c["title"]
         if not labelled:
             el = f"<{c['tag']}" + (f" type={c['type']}" if c["tag"] == "input" else "") + (f" id={c['id']!r}" if c["id"] else "") + ">"
             fix = "add <label for=id> or aria-label" + (" — a placeholder is not a label" if c["placeholder"] else "")
-            f.append({"severity": "blocker", "criterion": "1.3.1 / 4.1.2", "element": el, "problem": "form control has no label", "fix": fix})
+            problem = "form control has no label"
+            if broken:
+                problem += f" (aria-labelledby points to missing id {', '.join(repr(b) for b in broken)})"
+            elif c["id"] and c["id"] in p.labels_for and not c["first_with_id"]:
+                problem += f" (its label[for={c['id']!r}] attaches to an earlier element with the same id)"
+            f.append({"severity": "blocker", "criterion": "1.3.1 / 4.1.2", "element": el, "problem": problem, "fix": fix})
+    for tag, el, ids in p.pending_names:
+        missing_ids = [i for i in ids if i not in p.ids]
+        if missing_ids:
+            f.append({"severity": "blocker", "criterion": "2.4.4" if tag == "a" else "4.1.2", "element": el, "problem": f"{tag} has no accessible name (aria-labelledby points to missing id {', '.join(repr(i) for i in missing_ids)})", "fix": "add visible text or fix the aria-labelledby reference"})
+    for el, attr, i in p.idrefs:
+        if i not in p.ids:
+            f.append({"severity": "major", "criterion": "1.3.1 / 4.1.2", "element": el, "problem": f"{attr} references missing id {i!r}", "fix": "point the reference at an existing element id"})
     for i, n in p.ids.items():
         if n > 1:
-            f.append({"severity": "major", "criterion": "4.1.1", "element": f"id={i!r}", "problem": f"duplicate id ({n}×)", "fix": "ids must be unique — labels and aria references break otherwise"})
+            if i in p.referenced_ids:
+                f.append({"severity": "blocker", "criterion": "1.3.1 / 4.1.2", "element": f"id={i!r}", "problem": f"duplicate id ({n}×) used by a label/ARIA reference — it resolves to the first element only", "fix": "make ids unique so each label/aria reference names the right control"})
+            else:
+                f.append({"severity": "minor", "criterion": "best practice (4.1.1 is obsolete in WCAG 2.2)", "element": f"id={i!r}", "problem": f"duplicate id ({n}×)", "fix": "ids must be unique — future labels and aria references will break"})
     for t in p.tables:
         if t["th"] == 0:
             f.append({"severity": "major", "criterion": "1.3.1", "element": t["el"], "problem": "data table without <th> headers", "fix": "add <th scope=col/row> for header cells (or role=presentation if layout)"})

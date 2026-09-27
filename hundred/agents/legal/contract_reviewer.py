@@ -137,7 +137,7 @@ AGENT = Agent(
 
 # (key, label, regex, protective_for, risk_when_present_for) — role sensitivity
 CLAUSES: list[dict] = [
-    {"key": "limitation_of_liability", "label": "Limitation of liability", "rx": r"limitation of liability|limit(?:ed|s)? (?:its |their |our )?liability|in no event shall .{0,60}liab|aggregate liability|liability .{0,40}(?:shall not|will not) exceed", "missing_flag": "No liability cap found — liability may be uncapped for both sides"},
+    {"key": "limitation_of_liability", "label": "Limitation of liability", "rx": r"limitation of liability|limit(?:ed|s)? (?:its |their |our )?liability(?! (?:company|partnership|limited))|in no event shall .{0,60}liab|aggregate liability|liability .{0,40}(?:shall not|will not) exceed", "missing_flag": "No liability cap found — liability may be uncapped for both sides"},
     {"key": "consequential_exclusion", "label": "Exclusion of consequential damages", "rx": r"consequential|indirect(?:,| or)? (?:special|incidental)|loss of profits?|lost profits|special, incidental", "missing_flag": "No consequential-damages exclusion — lost-profit claims are open"},
     {"key": "indemnity", "label": "Indemnification", "rx": r"indemnif(?:y|ies|ication)|hold (?:\w+ )?harmless|defend,? indemnify", "missing_flag": "No indemnity — you have no contractual protection for third-party IP or data claims"},
     {"key": "ip_ownership", "label": "IP ownership / assignment", "rx": r"intellectual property|work (?:made )?for hire|hereby assigns?|assignment of (?:rights|inventions)|all right, title,? and interest|ownership of (?:deliverables|work product)", "missing_flag": "No IP clause — ownership of deliverables/work product is undefined"},
@@ -148,7 +148,7 @@ CLAUSES: list[dict] = [
     {"key": "termination_cause", "label": "Termination for cause / cure period", "rx": r"material breach|terminat\w+ .{0,60}(?:for cause|breach)|cure (?:period|such breach)|fails? to cure|opportunity to cure", "missing_flag": "No termination-for-cause / cure mechanism"},
     {"key": "payment_terms", "label": "Payment terms", "rx": r"net (?:\d{1,3}|thirty|sixty|ninety)|payable within|due (?:and payable )?within|invoice[sd]? .{0,40}(?:days|monthly|annually)|payment terms", "missing_flag": "No payment terms — when are invoices due?"},
     {"key": "late_fees", "label": "Late fees / interest", "rx": r"late (?:fee|charge|payment)|interest .{0,30}(?:per (?:month|annum)|%)|1\.5% per month|overdue", "missing_flag": None},
-    {"key": "price_increase", "label": "Price increases", "rx": r"increase .{0,40}(?:fees|prices|rates)|price (?:increase|adjustment)|(?:fees|prices) .{0,30}(?:may|will) (?:be )?(?:increase|adjust)|cpi|consumer price index", "missing_flag": None},
+    {"key": "price_increase", "label": "Price increases", "rx": r"increase .{0,40}(?:fees|prices|rates)|price (?:increase|adjustment)|(?:fees|prices) .{0,30}(?:may|will) (?:be )?(?:increase|adjust)|(?:may|reserves? the right to) (?:change|increase|modify|adjust|revise) (?:the |its )?(?:fees|prices|pricing|rates)|\bcpi\b|consumer price index", "missing_flag": None},
     {"key": "non_compete", "label": "Non-compete / exclusivity", "rx": r"non-?compet\w*|shall not .{0,40}compet\w*|exclusiv(?:e|ity) (?:supplier|provider|partner|right)|sole (?:and exclusive )?(?:supplier|provider)", "missing_flag": None},
     {"key": "non_solicit", "label": "Non-solicitation", "rx": r"non-?solicit\w*|shall not .{0,40}solicit|solicit .{0,40}(?:employees|personnel|customers)", "missing_flag": None},
     {"key": "confidentiality", "label": "Confidentiality", "rx": r"confidential(?:ity| information)|non-?disclosure|proprietary information", "missing_flag": "No confidentiality clause"},
@@ -156,7 +156,7 @@ CLAUSES: list[dict] = [
     {"key": "sla", "label": "Service levels / SLA", "rx": r"service level|sla\b|uptime|availability of \d|\d{2}\.\d+%|service credits?|response time", "missing_flag": None},
     {"key": "warranty", "label": "Warranties / disclaimers", "rx": r"warrant(?:y|ies|s)|as is|as-is|disclaims? all|merchantability|fitness for a particular purpose", "missing_flag": None},
     {"key": "assignment", "label": "Assignment / change of control", "rx": r"assign(?:ment|ed|s)? .{0,60}(?:consent|without|prior written)|change of control|may not assign|shall not assign", "missing_flag": None},
-    {"key": "governing_law", "label": "Governing law / venue", "rx": r"governed by|governing law|laws of (?:the )?(?:state|commonwealth|province|republic|england)|exclusive jurisdiction|venue|courts? (?:of|located in)", "missing_flag": "No governing law — disputes will start with an argument about where to argue"},
+    {"key": "governing_law", "label": "Governing law / venue", "rx": r"governed by|governing law|laws of (?:the )?(?:state|commonwealth|province|republic|england)|exclusive jurisdiction|\bvenue\b|courts? (?:of|located in)", "missing_flag": "No governing law — disputes will start with an argument about where to argue"},
     {"key": "arbitration", "label": "Arbitration / dispute resolution", "rx": r"arbitrat\w+|binding arbitration|jury trial|class action|mediation|dispute resolution", "missing_flag": None},
     {"key": "audit", "label": "Audit rights", "rx": r"audit|inspect(?:ion)? .{0,30}(?:records|books|premises)|right to (?:examine|verify)", "missing_flag": None},
     {"key": "insurance", "label": "Insurance", "rx": r"insurance|coverage of not less than|certificate of insurance|errors and omissions|cyber liability", "missing_flag": None},
@@ -187,7 +187,11 @@ RED_FLAGS: list[dict] = [
     {"rx": r"audit .{0,80}(?:at any time|without notice|unlimited|as often as)", "roles": {"customer": 2, "vendor": 2}, "msg": "broad audit right (any time / no notice)", "ask": "once per year, 30 days' notice, business hours, at auditor's cost unless underpayment > 5%"},
     {"rx": r"as is|as-is|without (?:any )?warrant(?:y|ies)|disclaims? all warranties", "roles": {"customer": 2}, "msg": "service provided 'as is' with warranties disclaimed", "ask": "warranty that the service performs materially per documentation, with a re-perform/refund remedy"},
     {"rx": r"liquidated damages|penalt(?:y|ies) of", "roles": {"customer": 2, "vendor": 2}, "msg": "liquidated damages / penalties", "ask": "delete or cap at a small percentage of the affected fees"},
-    {"rx": r"(?:perpetual|irrevocable)(?:,| and)? .{0,20}licen[cs]e .{0,120}(?:feedback|suggestions|data|content|name|logo|marks)", "roles": {"customer": 1}, "msg": "perpetual licence to your feedback/data/marks", "ask": "limit to feedback only, or delete the marketing-use right"},
+    {"rx": r"(?:perpetual|irrevocable)(?:,| and)? .{0,20}licen[cs]e .{0,120}(?:feedback|suggestions|name|logo|marks)", "roles": {"customer": 1}, "msg": "perpetual licence to your feedback/name/marks", "ask": "limit to feedback only, or delete the marketing-use right"},
+    {"rx": r"(?:perpetual|irrevocable)[^.]{0,80}licen[cs]e[^.]{0,80}(?:customer|client|licensee|your) (?:data|content)", "roles": {"customer": 3}, "msg": "perpetual, irrevocable licence to your data (survives termination; reaches beyond providing the service)", "ask": "licence to Customer Data limited to providing the Services during the Term; Customer owns Customer Data; aggregated data only if de-identified and not used to identify you"},
+    {"rx": r"(?:provider|vendor|supplier|licensor|company) (?:owns|shall own|retains?)[^.]{0,200}(?:derived from|based on|generated from) (?:the )?(?:customer|client|licensee|your) (?:data|content)", "roles": {"customer": 2}, "msg": "vendor claims ownership of data derived from your data", "ask": "vendor may use only aggregated, de-identified statistics that cannot identify you or your customers; everything else derived from Customer Data belongs to you"},
+    {"rx": r"(?:provider|vendor|supplier|licensor|company)\s+(?:may|reserves the right to|can)\s+(?:at any time\s+)?(?:change|increase|modify|adjust|revise)\s+(?:the\s+|its\s+)?(?:fees|prices|pricing|rates|subscription fees)(?![^.]{0,160}(?:cpi|consumer price|\d{1,2}\s?%|percent|upon renewal|at renewal|renewal term))", "roles": {"customer": 3, "vendor": 0}, "msg": "unilateral right to change fees mid-term with no cap", "ask": "fees fixed for the Initial Term; increases only at renewal, capped at the greater of CPI or 3-5%, on 60+ days' notice so you can non-renew"},
+    {"rx": r"(?:customer|client|licensee|buyer)'?s? (?:obligations|liability|indemnit\w+)[^.]{0,120}(?:(?:are|is|shall) not (?:be )?subject to|excluded from|shall not apply to)[^.]{0,40}(?:any )?(?:limitation|cap)", "roles": {"customer": 3}, "msg": "your indemnity/liability is expressly carved out of the cap — uncapped exposure for you", "ask": "your indemnity capped at the same amount as the vendor's (or a mutual super-cap); only fraud / wilful misconduct uncapped"},
     {"rx": r"third[- ]party (?:beneficiar|rights)|benefit of any third", "roles": {"customer": 1, "vendor": 1}, "msg": "third-party beneficiary language — check who can enforce", "ask": "no third-party beneficiaries except affiliates named"},
 ]
 ROLE_ALIASES = {"customer": "customer", "client": "customer", "buyer": "customer", "licensee": "customer", "vendor": "vendor", "supplier": "vendor", "provider": "vendor", "seller": "vendor", "contractor": "vendor", "licensor": "vendor", "freelancer": "vendor"}
@@ -197,16 +201,86 @@ def _norm(text: str) -> str:
     return re.sub(r"[ \t]+", " ", text.replace(" ", " "))
 
 
+
+_VENDOR = r"(?:provider|vendor|supplier|licensor|company|contractor|seller)"
+_CUSTOMER = r"(?:customer|client|licensee|buyer|subscriber)"
+_CAP_RX = re.compile(
+    rf"(?P<who>(?:(?:either|each|neither) party|the parties|{_VENDOR}|{_CUSTOMER})(?:'s|’s|s')?)\s+(?:(?:total|aggregate|cumulative|entire|maximum)\s+(?:and\s+\w+\s+)?)*liability"
+    r"(?P<mid>[^.]{0,200}?)(?:(?:shall|will|may|does)\s+not\s+exceed|(?:is|are|shall be|will be)\s+limited\s+to|capped\s+at)(?P<what>[^.]{0,220})",
+    re.I,
+)
+_TFC_RX = re.compile(rf"(?P<who>either party|each party|{_VENDOR}|{_CUSTOMER})\s+may\s+(?:at any time\s+)?terminate[^.]{{0,100}}?(?:for convenience|without cause|for any reason|for no reason|at any time)", re.I)
+_LOCKIN_RX = re.compile(rf"{_CUSTOMER}\s+(?:shall|will)\s+have\s+no\s+right\s+to\s+terminate|non-?cancell?able", re.I)
+_OWN_DATA_RX = re.compile(rf"{_CUSTOMER}\s+(?:owns|shall own|will own|retains|shall retain|will retain)[^.]{{0,80}}(?:data|content|right, title)|as between the parties,? {_CUSTOMER}[^.]{{0,60}}own|(?:customer|client) data (?:is|remains|shall remain|will remain) (?:the )?(?:sole |exclusive )?property of", re.I)
+_GL_RX = re.compile(r"(?:governed by|governing law)[^.]{0,60}?laws? of (?:the )?(?:state of |commonwealth of |province of |republic of )?(?P<j>[a-z][a-z]+(?: (?!without|and|excluding|applicable|in|to|as|that|which|except)[a-z]+){0,2})", re.I)
+_VENUE_RX = re.compile(r"courts?\s+(?:(?:located|sitting|situated)\s+)?in\s+(?P<v>[A-Z][\w.-]*(?:,?\s+[A-Z][\w.-]*){0,4})")
+
+
+def _structural_flags(text: str, role: str, my_jurisdiction: str) -> tuple[list[dict], dict]:
+    """Checks that need more than one regex: cap size and mutuality, termination symmetry, data ownership, forum."""
+    flags: list[dict] = []
+    facts: dict = {"liability_cap": None, "governing_law": None, "venue": None}
+
+    def add(sev: int, msg: str, m, ask: str) -> None:
+        if sev:
+            flags.append({"severity": sev, "flag": msg, "excerpt": excerpt(text, m) if m is not None else None, "ask_for": ask})
+
+    cap = _CAP_RX.search(text)
+    if cap:
+        who = cap.group("who").lower()
+        mutual = bool(re.search(r"either|each|neither|parties", who))
+        capped = "both" if mutual else ("vendor" if re.match(_VENDOR, who, re.I) else "customer")
+        what = cap.group("what")
+        months = None
+        mm = re.search(r"\b([a-z]+|\d{1,3})\s*(?:\((\d{1,3})\)\s*)?[\s-]*months?\b", what, re.I)
+        if mm:
+            months = int(mm.group(2)) if mm.group(2) else parse_number(mm.group(1))
+        elif re.search(r"(?:twelve|12)\s*(?:\(\d+\)\s*)?-?\s*month|one year|1 year|annual fees", what, re.I):
+            months = 12
+        fixed = re.search(r"\$\s?([\d,]{3,})", what)
+        facts["liability_cap"] = {"capped_party": capped, "mutual": mutual, "months_of_fees": months, "fixed_amount": float(fixed.group(1).replace(",", "")) if fixed and months is None else None, "excerpt": excerpt(text, cap)}
+        if capped == "vendor":
+            add({"customer": 3, "vendor": 0}[role], "liability cap protects only the vendor — your own liability (incl. indemnities) is uncapped", cap, "mutual cap: 'each party's aggregate liability shall not exceed…'")
+        elif capped == "customer":
+            add({"customer": 0, "vendor": 3}[role], "liability cap protects only the customer — your liability as vendor is uncapped", cap, "mutual cap at 12 months' fees")
+        if months is not None and months < 12 and capped in ("vendor", "both") and role == "customer":
+            add(3 if months <= 3 else 2, f"liability cap = {months} month(s) of fees — market is 12 months", cap, "cap at 12 months' fees (fees paid or payable in the 12 months before the claim), with a 2-3× super-cap for data breach, confidentiality and IP indemnity")
+    whos = [m.group("who").lower() for m in _TFC_RX.finditer(text)]
+    tfc = _TFC_RX.search(text)
+    if whos and not any(w in ("either party", "each party") for w in whos):
+        vendor_can = any(re.fullmatch(_VENDOR, w, re.I) for w in whos)
+        cust_can = any(re.fullmatch(_CUSTOMER, w, re.I) for w in whos)
+        lock = _LOCKIN_RX.search(text)
+        if vendor_can and not cust_can and role == "customer":
+            add(3 if lock else 2, "only the vendor may terminate for convenience" + (" — you are locked in and fees are non-cancellable" if lock else ""), tfc, "mutual termination for convenience on 30-90 days' notice, or delete the vendor's right; if the vendor terminates for convenience, pro-rata refund of prepaid fees plus transition assistance")
+        elif cust_can and not vendor_can and role == "vendor":
+            add(2, "only the customer may terminate for convenience", tfc, "mutual termination for convenience, or a minimum commitment / early-termination fee")
+    if role == "customer" and re.search(r"(?:customer|client|your) (?:data|content)", text, re.I) and not _OWN_DATA_RX.search(text):
+        add(2, "no statement that you own your data — ownership of Customer Data is ambiguous", None, "add: 'As between the parties, Customer owns all right, title and interest in Customer Data'; vendor licence limited to providing the Services")
+    gl = _GL_RX.search(text)
+    ven = _VENUE_RX.search(text)
+    facts["governing_law"] = gl.group("j").strip().title() if gl else None
+    facts["venue"] = ven.group("v").strip() if ven else None
+    mj = str(my_jurisdiction or "").strip().lower()
+    if mj and (gl or ven):
+        forum = " ".join(x for x in (facts["governing_law"], facts["venue"]) if x).lower()
+        if mj not in forum:
+            add(2, f"governing law / venue is {facts['governing_law'] or '?'}{' — courts in ' + facts['venue'] if facts['venue'] else ''}, not your home jurisdiction ({my_jurisdiction.strip()})", gl or ven, f"your home courts ({my_jurisdiction.strip()}), the defendant's home courts, or a neutral forum; at minimum non-exclusive jurisdiction")
+    return flags, facts
+
 @AGENT.tool
-def detect_clauses(contract_text: str, my_role: str = "customer") -> dict:
+def detect_clauses(contract_text: str, my_role: str = "customer", my_jurisdiction: str = "") -> dict:
     """Detect 26 clause types in a contract, quote each, and score red flags from your side (customer or vendor).
 
-    Missing protective clauses are flagged too (no liability cap = uncapped). Score 0-100: under 25
-    is routine paper, 25-50 negotiate, over 50 do not sign as-is.
+    Missing protective clauses are flagged too (no liability cap = uncapped). Also reads the liability
+    cap (who is capped, months of fees / fixed amount), one-sided termination-for-convenience, data
+    ownership, and governing law/venue vs your home jurisdiction. Score 0-100: under 25 is routine
+    paper, 25-50 negotiate, over 50 do not sign as-is.
 
     Args:
         contract_text: The full contract text (plain text; up to 300k chars).
         my_role: "customer" (buyer/licensee/client) or "vendor" (supplier/provider/contractor).
+        my_jurisdiction: Your home state/country, e.g. "Oregon" — flags governing law or venue elsewhere (optional).
     """
     text = _norm(check_text(contract_text, "contract_text"))
     role = ROLE_ALIASES.get(str(my_role).strip().lower())
@@ -220,14 +294,19 @@ def detect_clauses(contract_text: str, my_role: str = "customer") -> dict:
         elif c["missing_flag"]:
             missing.append({"clause": c["label"], "key": c["key"], "flag": c["missing_flag"]})
     flags, score = [], 0
+    structural, facts = _structural_flags(text, role, my_jurisdiction)
+    skip = {"one-sided immediate/any-reason termination right"} if any("terminate for convenience" in f["flag"] for f in structural) else set()
     for rf in RED_FLAGS:
         sev = rf["roles"].get(role)
-        if not sev:
+        if not sev or rf["msg"] in skip:
             continue
         m = re.search(rf["rx"], text, re.I | re.S)
         if m:
             flags.append({"severity": sev, "flag": rf["msg"], "excerpt": excerpt(text, m), "ask_for": rf["ask"]})
             score += {1: 5, 2: 10, 3: 20}[sev]
+    for f in structural:
+        flags.append(f)
+        score += {1: 5, 2: 10, 3: 20}[f["severity"]]
     for mflag in missing:
         sev = 3 if mflag["key"] in ("limitation_of_liability",) else 2 if mflag["key"] in ("indemnity", "ip_ownership", "term", "governing_law", "data_protection", "termination_convenience") else 1
         flags.append({"severity": sev, "flag": "MISSING: " + mflag["flag"], "excerpt": None, "ask_for": f"add a {mflag['clause'].lower()} clause on market-standard terms"})
@@ -243,6 +322,9 @@ def detect_clauses(contract_text: str, my_role: str = "customer") -> dict:
         "risk_score": score,
         "deal_breakers": [f["flag"] for f in flags if f["severity"] == 3],
         "verdict": verdict,
+        "liability_cap": facts["liability_cap"],
+        "governing_law": facts["governing_law"],
+        "venue": facts["venue"],
         "words": len(text.split()),
         "scope_note": SCOPE_NOTE,
     }

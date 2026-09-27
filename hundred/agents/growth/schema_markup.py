@@ -132,12 +132,14 @@ LOCAL_TYPES = {"LocalBusiness", "Restaurant", "Store", "Dentist", "Plumber", "El
 SUPPORTED = ["Article", "BlogPosting", "NewsArticle", "Product", "FAQPage", "LocalBusiness", "HowTo", "Organization", "Event", "Recipe", "BreadcrumbList"]
 
 REQUIREMENTS: dict[str, dict[str, list[str]]] = {
-    "Article": {"required": ["headline", "image", "datePublished"], "recommended": ["author", "dateModified", "publisher", "description", "mainEntityOfPage"]},
+    # Google: "There are no required properties" for Article; these five are its recommended list.
+    "Article": {"required": [], "recommended": ["author", "dateModified", "datePublished", "headline", "image"]},
     "Product": {"required": ["name"], "recommended": ["image", "description", "sku", "brand", "offers", "aggregateRating", "review", "url"]},
     "FAQPage": {"required": ["mainEntity"], "recommended": []},
-    "LocalBusiness": {"required": ["name", "address"], "recommended": ["telephone", "url", "openingHoursSpecification", "geo", "priceRange", "image", "sameAs"]},
+    "LocalBusiness": {"required": ["name", "address"], "recommended": ["telephone", "url", "openingHoursSpecification", "geo", "priceRange"]},
     "HowTo": {"required": ["name", "step"], "recommended": ["image", "totalTime", "estimatedCost", "supply", "tool", "description"]},
-    "Organization": {"required": ["name", "url"], "recommended": ["logo", "sameAs", "contactPoint", "description", "address"]},
+    # Google: "There are no required properties" for Organization.
+    "Organization": {"required": [], "recommended": ["name", "url", "logo", "sameAs", "contactPoint", "description", "address"]},
     "Event": {"required": ["name", "startDate", "location"], "recommended": ["endDate", "description", "image", "offers", "eventStatus", "eventAttendanceMode", "organizer", "performer"]},
     "Recipe": {"required": ["name", "image"], "recommended": ["author", "datePublished", "description", "prepTime", "cookTime", "totalTime", "recipeYield", "recipeIngredient", "recipeInstructions", "nutrition", "keywords", "recipeCategory", "recipeCuisine", "aggregateRating"]},
     "BreadcrumbList": {"required": ["itemListElement"], "recommended": []},
@@ -592,11 +594,33 @@ def _validate_obj(obj: dict, path: str = "") -> dict:
         offers = obj.get("offers")
         for o in offers if isinstance(offers, list) else ([offers] if offers else []):
             if isinstance(o, dict):
-                for k in ("price", "priceCurrency"):
-                    if k not in o and "lowPrice" not in o:
-                        errors.append(f"Product.offers: missing {k}")
+                if o.get("@type") == "AggregateOffer":
+                    for k in ("lowPrice", "priceCurrency"):
+                        if k not in o:
+                            errors.append(f"Product.offers (AggregateOffer): missing {k}")
+                else:
+                    ps = o.get("priceSpecification") if isinstance(o.get("priceSpecification"), dict) else {}
+                    if "price" not in o and "price" not in ps:
+                        errors.append("Product.offers: missing price")
+                    if "priceCurrency" not in o and "priceCurrency" not in ps:
+                        warnings.append("Product.offers.priceCurrency missing — recommended for product snippets, required for merchant listings")
                 if "availability" not in o:
                     warnings.append("Product.offers.availability missing — recommended for product snippets")
+    if t == "AggregateRating":
+        if obj.get("ratingValue") in (None, ""):
+            errors.append("AggregateRating: required property 'ratingValue' missing")
+        if obj.get("ratingCount") in (None, "") and obj.get("reviewCount") in (None, ""):
+            errors.append("AggregateRating: needs ratingCount or reviewCount")
+        if not path and "itemReviewed" not in obj:
+            errors.append("AggregateRating: top-level rating needs itemReviewed")
+    if t == "Review":
+        if not obj.get("author"):
+            errors.append(f"{path or 'Review'}: Review needs an author (Person or Organization with name)")
+        rr = obj.get("reviewRating")
+        if not isinstance(rr, dict) or rr.get("ratingValue") in (None, ""):
+            errors.append(f"{path or 'Review'}: Review needs reviewRating.ratingValue")
+        if not path and "itemReviewed" not in obj:
+            errors.append("Review: top-level review needs itemReviewed")
     if fam in ("LocalBusiness", "Organization") and ("review" in obj or "aggregateRating" in obj):
         warnings.append(f"{t}: self-serving reviews/ratings on LocalBusiness/Organization are ignored by Google (and against guidelines)")
     if fam == "Article":

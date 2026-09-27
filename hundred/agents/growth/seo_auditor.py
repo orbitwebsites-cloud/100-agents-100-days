@@ -53,14 +53,14 @@ AGENT = Agent(
     1. **Parse and score.** Call `seo_auditor__audit_page` with the HTML, the URL and the
        target keyword. It returns the element inventory (title, description, canonical, robots,
        H1s, word count, image alt coverage, links) and a 0-100 score built from weighted checks.
-       Read the `issues` list: each has `severity` (critical/high/medium/low), `impact`, and a
-       concrete `fix`. Do not re-derive counts yourself.
+       Read the `issues` list: each has `severity` (critical/high/medium/low), the `element`,
+       the `problem`, the `current` value and a concrete `fix`. Do not re-derive counts yourself.
     2. **Check the outline.** Call `seo_auditor__heading_outline` to lint the H1-H6 tree:
        missing/multiple H1s, skipped levels, empty or duplicate headings, headings that are
        styled questions vs. statements. Section depth tells you whether the page answers the
        query or merely mentions it.
     3. **Check keyword and content signals.** Call `seo_auditor__content_signals` with the
-       HTML and the keyword. It reports placement (title, H1, first 100 words, URL, alt,
+       HTML, the keyword and the URL. It reports placement (title, H1, first 100 words, URL, alt,
        description), density, readability, thin-content risk, and semantic coverage of the
        keyword's tokens. Under 300 words with commercial intent is thin; a keyword density
        above ~2.5% reads as stuffing; the keyword absent from the first 100 words is a fix.
@@ -70,7 +70,9 @@ AGENT = Agent(
        page), and the same URL linked with conflicting anchors.
     5. **Directives sanity.** From the audit output: `noindex` on a page that should rank is
        critical; a canonical pointing off-page means this URL is not meant to rank — say so
-       before anything else; missing canonical on parameterised URLs is high.
+       before anything else; missing canonical on parameterised URLs is high, and the canonical
+       you prescribe is the clean URL without the query string. URL hygiene (uppercase,
+       underscores, parameters, > 115 chars) is low: only change a live URL with a 301.
     6. **Prioritise.** Order by severity, then by (impact ÷ effort). Cap the shipped list at
        the 10 highest-value fixes; put the rest in "Also noticed". Write the replacement
        title/description yourself using the keyword-first rule and pixel limits reported.
@@ -209,7 +211,14 @@ def audit_page(html: str, url: str = "", keyword: str = "") -> dict:
         if not canon[0].startswith("http"):
             add("medium", "canonical", "Canonical is relative", "Use an absolute https URL.", canon[0])
     else:
-        add("medium", "canonical", "No canonical tag", f"Add <link rel=\"canonical\" href=\"{url or 'https://…'}\">.")
+        clean = _clean_url(url) if url else ""
+        has_params = bool(url and urlparse(url).query)
+        add(
+            "high" if has_params else "medium",
+            "canonical",
+            "No canonical tag" + (" on a parameterised URL — every ?variant/?ref copy competes as a duplicate" if has_params else ""),
+            f"Add <link rel=\"canonical\" href=\"{clean or 'https://…'}\">" + (" (the clean URL, without the query string)." if has_params else "."),
+        )
 
     # ── headings
     h1s = page.h1s
@@ -244,6 +253,10 @@ def audit_page(html: str, url: str = "", keyword: str = "") -> dict:
     empty_alt = [i for i in imgs if i["alt"] == ""]
     if missing_alt:
         add("medium" if len(missing_alt) < 5 else "high", "images", f"{len(missing_alt)}/{len(imgs)} images have no alt attribute", "Add descriptive alt (or alt=\"\" for decorative).", ", ".join(i["src"][-40:] for i in missing_alt[:5]))
+    if url.lower().startswith("https://"):
+        insecure = [i["src"] for i in imgs if i["src"].lower().startswith("http://")]
+        if insecure:
+            add("medium", "security", f"Mixed content: {len(insecure)} image(s) loaded over http on an https page", "Serve the images over https (browsers block or warn on mixed content).", ", ".join(x[-50:] for x in insecure[:3]))
     no_dims = [i for i in imgs if not i["width"] or not i["height"]]
     if len(no_dims) >= 3:
         add("low", "images", f"{len(no_dims)} images lack width/height (layout shift / CLS)", "Set width and height attributes.")
@@ -285,6 +298,9 @@ def audit_page(html: str, url: str = "", keyword: str = "") -> dict:
         add("medium", "rendering", "Heavy scripts and little HTML text — page may be client-rendered", "Verify Google sees the rendered content (URL Inspection → View crawled page).")
     if url and urlparse(url).scheme == "http":
         add("high", "security", "Page served over http", "Serve over https and 301 http → https.")
+    url_issues = _url_issues(url) if url else []
+    if url_issues:
+        add("low", "url", "URL hygiene: " + "; ".join(url_issues), f"Prefer a lowercase, hyphenated, parameter-free path, e.g. {_suggest_path(url)} (301 the old URL if you change it).", url)
 
     order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     issues.sort(key=lambda i: order[i["severity"]])
@@ -330,6 +346,39 @@ def audit_page(html: str, url: str = "", keyword: str = "") -> dict:
         "issues": issues,
         "top_fixes": [f"[{i['severity']}] {i['element']}: {i['fix']}" for i in issues[:5]],
     }
+
+
+def _clean_url(u: str) -> str:
+    """The URL without query string or fragment — the usual canonical target for a parameterised URL."""
+    p = urlparse(u.strip())
+    return p._replace(query="", fragment="").geturl()
+
+
+def _url_issues(u: str) -> list[str]:
+    p = urlparse(u.strip())
+    path = p.path or "/"
+    out = []
+    if any(ch.isupper() for ch in path):
+        out.append("uppercase characters in path")
+    if "_" in path:
+        out.append("underscores in path (Google treats '_' as a word joiner; use hyphens)")
+    if p.query:
+        out.append(f"query parameters ({p.query[:40]})")
+    if " " in u or "%20" in u:
+        out.append("contains a space")
+    if "//" in path:
+        out.append("multiple slashes")
+    if re.search(r"[^\x00-\x7f]", u):
+        out.append("non-ASCII characters")
+    if len(u) > 115:
+        out.append(f"{len(u)} characters (over 115)")
+    return out
+
+
+def _suggest_path(u: str) -> str:
+    p = urlparse(u.strip())
+    segs = [c.slugify(s.replace("_", "-"), 80) for s in (p.path or "/").split("/") if s]
+    return "/" + "/".join(s for s in segs if s) + ("/" if (p.path or "").endswith("/") else "")
 
 
 def _same_url(a: str, b: str) -> bool:
@@ -393,16 +442,17 @@ def heading_outline(html: str) -> dict:
 
 
 @AGENT.tool
-def content_signals(html: str, keyword: str) -> dict:
+def content_signals(html: str, keyword: str, url: str = "") -> dict:
     """Measure keyword placement, density, readability and thin-content risk for a target keyword.
 
     Reports whether the keyword (and each of its tokens) appears in the title, H1, first 100 words,
-    meta description, image alts and headings, plus word count, Flesch readability and a
-    stuffing/thinness verdict.
+    meta description, image alts, headings and (when a URL is given) the URL slug, plus word count,
+    Flesch readability and a stuffing/thinness verdict.
 
     Args:
         html: The raw HTML source of the page.
         keyword: The primary target keyword or phrase (2-80 characters).
+        url: The page URL (optional); enables the keyword-in-slug check.
     """
     kw = keyword.strip()
     if not 2 <= len(kw) <= 80:
@@ -423,6 +473,10 @@ def content_signals(html: str, keyword: str) -> dict:
         "image_alt": kwl in alts,
         "body": kwl in body,
     }
+    if url:
+        slug_tokens = set(c.tokens(re.sub(r"[-_/.]+", " ", urlparse(url).path)))
+        kw_toks = set(c.tokens(kw))
+        placement["url"] = bool(kw_toks) and kw_toks <= slug_tokens
     dens = _text.keyword_density(page.text, kw)
     kw_tokens = [t for t in c.tokens(kw) if t]
     body_tokens = set(c.tokens(page.text))
@@ -439,6 +493,8 @@ def content_signals(html: str, keyword: str) -> dict:
         fixes.append("Put the keyword in the H1.")
     if not placement["first_100_words"]:
         fixes.append("State the keyword in the opening sentence.")
+    if url and not placement["url"]:
+        fixes.append(f"URL slug lacks the keyword ({', '.join(sorted(set(c.tokens(kw)) - set(c.tokens(re.sub(r'[-_/.]+', ' ', urlparse(url).path)))))} missing) — only change it on a new page or with a 301.")
     if not placement["subheadings"] and len(page.headings) > 2:
         fixes.append("Use the keyword (or a close variant) in one H2.")
     if thin:
@@ -452,7 +508,7 @@ def content_signals(html: str, keyword: str) -> dict:
         "keyword": kw,
         "word_count": n,
         "placement": placement,
-        "placement_score": f"{placed}/7",
+        "placement_score": f"{placed}/{len(placement)}",
         "occurrences": dens["occurrences"],
         "density_pct": dens["density_pct"],
         "token_coverage": token_coverage,
@@ -463,7 +519,7 @@ def content_signals(html: str, keyword: str) -> dict:
         "stuffing_risk": stuffed,
         "top_terms": [t for t, _ in _text.top_terms(page.text, 10)],
         "fixes": fixes,
-        "verdict": ("Keyword well placed." if placed >= 5 and not thin and not stuffed else "Relevance signals incomplete — apply the fixes."),
+        "verdict": ("Keyword well placed." if placed >= len(placement) - 2 and not thin and not stuffed else "Relevance signals incomplete — apply the fixes."),
     }
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from ...core import ToolError
@@ -140,13 +140,49 @@ def clamp(x: float, lo: float, hi: float) -> float:
 
 
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-_NUM_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "ten": 10}
+_NUM_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+_MONTHS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3, "apr": 4, "april": 4, "may": 5,
+    "jun": 6, "june": 6, "jul": 7, "july": 7, "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+_MONTH_RX = "|".join(sorted(_MONTHS, key=len, reverse=True))
+_MONTH_DAY = re.compile(rf"\b({_MONTH_RX})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s+(\d{{4}}))?")
+_DAY_MONTH = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?({_MONTH_RX})\b\.?(?:,?\s+(\d{{4}}))?")
+_WEEKDAY_RX = [re.compile(rf"\b{d[:3]}(?:{d[3:]}|{d[3:4]})?\b") for d in _WEEKDAYS]  # "tue"/"tues"/"tuesday"
+_WEEKDAY_RX[1] = re.compile(r"\btue(?:s|sday)?\b")
+_WEEKDAY_RX[3] = re.compile(r"\bthu(?:r|rs|rsday)?\b")
+_WEEKDAY_RX[2] = re.compile(r"\bwed(?:nesday)?\b")
+
+
+def _month_date(p: str, base: date) -> tuple[date | None, str] | None:
+    for rx, mi, di in ((_MONTH_DAY, 1, 2), (_DAY_MONTH, 2, 1)):
+        m = rx.search(p)
+        if not m:
+            continue
+        mo, da, yr = _MONTHS[m.group(mi)], int(m.group(di)), m.group(3)
+        if m.group(mi) == "may" and mi == 1 and not re.search(r"\bmay\s+\d", p):
+            continue
+        try:
+            d = date(int(yr) if yr else base.year, mo, da)
+        except ValueError:
+            return None, "bad explicit date"
+        if not yr and d < base - timedelta(days=31):  # "Jan 10" said in December means next year
+            d = date(base.year + 1, mo, da)
+        return d, "explicit (month name)"
+    return None
 
 
 def resolve_relative_date(phrase: str, base: date) -> tuple[date | None, str]:
-    """'by Friday', 'EOD', 'tomorrow', 'in 2 weeks', 'next Tuesday', 'end of month', '2026-10-05' -> (date, rule)."""
-    from datetime import timedelta
+    """Deadline phrase -> (date, rule), anchored on `base` (the day it was said/sent).
 
+    Handles ISO and m/d dates, month names ("Oct 15th", "15 October"), "tomorrow", "in/within N
+    (business) days/weeks", weekdays ("Friday", "EOD Thursday", "next Tuesday", "Tuesday next
+    week"), end of week/month/quarter, "next week", and same-day words (today/EOD/COB/ASAP).
+    A named weekday always wins over a same-day word, so "EOD Thursday" is Thursday.
+    "next <weekday>" = that weekday in the NEXT calendar week (Mon-Sun); when that differs from
+    the nearest upcoming one the rule says so, so the caller can confirm.
+    """
     p = (phrase or "").lower().strip()
     m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", p)
     if m:
@@ -165,11 +201,14 @@ def resolve_relative_date(phrase: str, base: date) -> tuple[date | None, str]:
             return d, "explicit (m/d)"
         except ValueError:
             return None, "bad explicit date"
+    md = _month_date(p, base)
+    if md is not None:
+        return md
+    if "day after tomorrow" in p:
+        return base + timedelta(days=2), "+2 days"
     if "tomorrow" in p:
         return base + timedelta(days=1), "next day"
-    if re.search(r"\b(today|eod|end of (the )?day|tonight|asap|now|immediately|urgent(ly)?)\b", p):
-        return base, "same day"
-    m = re.search(r"\b(?:in|within) (\d+|a|an|one|two|three|four|five|six|seven|ten) (business |working )?(day|week|month|hour)s?\b", p)
+    m = re.search(r"\b(?:in|within|give me|takes?|another) (\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten) (business |working )?(day|week|month|hour)s?\b", p)
     if m:
         n = _NUM_WORDS.get(m.group(1)) or int(m.group(1))
         unit = m.group(3)
@@ -180,11 +219,27 @@ def resolve_relative_date(phrase: str, base: date) -> tuple[date | None, str]:
 
             return _dates.add_business_days(base, n), f"+{n} business days"
         return base + timedelta(days=n * {"day": 1, "week": 7, "month": 30}[unit]), f"+{n} {unit}(s)"
+    for i, rx in enumerate(_WEEKDAY_RX):
+        if not rx.search(p):
+            continue
+        day = _WEEKDAYS[i].title()
+        nearest = base + timedelta(days=(i - base.weekday()) % 7 or 7)
+        next_cal_week = base + timedelta(days=7 - base.weekday() + i)
+        if re.search(rf"\b(?:the\s+)?{_WEEKDAYS[i][:3]}\w*\s+after\s+next\b", p):
+            return next_cal_week + timedelta(days=7), f"{day} after next"
+        if re.search(r"\bnext week\b", p) or re.search(rf"\bnext\s+{_WEEKDAYS[i][:3]}", p):
+            if next_cal_week != nearest:
+                return next_cal_week, f"{day} of next week (said on a {base.strftime('%A')}; 'next {day}' could also mean {nearest.isoformat()} — confirm)"
+            return next_cal_week, f"{day} of next week"
+        if re.search(rf"\bthis\s+{_WEEKDAYS[i][:3]}", p) and i == base.weekday():
+            return base, f"{day} (today)"
+        return nearest, day
     if re.search(r"\b(eow|end of (?:the |this |next )?week|this week)\b", p):
         d = base + timedelta(days=(4 - base.weekday()) % 7)
-        return (d + timedelta(days=7) if "next" in p else d), "Friday"
-    if re.search(r"\b(eom|end of (the |this )?month)\b", p):
-        nxt = (base.replace(day=28) + timedelta(days=4)).replace(day=1)
+        return (d + timedelta(days=7) if "next" in p else d), "Friday" + (" of next week" if "next" in p else "")
+    if re.search(r"\b(eom|end of (the |this |next )?month)\b", p):
+        anchor = base if "next" not in p else (base.replace(day=28) + timedelta(days=4)).replace(day=1)
+        nxt = (anchor.replace(day=28) + timedelta(days=4)).replace(day=1)
         return nxt - timedelta(days=1), "last day of month"
     if re.search(r"\b(eoq|end of (the |this )?quarter)\b", p):
         q_end_month = ((base.month - 1) // 3 + 1) * 3
@@ -192,10 +247,6 @@ def resolve_relative_date(phrase: str, base: date) -> tuple[date | None, str]:
         return nxt - timedelta(days=1), "last day of quarter"
     if re.search(r"\bnext week\b", p):
         return base + timedelta(days=7 - base.weekday()), "Monday next week"
-    for i, day in enumerate(_WEEKDAYS):
-        if re.search(rf"\b{day[:3]}(?:{day[3:]})?\b", p):
-            ahead = (i - base.weekday()) % 7 or 7
-            if "next" in p and ahead < 7:
-                ahead += 7
-            return base + timedelta(days=ahead), day.title()
+    if re.search(r"\b(today|eod|cob|eob|close of (?:business|play)|end of (the )?day|tonight|asap|now|immediately|urgent(ly)?)\b", p):
+        return base, "same day"
     return None, "unrecognised"

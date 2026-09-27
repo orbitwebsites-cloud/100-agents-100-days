@@ -33,7 +33,7 @@ def test_build_article_parses_dates_and_flags_missing():
     assert ld["datePublished"] == "2026-03-04"
     assert ld["author"] == {"@type": "Person", "name": "Ana"}
     assert ld["mainEntityOfPage"]["@id"] == "https://x.com/brew"
-    assert "publisher" in out["missing_recommended"]
+    assert "dateModified" in out["missing_recommended"]
     assert out["errors"] == []
 
 
@@ -74,7 +74,24 @@ def test_validate_schema_finds_format_and_required_errors():
     g = call("validate_schema", jsonld=graph)
     assert g["errors"] == ["BreadcrumbList.itemListElement[0]: position should be 1, got 2"]
     assert any("timezone" in w for w in g["warnings"])
-    assert g["objects"][0]["missing_recommended"] == ["author", "dateModified", "publisher", "description", "mainEntityOfPage"]
+    assert g["objects"][0]["missing_recommended"] == ["author", "dateModified"]
+
+
+def test_google_required_properties_match_docs():
+    # Article and Organization have no required properties per Google; missing ones are warnings only.
+    art = call("validate_schema", jsonld='{"@context":"https://schema.org","@type":"Article","headline":"H"}')
+    assert art["errors"] == []
+    assert set(art["objects"][0]["missing_recommended"]) == {"author", "dateModified", "datePublished", "image"}
+    org = call("validate_schema", jsonld='{"@context":"https://schema.org","@type":"Organization","name":"Acme"}')
+    assert org["errors"] == []
+    # AggregateRating needs ratingCount or reviewCount; a nested Review needs author + reviewRating.
+    prod = call("validate_schema", jsonld=json.dumps({"@context": "https://schema.org", "@type": "Product", "name": "X", "aggregateRating": {"@type": "AggregateRating", "ratingValue": "4.5"}, "review": [{"@type": "Review", "reviewBody": "ok"}]}))
+    assert any("ratingCount or reviewCount" in e for e in prod["errors"])
+    assert any("needs an author" in e for e in prod["errors"])
+    assert any("reviewRating.ratingValue" in e for e in prod["errors"])
+    # Offer without priceCurrency: a warning for product snippets, not an error.
+    off = call("validate_schema", jsonld='{"@context":"https://schema.org","@type":"Product","name":"X","offers":{"@type":"Offer","price":"5","availability":"https://schema.org/InStock"}}')
+    assert off["errors"] == [] and any("priceCurrency" in w for w in off["warnings"])
 
 
 def test_validate_schema_bad_input():

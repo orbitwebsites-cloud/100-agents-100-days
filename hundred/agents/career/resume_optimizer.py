@@ -156,8 +156,9 @@ STRONG_VERBS = frozenset(
     launched led managed mentored migrated modernized negotiated optimized orchestrated outperformed owned
     partnered pioneered produced published raised rebuilt reduced redesigned refactored repaired replaced
     rescued restructured saved scaled secured shipped simplified slashed sold spearheaded standardized
-    streamlined strengthened supervised surpassed transformed tripled turned unified won wrote""".split()
-)
+    streamlined strengthened supervised surpassed transformed tripled turned unified won wrote
+    ran oversaw set made took brought found taught began drew rewrote spun sped undertook upheld""".split()
+)  # irregular past tenses included: "Ran", "Oversaw" are action verbs too
 WEAK_STARTS = {
     "responsible for": "start with the result, not the responsibility",
     "duties included": "delete — list the outcome instead",
@@ -222,27 +223,55 @@ def match_keywords(resume: str, job_description: str, job_title: str = "") -> di
         raise ToolError("No skill/keyword terms found in the job description — paste the full posting, including requirements.")
     res_terms = extract_skill_terms(resume)
     reqs = split_requirements(job_description)
-    must_terms = {t for r in reqs if r["tier"] == "must" for t in r["skills"]}
-    nice_terms = {t for r in reqs if r["tier"] == "nice" for t in r["skills"]} - must_terms
-    # Terms mentioned 2+ times in the JD but not inside a tagged requirement are treated as must.
+    must_terms = {t for r in reqs if r["tier"] == "must" for t in r["skills"] if t not in r.get("nice_skills", [])}
+    nice_terms = ({t for r in reqs if r["tier"] == "nice" for t in r["skills"]} | {t for r in reqs for t in r.get("nice_skills", [])}) - must_terms
+    # A term the Responsibilities section leans on (2+ JD mentions, in a duty line) is a must;
+    # repeated terms that only appear in the title/company blurb stay "context".
+    duty_terms = {t for r in reqs if r["tier"] == "duty" for t in r["skills"]}
     for t, n in jd_terms.items():
-        if t not in must_terms and t not in nice_terms and n >= 2:
+        if t not in must_terms and t not in nice_terms and n >= 2 and t in duty_terms:
             must_terms.add(t)
+    low_resume = resume.lower()
+
+    def in_resume(term: str) -> int:
+        # Alias-aware extraction first; then the literal word-bounded search an ATS runs
+        # ("analytics" is found inside "Google Analytics").
+        n = res_terms.get(term, 0)
+        if n:
+            return n
+        return len(re.findall(r"(?<![\w])" + re.escape(term) + r"(?![\w])", low_resume))
+
+    # "Amplitude or Mixpanel": either one satisfies the requirement — count the pair once.
+    alt_of: dict[str, str] = {}
+    for r in reqs:
+        for m in re.finditer(r"\s(?:and/)?or\s", r["text"]):
+            before = list(extract_skill_terms(r["text"][max(0, m.start() - 40) : m.start()]))
+            after = list(extract_skill_terms(r["text"][m.end() : m.end() + 40]))
+            if before and after and before[-1] != after[0] and after[0] not in alt_of and before[-1] not in alt_of:
+                alt_of[after[0]] = before[-1]
+    hits = {t: in_resume(t) for t in jd_terms}
     matched, missing = [], []
     for term, n in jd_terms.most_common():
         tier = "must" if term in must_terms else "nice" if term in nice_terms else "context"
-        row = {"term": term, "tier": tier, "jd_mentions": n, "resume_mentions": res_terms.get(term, 0)}
-        (matched if res_terms.get(term) else missing).append(row)
+        row = {"term": term, "tier": tier, "jd_mentions": n, "resume_mentions": hits[term]}
+        partner = alt_of.get(term) or next((a for a, b in alt_of.items() if b == term), None)
+        if partner and partner in hits:
+            row["alternative"] = partner
+            if not hits[term] and hits[partner]:
+                row["satisfied_by"] = partner
+        (matched if hits[term] or row.get("satisfied_by") else missing).append(row)
     tier_order = {"must": 0, "nice": 1, "context": 2}
     missing.sort(key=lambda r: (tier_order[r["tier"]], -r["jd_mentions"], r["term"]))
 
     def cov(tier: str) -> tuple[int, int]:
-        tot = [r for r in matched + missing if r["tier"] == tier]
-        return sum(1 for r in tot if r["resume_mentions"]), len(tot)
+        # An alternative pair counts as one requirement: the second term of the pair is not counted.
+        tot = [r for r in matched + missing if r["tier"] == tier and not (r["term"] in alt_of and alt_of[r["term"]] in hits)]
+        return sum(1 for r in tot if r["resume_mentions"] or r.get("satisfied_by") or hits.get(alt_of.get(r["term"], ""), 0)), len(tot)
 
     m_hit, m_tot = cov("must")
     n_hit, n_tot = cov("nice")
     all_hit, all_tot = len(matched), len(matched) + len(missing)
+    alternatives = [{"either": b, "or": a} for a, b in alt_of.items() if a in hits and b in hits]
     must_cov = pct(m_hit, m_tot)
     title_found = bool(job_title.strip()) and job_title.strip().lower() in resume.lower()
     phrasing = [
@@ -264,6 +293,7 @@ def match_keywords(resume: str, job_description: str, job_title: str = "") -> di
         "matched": matched,
         "missing": missing,
         "phrasing": phrasing,
+        "alternatives": alternatives,
         "requirements_parsed": len(reqs),
         "ats_truth": "ATS parse fields and let recruiters keyword-search; they do not auto-reject on a score. Exact spelling of the JD's terms is what makes a search hit.",
         "verdict": verdict,
