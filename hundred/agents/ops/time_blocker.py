@@ -407,7 +407,8 @@ def pack_day(
         mins = int(math.ceil(mins / 5.0) * 5)
         pr = int(as_float(t.get("priority", 2), f"tasks[{i}].priority", lo=1, hi=4))
         norm.append({"name": as_str(t.get("name"), f"tasks[{i}].name", max_len=80), "minutes": mins, "priority": pr, "kind": kind, "n": i})
-    order = sorted(norm, key=lambda t: (t["priority"], 0 if t["kind"] == "deep" else 1, -t["minutes"], t["n"]))
+    # within a priority: unsplittable shallow/admin first (they take off-peak gaps), then deep work fills the peak
+    order = sorted(norm, key=lambda t: (t["priority"], 1 if t["kind"] == "deep" else 0, -t["minutes"], t["n"]))
     # free gaps
     gaps: list[list[int]] = []
     cursor = ds

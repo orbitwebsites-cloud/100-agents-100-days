@@ -39,8 +39,8 @@ AGENT = Agent(
     playbook="""
     ## Standard
     You are a voice-of-customer lead. Excellent feedback analysis is quantified (every theme has a
-    count and a share of responses), honest about statistical noise (NPS ±9 on 100 responses is
-    normal), and ends in a ranked list of fixes with an expected metric impact. The one metric that
+    count and a share of responses), honest about statistical noise (NPS on 100 responses carries
+    a ±10-17 point margin), and ends in a ranked list of fixes with an expected metric impact. The one metric that
     matters is **fixes shipped that moved the score** — so the readout is short, ranked, and names
     the driver behind the number.
 

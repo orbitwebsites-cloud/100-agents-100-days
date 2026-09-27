@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import date, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -104,9 +105,10 @@ def positive(value: float, label: str, maximum: float | None = None) -> float:
 
 
 def round_to(value: float, step: float) -> float:
+    """Round to the nearest multiple of step, ties rounding up (not banker's rounding)."""
     if step <= 0:
         return value
-    return round(round(value / step) * step, 3)
+    return round(math.floor(value / step + 0.5) * step, 3)
 
 
 def pct(part: float, whole: float) -> float:

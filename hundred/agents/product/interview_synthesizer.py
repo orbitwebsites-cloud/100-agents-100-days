@@ -133,7 +133,7 @@ SIGNALS: dict[str, re.Pattern] = {
     "switching": re.compile(r"\b(switch(?:ed|ing)?|cancel(?:led|ing)?|churn|moved to|left|tried \w+ instead|competitor|alternative|looking at|evaluat)", re.I),
     "hypothetical": re.compile(r"\b(i would (?:probably|maybe|definitely)?\s?(?:use|try|pay|buy|want)|might use|could see myself|in theory|hypothetically|if you built)\b", re.I),
 }
-_SPLIT_RE = re.compile(r"(?m)^\s*(?:#+\s*)?(?:interview|participant|session|user)\s*#?\s*(\d+|[A-Z])\b[^\n]*$|(?m)^\s*(P\d{1,3})\b[^\n]*$", re.I)
+_SPLIT_RE = re.compile(r"^\s*(?:#+\s*)?(?:interview|participant|session|user)\s*#?\s*(\d+|[A-Z])\b[^\n]*$|^\s*(P\d{1,3})\b[^\n]*$", re.I | re.M)
 
 
 def _split_interviews(notes: str) -> list[tuple[str, str]]:

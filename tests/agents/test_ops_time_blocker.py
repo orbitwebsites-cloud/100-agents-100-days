@@ -85,7 +85,8 @@ def test_pack_day_puts_deep_work_in_peak_and_reports_leftovers():
     deep = [b for b in out["blocks"] if b["task"] == "Write strategy doc"]
     assert deep[0]["start"] == "09:00" and deep[0]["in_peak"] is True
     assert out["stats"]["meeting_minutes"] == 75 and out["stats"]["meeting_load_pct"] == 16
-    assert out["stats"]["tasks_unscheduled"] == 1 and out["unscheduled"][0]["task"] == "Model rewrite"
+    assert out["stats"]["tasks_unscheduled"] == 2 and out["unscheduled"][0]["task"] == "Model rewrite"
+    assert out["stats"]["deep_work_minutes"] == 270 and out["unscheduled"][0]["minutes_left"] == 90
     starts = [b["start"] for b in out["blocks"]]
     assert starts == sorted(starts)
     # no two blocks overlap
