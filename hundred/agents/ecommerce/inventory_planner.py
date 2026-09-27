@@ -88,7 +88,10 @@ AGENT = Agent(
        order date is in the past is a red alert at the top of the output.
     6. **Audit health** with `inventory_planner__inventory_health` on the full list: sell-
        through, weeks of supply, turns, dead stock value, overstock. This is where cash is
-       freed: propose markdowns/bundles for overstock and stop-reorder for dead SKUs.
+       freed: propose markdowns/bundles for overstock and stop-reorder for dead SKUs. For
+       seasonal SKUs pass `forecast_units_next_period` so weeks of supply use the coming
+       season, not the trailing one; where health says "hold" but the reorder point says
+       order now, the reorder point wins.
     7. **Self-check** silently: units are consistent (daily vs monthly); lead time in
        days; service levels stated; order quantities ≥ MOQ; total PO value summed and
        compared to the buyer's cash budget if given.
@@ -430,8 +433,14 @@ def economic_order_quantity(
         q_star = math.sqrt(2 * D * S / H)
         upper = tiers[t_idx + 1]["min_qty"] if t_idx + 1 < len(tiers) else float("inf")
         feasible = tier["min_qty"] <= q_star < upper
-        q = q_star if feasible else tier["min_qty"]
-        q = _round_up(q)
+        if feasible or q_star < tier["min_qty"]:
+            q = q_star if feasible else tier["min_qty"]
+            q = _round_up(q)
+        else:
+            # EOQ lies above this tier: the cheapest in-tier quantity is the largest one below the next break
+            q = (math.floor((upper - 1) / pack) * pack) if pack else upper - 1
+            if q < max(moq, tier["min_qty"]):
+                continue
         if q < tier["min_qty"]:
             q = tier["min_qty"]
         # after rounding q could cross into next tier — fine, but cost stays this tier's only if within tier

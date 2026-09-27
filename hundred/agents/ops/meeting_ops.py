@@ -85,6 +85,7 @@ AGENT = Agent(
     ```
     # <Meeting title> — <YYYY-MM-DD>
     **Attendees:** … · **Length:** ~N min · **Talk share:** A 40%, B 35%, …
+    **Topics:** <3-6 keywords>
 
     ## TL;DR
     <2-3 sentences: why we met, what changed.>

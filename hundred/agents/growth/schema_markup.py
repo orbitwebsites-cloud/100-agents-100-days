@@ -716,6 +716,7 @@ def extract_schema(html: str) -> dict:
     page = c.parse_html(html)
     blocks = []
     types_found = []
+    parsed_objs: list[dict] = []
     total_err = 0
     for i, raw in enumerate(page.jsonld):
         if not raw.strip():
@@ -729,6 +730,7 @@ def extract_schema(html: str) -> dict:
             continue
         vals = []
         for o in objs:
+            parsed_objs.append(o)
             r = _validate_obj(o)
             types_found.append(str(r["type"]))
             vals.append({"type": r["type"], "errors": r["errors"], "warnings": r["warnings"], "missing_recommended": r["missing_recommended"]})
@@ -747,8 +749,9 @@ def extract_schema(html: str) -> dict:
     if microdata and page.jsonld:
         recs.append(f"{microdata} microdata itemscope(s) alongside JSON-LD — consolidate to JSON-LD to avoid conflicting values.")
     dup = sorted({t for t in types_found if types_found.count(t) > 1})
+    conflicts = _conflicts(parsed_objs, dup)
     if dup:
-        recs.append(f"Duplicate types across blocks: {', '.join(dup)}.")
+        recs.append(f"Duplicate types across blocks: {', '.join(dup)}." + (" Conflicting values: " + "; ".join(conflicts) + " — keep one block (usually the plugin's) and delete the other." if conflicts else ""))
     return {
         "jsonld_blocks": len(page.jsonld),
         "types": types_found,
@@ -756,9 +759,37 @@ def extract_schema(html: str) -> dict:
         "microdata_itemscopes": microdata,
         "rdfa_typeof": rdfa,
         "error_count": total_err,
+        "conflicting_values": conflicts,
         "recommendations": recs,
         "verdict": (f"{len(page.jsonld)} JSON-LD block(s), types: {', '.join(types_found) or 'none'}; {total_err} error(s)."),
     }
+
+
+def _conflicts(objs: list[dict], dup_types: list[str]) -> list[str]:
+    """Compare same-type objects on the values Google reads most (name, price, currency, availability, rating)."""
+    out = []
+
+    def facts(o: dict) -> dict:
+        f = {"name": o.get("name") or o.get("headline")}
+        off = o.get("offers")
+        off = off[0] if isinstance(off, list) and off else off
+        if isinstance(off, dict):
+            price = re.sub(r"[^\d.]", "", str(off.get("price") or off.get("lowPrice") or ""))
+            avail = re.sub(r"[\s_-]", "", str(off.get("availability") or "").split("/")[-1]).lower()
+            f.update({"offers.price": price or None, "offers.priceCurrency": off.get("priceCurrency"), "offers.availability": avail or None})
+        ar = o.get("aggregateRating")
+        if isinstance(ar, dict):
+            f["aggregateRating.ratingValue"] = ar.get("ratingValue")
+        return {k: str(v) for k, v in f.items() if v not in (None, "")}
+
+    for t in dup_types:
+        group = [facts(o) for o in objs if str(o.get("@type")) == t]
+        keys = set().union(*group) if group else set()
+        for k in sorted(keys):
+            vals = sorted({g[k] for g in group if k in g})
+            if len(vals) > 1:
+                out.append(f"{t}.{k}: {' vs '.join(repr(v) for v in vals)}")
+    return out
 
 
 @AGENT.tool

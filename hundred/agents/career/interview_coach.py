@@ -125,8 +125,16 @@ AGENT = Agent(
 )
 
 S_CUES = re.compile(r"\b(situation|context|background|at the time|when i was|while (?:i was )?at|in my (?:previous|last|role))\b", re.I)
-T_CUES = re.compile(r"\b(task|my (?:job|role|goal|responsibility) was|i (?:was asked|needed|had) to|the (?:goal|challenge|problem|objective) was|responsible for)\b", re.I)
-A_CUES = re.compile(r"\b(i (?:decided|built|led|wrote|proposed|ran|set up|created|organi[sz]ed|negotiated|convinced|designed|implemented|analy[sz]ed|prioriti[sz]ed|reached out|took|started|drafted|pushed|owned|chose|mapped|called|scheduled|cut|changed|introduced)|so i|first,? i|then i|next,? i|my approach)\b", re.I)
+T_CUES = re.compile(r"\b(task|(?:my|our) (?:job|role|goal|responsibility) was|(?:i|we) (?:was asked|were asked|needed|had) to|the (?:goal|challenge|problem|objective) was|responsible for)\b", re.I)
+# Action cues accept "I", "we" and "the team" as the actor: a "we" Action is still the Action —
+# it is exactly what the ownership check below needs to see and flag.
+_ACTION_VERBS = (
+    r"decided|built|rebuilt|led|wrote|rewrote|proposed|ran|set up|created|organi[sz]ed|negotiated|convinced|designed|redesigned|"
+    r"implemented|analy[sz]ed|prioriti[sz]ed|reached out|took|started|drafted|pushed|owned|chose|mapped|called|scheduled|cut|"
+    r"changed|introduced|pulled|looked|found|tested|launched|interviewed|reviewed|shipped|removed|pitched|presented|met|asked|"
+    r"dug|identified|sized|modell?ed|hired|coached|simplified|aligned|escalated|documented|measured|dropped|split|moved|replaced"
+)
+A_CUES = re.compile(r"\b((?:i|we|the team) (?:then |also |quickly |first )?(?:" + _ACTION_VERBS + r")|so (?:i|we)|first,? (?:i|we)|then (?:i|we)|next,? (?:i|we)|my approach)\b", re.I)
 R_CUES = re.compile(r"\b(result|as a result|outcome|in the end|ultimately|which (?:led|resulted)|this (?:led|resulted|meant)|we (?:shipped|hit|reached|delivered|launched|grew|cut|saved)|increased|decreased|reduced|improved|grew|saved|delivered|launched|hit)\b", re.I)
 REFLECT_CUES = re.compile(r"\b(i learned|lesson|looking back|in hindsight|what i(?:'d| would) do differently|since then|now i (?:always|never)|takeaway)\b", re.I)
 NUM_RE = re.compile(r"(\d+(?:\.\d+)?\s?(?:%|percent|x\b|k\b|m\b|million|thousand|hours?|days?|weeks?|months?|people|engineers|customers|users|accounts|deals|tickets)|[$€£]\s?\d|\b\d{2,}\b|\b(?:doubled|tripled|halved)\b)", re.I)
@@ -205,8 +213,13 @@ def check_star_story(story: str, target_seconds: int = 100) -> dict:
         elif shares[k] > hi:
             issues.append(f"{name} is bloated ({shares[k]}% of words; aim {lo}-{hi}%)")
             score -= 8
+    i_total, we_total = len(I_RE.findall(story)), len(WE_RE.findall(story))
     if parts["A"] and we_count > i_count:
         issues.append(f"Action uses 'we' {we_count}× vs 'I' {i_count}× — the interviewer can't see your part")
+        fixes.append("rewrite the Action in first person singular: 'I decided…', 'I convinced…'")
+        score -= 15
+    elif we_total > i_total and we_total >= 3:
+        issues.append(f"story uses 'we/our/the team' {we_total}× vs 'I/my' {i_total}× — the interviewer can't see your part")
         fixes.append("rewrite the Action in first person singular: 'I decided…', 'I convinced…'")
         score -= 15
     if not quantified:
@@ -233,7 +246,7 @@ def check_star_story(story: str, target_seconds: int = 100) -> dict:
         "word_share_pct": shares,
         "ideal_share_pct": {k: f"{lo}-{hi}" for k, (lo, hi) in ideal.items()},
         "segments": {k: " ".join(v)[:600] for k, v in parts.items()},
-        "ownership": {"i_in_action": i_count, "we_in_action": we_count},
+        "ownership": {"i_in_action": i_count, "we_in_action": we_count, "i_total": i_total, "we_total": we_total},
         "result_quantified": quantified,
         "reflection_present": reflection,
         "issues": issues,
@@ -432,7 +445,16 @@ def lint_answer(answer: str, question: str = "", max_seconds: int = 120) -> dict
     low = answer.lower()
     fillers = []
     for term, fix in FILLERS.items():
-        cnt = len(re.findall(r"(?<![\w'])" + re.escape(term) + r"(?![\w'])", low))
+        if term == "like":
+            # "like" is a filler only when it isn't the verb ("I really like growth") or part of
+            # another counted hedge ("I feel like"): skip it after a subject/auxiliary/sense verb.
+            cnt = sum(
+                1
+                for m in re.finditer(r"(?<![\w'])like(?![\w'])", low)
+                if not re.search(r"(?:\b(?:i|you|we|they|he|she|would|really|just|to|also|don't|didn't|not|feel|feels|felt|look|looks|looked|sound|sounds|seem|seems|'d)\s*)$", low[: m.start()])
+            )
+        else:
+            cnt = len(re.findall(r"(?<![\w'])" + re.escape(term) + r"(?![\w'])", low))
         if cnt:
             fillers.append({"term": term, "count": cnt, "fix": fix})
     fillers.sort(key=lambda f: -f["count"])

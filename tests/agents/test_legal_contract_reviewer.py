@@ -29,7 +29,7 @@ def test_detect_clauses_scores_customer_side():
     keys = {c["key"] for c in out["clauses_found"]}
     assert {"limitation_of_liability", "consequential_exclusion", "indemnity", "auto_renewal", "governing_law", "audit", "payment_terms", "non_compete"} <= keys
     flags = [f["flag"] for f in out["red_flags"]]
-    assert "one-way indemnity running from you to the vendor" in flags
+    assert "one-way (or lopsided) indemnity running from you to the vendor" in flags
     assert "non-compete / restriction on competing products" in flags
     assert any("notice period of 90+" in f for f in flags)
     assert any("cure period" in f for f in flags)
@@ -40,7 +40,7 @@ def test_detect_clauses_scores_customer_side():
 def test_detect_clauses_vendor_side_differs():
     out = call("detect_clauses", contract_text=SAAS, my_role="vendor")
     flags = [f["flag"] for f in out["red_flags"]]
-    assert "one-way indemnity running from you to the vendor" not in flags
+    assert "one-way (or lopsided) indemnity running from you to the vendor" not in flags
     assert any("net 60" in f for f in flags)
 
 

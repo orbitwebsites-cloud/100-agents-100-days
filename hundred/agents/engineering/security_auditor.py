@@ -171,6 +171,37 @@ def _redact(s: str) -> str:
     return f"{s[:keep]}…({len(s)} chars)"
 
 
+def find_secrets_in_line(line: str, min_entropy: float = 3.5) -> list[tuple[str, str, str]]:
+    """(detector name, confidence, secret value) for every credential on one line (placeholders skipped)."""
+    hits: list[tuple[str, str, str]] = []
+    for name, rx, conf in SECRET_PATTERNS:
+        for m in rx.finditer(line):
+            secret = next((g for g in reversed(m.groups() or ()) if g and len(g) >= 8), None) if m.groups() else None
+            secret = secret or m.group(0)
+            c = conf
+            if name.startswith("Generic"):
+                val = m.group(m.lastindex or 0)
+                if PLACEHOLDER.match(val) or val.lower() in ("password", "secret", "changeme"):
+                    continue
+                ent = shannon_entropy(val)
+                if ent < min_entropy and not re.search(r"\d", val):
+                    continue
+                if ent < min_entropy:
+                    c = "low"
+                secret = val
+            if any(secret == s for _, _, s in hits):
+                continue
+            hits.append((name, c, secret))
+    return hits
+
+
+def redact_line(line: str, secrets: list[str]) -> str:
+    """Replace every secret value on the line (longest first) with its redacted form."""
+    for s in sorted(set(secrets), key=len, reverse=True):
+        line = line.replace(s, _redact(s))
+    return line
+
+
 @AGENT.tool
 def scan_secrets(text: str, min_entropy: float = 3.5) -> dict:
     """Scan text, code, config or logs for leaked credentials (cloud keys, API tokens, private keys, JWTs, connection strings, credential assignments) and report each redacted (prefix + length) with line number, confidence and entropy — never the secret itself.
@@ -186,28 +217,18 @@ def scan_secrets(text: str, min_entropy: float = 3.5) -> dict:
     findings = []
     seen: set[tuple[int, str]] = set()
     for ln, line in enumerate(lines, 1):
-        for name, rx, conf in SECRET_PATTERNS:
-            for m in rx.finditer(line):
-                secret = next((g for g in reversed(m.groups() or ()) if g and len(g) >= 8), None) if m.groups() else None
-                secret = secret or m.group(0)
-                if name.startswith("Generic"):
-                    val = m.group(m.lastindex or 0)
-                    if PLACEHOLDER.match(val) or val.lower() in ("password", "secret", "changeme"):
-                        continue
-                    ent = shannon_entropy(val)
-                    if ent < min_entropy and not re.search(r"\d", val):
-                        continue
-                    if ent < min_entropy:
-                        conf = "low"
-                    secret = val
-                key = (ln, secret)
-                if key in seen:
-                    continue
-                seen.add(key)
-                findings.append({
-                    "line": ln, "type": name, "confidence": conf, "redacted": _redact(secret), "entropy": shannon_entropy(secret),
-                    "context": re.sub(re.escape(secret), _redact(secret), line.strip())[:160],
-                })
+        hits = find_secrets_in_line(line, min_entropy)
+        # redact *every* secret on the line in each context, not just the finding's own
+        context = redact_line(line.strip(), [s for _, _, s in hits])[:160]
+        for name, conf, secret in hits:
+            key = (ln, secret)
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append({
+                "line": ln, "type": name, "confidence": conf, "redacted": _redact(secret), "entropy": shannon_entropy(secret),
+                "context": context,
+            })
     order = {"high": 0, "medium": 1, "low": 2}
     findings.sort(key=lambda f: (order[f["confidence"]], f["line"]))
     by_type = Counter(f["type"] for f in findings)

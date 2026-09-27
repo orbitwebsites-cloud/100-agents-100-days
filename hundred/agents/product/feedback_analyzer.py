@@ -116,14 +116,15 @@ AGENT = Agent(
 )
 
 DEFAULT_TAXONOMY: dict[str, list[str]] = {
-    "pricing": ["price", "pricing", "expensive", "cost", "cheap", "afford", "worth", "value for money", "too much money"],
-    "performance": ["slow", "lag", "laggy", "speed", "fast", "loading", "load time", "freeze", "freezes", "sluggish", "performance"],
+    "pricing": ["price", "pricing", "pricey", "overpriced", "expensive", "cost", "costly", "cheap", "cheaper", "afford", "worth", "value for money", "too much money"],
+    "performance": ["slow", "lag", "laggy", "speed", "fast", "load", "loading", "load time", "freeze", "freezes", "sluggish", "performance", "takes forever", "times out", "timeout"],
     "bugs": ["bug", "bugs", "crash", "crashes", "crashed", "broken", "glitch", "error", "errors", "doesn't work", "does not work", "not working"],
-    "usability": ["confusing", "intuitive", "easy to use", "hard to use", "clunky", "ui", "ux", "interface", "navigate", "navigation", "find", "cluttered", "simple", "layout"],
+    "usability": ["confusing", "intuitive", "easy to use", "hard to use", "clunky", "ui", "ux", "interface", "navigate", "navigation", "find", "cluttered", "simple", "simplest", "layout"],
     "onboarding": ["onboarding", "setup", "set up", "getting started", "tutorial", "learning curve", "sign up", "signup", "first time"],
     "support": ["support", "customer service", "help desk", "response time", "ticket", "chat support", "no reply", "helpful staff"],
-    "missing_feature": ["missing", "wish", "would be nice", "would love", "need a way", "feature request", "add the ability", "lack", "lacks", "no way to", "can't do", "cannot do"],
-    "integrations": ["integration", "integrate", "api", "zapier", "slack", "salesforce", "hubspot", "export", "import", "sync", "webhook", "connect to"],
+    "missing_feature": ["missing", "wish", "would be nice", "would love", "need a way", "needs a", "please add", "feature request", "add the ability", "lack", "lacks", "no way to", "can't do", "cannot do"],
+    # "export"/"import" deliberately NOT here: CSV/PDF export is a core feature, and export bugs are bugs, not integrations
+    "integrations": ["integration", "integrate", "api", "zapier", "slack", "salesforce", "hubspot", "sync with", "webhook", "connect to"],
     "reliability": ["downtime", "outage", "down", "unreliable", "reliable", "uptime", "lost data", "data loss", "stable", "unstable"],
     "mobile": ["mobile", "iphone", "android", "ios", "app store", "phone", "tablet", "ipad"],
     "billing": ["billing", "invoice", "charged", "refund", "subscription", "cancel", "renewal", "credit card", "payment"],
@@ -231,7 +232,8 @@ def count_themes(responses: list[dict], taxonomy: dict[str, list[str]] | None = 
             if not isinstance(v, list) or not v:
                 raise ToolError(f"taxonomy['{k}'] must be a non-empty list of keywords.")
             tax[str(k).strip().lower()] = [str(w).lower() for w in v][:50]
-    patterns = {t: re.compile(r"\b(?:" + "|".join(re.escape(w) for w in ws) + r")\b", re.I) for t, ws in tax.items()}
+    # optional plural suffix so "costs", "loads", "integrations" match their singular keyword
+    patterns = {t: re.compile(r"\b(?:" + "|".join(re.escape(w) for w in ws) + r")(?:s|es)?\b", re.I) for t, ws in tax.items()}
     counts: Counter = Counter()
     by_seg: dict[str, Counter] = defaultdict(Counter)
     by_band: dict[str, Counter] = defaultdict(Counter)
@@ -264,7 +266,7 @@ def count_themes(responses: list[dict], taxonomy: dict[str, list[str]] | None = 
                 examples[th].append(t[:200])
         if not themes and len(untagged) < max(0, sample_untagged):
             untagged.append(t[:200])
-        tagged_rows.append({"i": i, "themes": themes, "sentiment": sent, "band": band, "segment": seg})
+        tagged_rows.append({"i": i, "themes": themes, "score": sc if band else None, "sentiment": sent, "band": band, "segment": seg})
     untagged_total = sum(1 for r in tagged_rows if not r["themes"])
     table = [
         {"theme": th, "responses": c, "share_pct": pct(c, with_comment), "sentiment": round(mean(sentiment[th]), 2), "by_segment": dict(by_seg[th]), "by_band": dict(by_band[th]), "examples": examples[th]}
@@ -278,6 +280,7 @@ def count_themes(responses: list[dict], taxonomy: dict[str, list[str]] | None = 
         "themes": table,
         "untagged_sample": untagged,
         "tagged_rows": tagged_rows,
+        "next_step": "Pass tagged_rows (rows with a score) straight to feedback_analyzer__driver_analysis.",
         "verdict": (f"Top theme: {table[0]['theme']} ({table[0]['share_pct']}%)" if table else "No themes matched") + (f"; {pct(untagged_total, with_comment)}% untagged — extend the taxonomy" if with_comment and untagged_total / with_comment > 0.2 else ""),
     }
 

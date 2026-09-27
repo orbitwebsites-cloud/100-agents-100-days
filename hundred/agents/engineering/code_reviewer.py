@@ -14,6 +14,7 @@ from collections import Counter, defaultdict
 
 from ...core import Agent, ToolError
 from ._common import parse_unified_diff, require_text, SENSITIVE_PATH
+from .security_auditor import find_secrets_in_line, redact_line
 
 AGENT = Agent(
     slug="code-reviewer",
@@ -363,6 +364,8 @@ SMELLS: list[tuple[str, re.Pattern, str, str]] = [
     ("swallowed exception", re.compile(r"except(\s+\w+(\s+as\s+\w+)?)?\s*:\s*pass\b|catch\s*\([^)]*\)\s*\{\s*\}"), "major", "exception swallowed silently — log it or narrow it"),
     ("bare except", re.compile(r"^\s*except\s*:"), "major", "bare except catches SystemExit/KeyboardInterrupt"),
     ("hardcoded credential", re.compile(r"(?i)\b(password|passwd|secret|api[_-]?key|token)\b\s*[:=]\s*[\"'][^\"'$<{]{6,}[\"']"), "blocker", "credential literal in code — move to config/secret store and rotate"),
+    ("sql built from string", re.compile(r"\.(execute|executemany|raw|query|exec)\s*\(\s*(f[\"']|[\"'][^\"']*[\"']\s*(%|\+)\s*\w|[\"'][^\"']*[\"']\.format\(|`[^`]*\$\{)"), "blocker", "SQL assembled from string formatting — injection (CWE-89); use bound parameters"),
+    ("tls verification off", re.compile(r"\bverify\s*=\s*False\b|rejectUnauthorized\s*:\s*false|InsecureSkipVerify\s*:\s*true|CERT_NONE"), "blocker", "TLS certificate verification disabled — man-in-the-middle can alter the response (CWE-295)"),
     ("focused test", re.compile(r"\b(it|describe|test)\.only\(|@pytest\.mark\.skip\b|\bxit\(|\bxdescribe\(|@Ignore\b|t\.Skip\("), "major", "skipped/focused test — CI will silently run less"),
     ("lint suppressed", re.compile(r"#\s*noqa|#\s*type:\s*ignore|eslint-disable|@ts-ignore|@ts-nocheck|#\s*nosec|//\s*nolint|@SuppressWarnings|rubocop:disable"), "minor", "lint/type suppression — needs a justification comment"),
     ("todo without ticket", re.compile(r"\b(TODO|FIXME|XXX|HACK)\b(?![^\n]*(#\d+|[A-Z]{2,}-\d+|https?://))"), "minor", "TODO/FIXME without a ticket reference"),
@@ -396,6 +399,15 @@ def scan_diff_smells(diff: str) -> dict:
         added = dict(f["added_lines"])
         for ln, text_line in f["added_lines"]:
             nxt = added.get(ln + 1, "")
+            secrets = [] if f["kind"] in ("test", "docs") else [s for _, conf, s in find_secrets_in_line(text_line) if conf != "low"]
+            if secrets:
+                # provider-specific detectors (AWS, GitHub, Stripe, …) — the value is never echoed back
+                findings.append({
+                    "file": f["path"], "line": ln, "severity": "blocker", "smell": "hardcoded credential",
+                    "message": "credential literal in code — rotate it now, move it to the secret store, purge it from history",
+                    "code": redact_line(text_line.strip(), secrets)[:160],
+                })
+                continue
             if re.match(r"^\s*except\b[^:]*:\s*$", text_line) and re.match(r"^\s*pass\s*$", nxt):
                 findings.append({
                     "file": f["path"], "line": ln, "severity": "major", "smell": "swallowed exception",

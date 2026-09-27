@@ -246,7 +246,7 @@ def _simulate(debts: list[dict], extra: Decimal, method: str, start: date) -> di
             if s["balance"] <= 0 and s["paid_off_month"] is None:
                 s["paid_off_month"] = month
         if month <= 24 or month % 12 == 0:
-            schedule_points.append({"month": month, "date": month_label(add_months(start, month)), "total_balance": money(sum(s["balance"] for s in state))})
+            schedule_points.append({"month": month, "date": month_label(add_months(start, month - 1)), "total_balance": money(sum(s["balance"] for s in state))})
     pays_off = all(s["balance"] <= 0 for s in state)
     return {
         "pays_off": pays_off,
@@ -256,7 +256,7 @@ def _simulate(debts: list[dict], extra: Decimal, method: str, start: date) -> di
             {
                 "name": s["name"],
                 "paid_off_month": s["paid_off_month"],
-                "paid_off_date": month_label(add_months(start, s["paid_off_month"])) if s["paid_off_month"] else None,
+                "paid_off_date": month_label(add_months(start, s["paid_off_month"] - 1)) if s["paid_off_month"] else None,
                 "interest_paid": money(s["interest_paid"]),
                 "remaining_balance": money(s["balance"]),
             }
@@ -282,7 +282,7 @@ def debt_payoff(
         debts: List of {"name": str, "balance": number, "apr": percent like 24.99, "min_payment": number}.
         extra_monthly: Extra dollars per month on top of all minimums, applied to the target debt.
         method: "avalanche" (highest APR first), "snowball" (smallest balance first) or "minimum" (no extra, no rollover).
-        start_date: YYYY-MM-DD of the first payment. Defaults to today.
+        start_date: YYYY-MM-DD of the first payment. Defaults to today. Payment n falls n-1 months later; paid-off dates are the month of the final payment.
     """
     rows = bound_rows(debts, "debts", limit=50)
     extra = require_nonneg(D(extra_monthly, "extra_monthly"), "extra_monthly")
@@ -319,7 +319,7 @@ def debt_payoff(
     interest_saved = (Decimal(str(baseline["total_interest"])) - Decimal(str(result["total_interest"]))) if baseline["pays_off"] else None
     months = result["months"]
     verdict = (
-        f"{method.title()}: debt-free in {months} months ({month_label(add_months(start, months))}), total interest ${result['total_interest']:,.2f}"
+        f"{method.title()}: debt-free in {months} months (last payment {month_label(add_months(start, months - 1))}), total interest ${result['total_interest']:,.2f}"
         + (f" — saves ${money(interest_saved):,.2f} vs minimums only ({baseline['months']} months)." if interest_saved is not None else ". Paying minimums only never clears the balance.")
         if result["pays_off"]
         else f"Does not clear within {MAX_MONTHS} months — increase extra_monthly."
@@ -328,7 +328,7 @@ def debt_payoff(
         "method": method,
         "pays_off": result["pays_off"],
         "months_to_debt_free": months,
-        "debt_free_date": month_label(add_months(start, months)) if months else None,
+        "debt_free_date": month_label(add_months(start, months - 1)) if months else None,
         "monthly_payment_total": money(total_payment),
         "total_interest": result["total_interest"],
         "attack_order": [d["name"] for d in order],
@@ -475,12 +475,19 @@ def debt_to_income(gross_monthly_income: float, housing_payment: float, other_de
     max_total = income * Decimal("0.36")
     room_back = max_total - (housing + other)
     room_front = max_housing - housing
-    if back_after <= Decimal("0.36") and front_after <= Decimal("0.28"):
+    front_over = housing_after - max_housing  # > 0 means the housing payment breaks the 28% line
+    back_over = (housing_after + other_after) - max_total  # > 0 means total debt payments break the 36% line
+    if back_over <= 0 and front_over <= 0:
         verdict = f"Affordable by the 28/36 rule: front-end {ratio_to_pct(front_after)}%, back-end {ratio_to_pct(back_after)}%."
     elif back_after <= Decimal("0.43"):
-        verdict = f"Stretch: back-end {ratio_to_pct(back_after)}% is over 36% (lenders may approve up to 43%). Cut ${money((housing_after + other_after) - max_total):,.2f}/month of payments to fit."
+        parts = []
+        if front_over > 0:
+            parts.append(f"front-end {ratio_to_pct(front_after)}% is over 28% — housing must drop ${money(front_over):,.2f}/month (max ${money(max_housing):,.2f})")
+        if back_over > 0:
+            parts.append(f"back-end {ratio_to_pct(back_after)}% is over 36% — cut ${money(back_over):,.2f}/month of total debt payments (max ${money(max_total):,.2f})")
+        verdict = "Stretch: " + "; ".join(parts) + ". Lenders may approve up to 43% back-end; do not plan on it."
     else:
-        verdict = f"Not affordable: back-end {ratio_to_pct(back_after)}% exceeds even the 43% lending ceiling."
+        verdict = f"Not affordable: back-end {ratio_to_pct(back_after)}% exceeds even the 43% lending ceiling (cut ${money(back_over):,.2f}/month to reach 36%)."
     return {
         "front_end_pct": ratio_to_pct(front_now),
         "back_end_pct": ratio_to_pct(back_now),
@@ -489,5 +496,7 @@ def debt_to_income(gross_monthly_income: float, housing_payment: float, other_de
         "max_housing_payment": money(max_housing),
         "max_total_debt_payments": money(max_total),
         "room_for_new_payment": money(max(min(room_back, room_front if housing == 0 else room_back), ZERO)),
+        "front_end_over_by": money(max(front_over, ZERO)),
+        "back_end_over_by": money(max(back_over, ZERO)),
         "verdict": verdict,
     }
