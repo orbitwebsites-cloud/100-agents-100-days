@@ -385,11 +385,11 @@ def format_post(draft: str, one_sentence_per_line: bool = True) -> dict:
     if c.MD_LINK_RE.search(s):
         s = c.MD_LINK_RE.sub(lambda m: f"{m.group(1)}: {m.group(2)}" if m.group(1) else m.group(2), s)
         changes.append("expanded [text](url) links to 'text: url'")
-    if re.search(r"^\s*[-*+]\s+", s, re.M):
-        s = re.sub(r"^\s*[-*+]\s+", "→ ", s, flags=re.M)
+    if re.search(r"^[ \t]*[-*+][ \t]+", s, re.M):
+        s = re.sub(r"^[ \t]*[-*+][ \t]+", "→ ", s, flags=re.M)
         changes.append("converted markdown bullets to →")
-    if re.search(r"^\s*>\s?", s, re.M):
-        s = re.sub(r"^\s*>\s?", "", s, flags=re.M)
+    if re.search(r"^[ \t]*>[ \t]?", s, re.M):
+        s = re.sub(r"^[ \t]*>[ \t]?", "", s, flags=re.M)
         changes.append("removed blockquote markers")
     s = s.replace("\r\n", "\n")
     # pull trailing hashtags out, then re-append
@@ -418,7 +418,7 @@ def format_post(draft: str, one_sentence_per_line: bool = True) -> dict:
             continue
         if one_sentence_per_line and "\n" not in para:
             sents = text.sentences(para)
-            if len(sents) > 2 and len(para) > 180:
+            if len(sents) > 2 and len(para) > 120:
                 out_paras.append("\n".join(sents))
                 split_count += 1
                 continue

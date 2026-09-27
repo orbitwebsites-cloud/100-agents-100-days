@@ -90,13 +90,13 @@ def strip_markdown(md: str) -> str:
     s = MD_IMAGE_RE.sub(r"\1", s)
     s = MD_LINK_RE.sub(r"\1", s)
     s = re.sub(r"<[^>\n]{1,200}>", "", s)
-    s = re.sub(r"^\s{0,3}#{1,6}\s+", "", s, flags=re.M)
-    s = re.sub(r"^\s{0,3}>\s?", "", s, flags=re.M)
-    s = re.sub(r"^\s*(?:[-*+•→]|\d{1,3}[.)])\s+", "", s, flags=re.M)
-    s = re.sub(r"^\s*(?:[-*_]\s*){3,}$", "", s, flags=re.M)
+    s = re.sub(r"^[ \t]{0,3}#{1,6}[ \t]+", "", s, flags=re.M)
+    s = re.sub(r"^[ \t]{0,3}>[ \t]?", "", s, flags=re.M)
+    s = re.sub(r"^[ \t]*(?:[-*+•→]|\d{1,3}[.)])[ \t]+", "", s, flags=re.M)
+    s = re.sub(r"^[ \t]*(?:[-*_][ \t]*){3,}$", "", s, flags=re.M)
     s = re.sub(r"(\*\*|__)(.{1,500}?)\1", r"\2", s, flags=re.S)
     s = re.sub(r"(?<!\w)([*_])(?!\s)(.{1,300}?)(?<!\s)\1(?!\w)", r"\2", s)
-    s = re.sub(r"^\s*\|?(?:\s*:?-{2,}:?\s*\|)+\s*:?-*:?\s*\|?\s*$", "", s, flags=re.M)
+    s = re.sub(r"^[ \t]*\|?(?:[ \t]*:?-{2,}:?[ \t]*\|)+[ \t]*:?-*:?[ \t]*\|?[ \t]*$", "", s, flags=re.M)
     s = s.replace("|", " ")
     return s
 

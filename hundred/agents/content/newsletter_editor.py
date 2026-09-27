@@ -364,7 +364,7 @@ def link_audit(markdown: str) -> dict:
         if "utm_" not in url.lower():
             untagged += 1
             issues.append("no UTM tags")
-        key = url.split("#")[0].rstrip("/").lower()
+        key = re.split(r"[?#]", url, 1)[0].rstrip("/").lower()
         if key in seen:
             dupes += 1
             issues.append(f"same destination as link {seen[key]}")
