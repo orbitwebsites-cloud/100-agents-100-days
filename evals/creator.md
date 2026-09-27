@@ -123,20 +123,20 @@ Checklist codes: M = MATCHES, P = PARTIAL, OOS = out of scope (posting, recordin
 ```
 # Where your emergency fund should never sit — TikTok · target 60s · actual 60.0s at natural (2.5 w/s)
 **Hook (score 86):** Stop keeping $10,000 in checking.
-**Alternates:** 3 places your emergency fund should never sit (82) · Why is your savings account paying you 0.01%? (76)
+**Alternates (A/B):** 3 places your emergency fund should never sit (98 — scores higher; test it first) · Why is your savings account paying you 0.01%? (76)
 
 | Time | Spoken line | On-screen text / B-roll |
 |---|---|---|
 | 0:00 | Stop keeping $10,000 in checking. | [TEXT: Your checking account pays 0.01%] |
-| 0:02 | At 0.01%, ten grand earns you one dollar a year. | |
+| 0:03 | At 0.01%, ten grand earns you one dollar a year. | |
 | 0:08 | Here are 3 places your emergency fund should never sit, and the one place it should. | |
-| 0:14 | One: checking. It's too easy to spend, and it pays basically nothing. | [B-ROLL: bank app showing $0.08 interest] |
+| 0:15 | One: checking. It's too easy to spend, and it pays basically nothing. | [B-ROLL: bank app showing $0.08 interest] |
 | … | … | … |
-| 0:40 | It's FDIC insured up to $250,000, and you can move it in one or two days. | [TEXT: HYSA = safe + liquid + paid] |
-| 0:49 | Open one tonight and set an automatic transfer on payday. | |
+| 0:42 | It's FDIC insured up to $250,000, and you can move it in one or two days. | [TEXT: HYSA = safe + liquid + paid] |
+| 0:50 | Open one tonight and set an automatic transfer on payday. | |
 **CTA (0:54):** Follow for part two, where I show you how big your fund should be.
 **Cover text:** Your $10k is losing money   **Caption:** Stop keeping $10k in checking. #personalfinance #emergencyfund
-**Retention notes:** payoff (HYSA) lands at 0:32 (53%), before the last 20%. Lint: "basically" flagged as filler; keep it for voice or cut.
+**Retention notes:** payoff (HYSA) lands at 0:33 (55%), before the last 20%. Lint: "basically" flagged as filler; keep it for voice or cut.
 ```
 
 **Honest gaps.**

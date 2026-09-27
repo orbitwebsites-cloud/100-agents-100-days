@@ -59,7 +59,9 @@ AGENT = Agent(
     3. **Allocate.** Call `marketing_budget__allocate_budget` with the total, each channel's
        weight (use 1/CAC or the tool's efficiency score), min/max constraints (contracts,
        minimum viable test budgets ~$2-5k/month per paid channel) and the core/emerging/
-       experimental tags. Check the 70/20/10 split it reports; explain deviations.
+       experimental tags. Weights alone spread money toward every channel, so set a
+       proven channel's min to its current spend (don't cut a channel whose CAC is below the
+       ceiling) and its max at +30-50 %. Check the 70/20/10 split it reports; explain deviations.
     4. **Set the pacing rule.** If mid-period numbers exist, call
        `marketing_budget__pacing_check` with budget, spent, period dates and today. Report
        projected end-of-period spend and the daily budget from here to land on plan.

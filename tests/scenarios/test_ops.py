@@ -555,17 +555,9 @@ def test_inbox_triage_fifteen_emails():
 
 
 def test_inbox_triage_asks_reply_and_session():
-    asks = run("inbox-triage", "extract_asks", body=INBOX[1]["body"] + "
-
-On Mon, Sep 28, 2026 at 4:02 PM Alex wrote:
-> Thanks Dana, the export fix is live.", as_of="2026-09-29", received="2026-09-29")
+    asks = run("inbox-triage", "extract_asks", body=INBOX[1]["body"] + "\n\nOn Mon, Sep 28, 2026 at 4:02 PM Alex wrote:\n> Thanks Dana, the export fix is live.", as_of="2026-09-29", received="2026-09-29")
     assert asks["counts"]["questions"] == 1 and asks["earliest_deadline"]["date"] == "2026-09-29" and asks["quoted_history_dropped"]
-    reply = run("inbox-triage", "fill_reply_template", template="Hi {name},
-
-Thanks for flagging this, and sorry for the disruption. Root cause: {cause}. {sla_line} I will send the written incident report by {date}.
-
-Best,
-Alex",
+    reply = run("inbox-triage", "fill_reply_template", template="Hi {name},\n\nThanks for flagging this, and sorry for the disruption. Root cause: {cause}. {sla_line} I will send the written incident report by {date}.\n\nBest,\nAlex",
                 fields={"name": "Dana", "cause": "an expired SAML signing certificate on our side, fixed at 9:32", "sla_line": "The 90 minutes count toward your SLA; the credit will appear on your next invoice.", "date": "Thursday, Oct 1"})
     assert reply["ready_to_send"] is True and reply["sentences"] == 4
     plan = run("inbox-triage", "plan_session", minutes_available=30, as_of="2026-09-29", items=[
