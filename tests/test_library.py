@@ -16,7 +16,7 @@ def test_every_agent_module_imports():
 
 
 def test_library_is_big():
-    assert len(AGENTS) >= 1
+    assert len(AGENTS) >= 100
 
 
 @pytest.mark.parametrize("agent", AGENTS, ids=IDS)

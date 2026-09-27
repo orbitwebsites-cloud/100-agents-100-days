@@ -275,3 +275,22 @@ def test_http_mcp_end_to_end(live_server):
             assert all(not n.startswith(PAID[0].prefix + "__") for n in names) if PAID else True
 
     anyio.run(run)
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("regex email validation", "regex-builder"),
+        ("forecast my cash for 13 weeks", "cashflow-forecaster"),
+        ("is my A/B test significant", "ab-test-analyst"),
+        ("reorder point for my SKUs", "inventory-planner"),
+        ("what does this stack trace mean", "bug-hunter"),
+        ("summarize this meeting transcript", "meeting-ops"),
+    ],
+)
+def test_router_finds_the_right_agent(query, expected):
+    from hundred.plans import Entitlement
+    from hundred.server.mcp_server import Access, find_agents
+
+    access = Access(license=None, entitlement=Entitlement(all_access=True), agents=list(registry.all_agents().values()))
+    assert find_agents(access, query)[0]["agent"] == expected

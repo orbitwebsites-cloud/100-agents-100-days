@@ -157,6 +157,9 @@ MILESTONES = [
 ]
 
 
+LABELS = {"time_to_detect_min": "TTD", "time_to_acknowledge_min": "TTA", "time_to_identify_min": "TTI", "time_to_mitigate_min": "TTM", "time_to_resolve_min": "TTR", "total_span_min": "span"}
+
+
 def _fmt_min(m: float | None) -> str | None:
     if m is None:
         return None
@@ -269,7 +272,7 @@ def build_timeline(events: list[str], incident_date: str = "") -> dict:
         "comms_gaps": gaps,
         "unparsed": unparsed,
         "notes": notes,
-        "summary": " · ".join(f"{k.replace('time_to_', 'TT').replace('_min', '').upper() if k != 'total_span_min' else 'span'}: {_fmt_min(v)}" for k, v in metrics.items() if v is not None),
+        "summary": " · ".join(f"{LABELS[k]}: {_fmt_min(v)}" for k, v in metrics.items() if v is not None),
     }
 
 
@@ -528,9 +531,13 @@ def check_postmortem(text: str) -> dict:
         items.append({"text": body.strip()[:140], "has_owner": bool(OWNER_RE.search(body)), "has_due": bool(DUE_RE.search(body)),
                       "vague": bool(re.search(r"\b(be more careful|pay more attention|add (more )?monitoring$|improve (testing|communication)$|better (testing|process)$|investigate$|look into)\b", body, re.I))})
     blame = []
+    spans = []
     for m in NAME_BLAME_RE.finditer(text):
+        spans.append((m.start(), m.end()))
         blame.append({"phrase": m.group(0), "why": "names a person with a should-have/failed-to construction"})
     for m in BLAME_RE.finditer(text):
+        if any(a <= m.start() < b for a, b in spans):
+            continue
         ctx = text[max(0, m.start() - 40):m.end() + 40].replace("\n", " ")
         blame.append({"phrase": m.group(0), "context": ctx.strip(), "why": "blame language — describe the system condition that made the action reasonable"})
     seen = set()

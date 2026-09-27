@@ -234,11 +234,25 @@ def account_summary(access: Access) -> str:
 
 
 def find_agents(access: Access, query: str, limit: int = 8) -> list[dict]:
+    """Rank owned agents for a request. Rare terms ("regex") outweigh common ones ("email")."""
+    import math
+
     terms = [t for t in re.findall(r"[a-z0-9]+", query.lower()) if len(t) > 1]
-    scored = []
+    docs = []
     for a in access.agents:
-        hay = " ".join([a.slug, a.name, a.tagline, a.description, " ".join(a.triggers), a.category]).lower()
-        score = sum(hay.count(t) for t in terms) + sum(5 for t in terms if t in a.slug or t in a.name.lower())
+        title = f"{a.slug} {a.name}".lower()
+        body = " ".join([a.tagline, a.description, " ".join(a.triggers), a.category]).lower()
+        docs.append((a, title, body))
+    n = max(1, len(docs))
+    scored = []
+    for a, title, body in docs:
+        score = 0.0
+        for t in terms:
+            df = sum(1 for _, ti, bo in docs if t in ti or t in bo)
+            if not df:
+                continue
+            idf = math.log(1 + n / df)
+            score += idf * ((6 if t in title else 0) + min(body.count(t), 3))
         if score:
             scored.append((score, a))
     scored.sort(key=lambda x: -x[0])
