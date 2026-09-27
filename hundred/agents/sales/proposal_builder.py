@@ -155,11 +155,13 @@ def pricing_table(
     term_months: int = 12,
     currency: str = "USD",
     seats: int = 0,
+    discount_flat: float = 0.0,
 ) -> dict:
     """Compute a proposal pricing table: line totals, subtotal, discount, tax, grand total, per-month and per-seat figures.
 
     Call once per pricing option. Line items: {"name": str, "qty": number, "unit_price": number,
-    "period": "one_time" | "month" | "year", "discount_pct": number (optional line-item discount)}
+    "period": "one_time" | "month" | "year", "discount_pct": number (optional line-item % discount),
+    "discount_amount": number (optional flat line-item discount for the term)}
     — monthly items are multiplied by term_months. Every amount is rounded to the cent once, and
     totals are sums of the rounded figures, so the table always adds up.
 
@@ -170,6 +172,7 @@ def pricing_table(
         term_months: Contract length in months (1-60) used to annualise/monthlyise recurring items.
         currency: ISO currency code for display (default USD).
         seats: Number of seats/users for per-seat figures (0 = skip).
+        discount_flat: Flat amount off the recurring subtotal (after line and % discounts), e.g. a 500 goodwill credit.
     """
     if not line_items:
         raise ToolError("line_items is empty.")
@@ -181,6 +184,8 @@ def pricing_table(
         raise ToolError("term_months must be 1-60.")
     if seats < 0:
         raise ToolError("seats cannot be negative.")
+    if discount_flat < 0:
+        raise ToolError("discount_flat cannot be negative.")
     cur = currency.strip().upper()[:3] or "USD"
     lines, one_time, recurring = [], 0.0, 0.0
     for i, li in enumerate(line_items, 1):
@@ -208,19 +213,24 @@ def pricing_table(
         else:
             gross = qty * unit * term_months / 12
         gross = c.money(gross)
-        line_discount = c.money(gross * line_disc / 100)
+        line_flat = _num(li.get("discount_amount", 0), "discount_amount", i)
+        line_discount = c.money(gross * line_disc / 100 + line_flat)
+        if line_discount > gross:
+            raise ToolError(f"Line {i}: discount exceeds the line total.")
         total = c.money(gross - line_discount)
         if period == "one_time":
             one_time += total
         else:
             recurring += total
         row = {"name": name, "qty": qty, "unit_price": c.money(unit), "period": period, "line_total_for_term": total}
-        if line_disc:
+        if line_disc or line_flat:
             row.update({"line_gross": gross, "line_discount_pct": line_disc, "line_discount": line_discount})
         lines.append(row)
     one_time, recurring = c.money(one_time), c.money(recurring)
     # round each figure once, then derive totals from the rounded figures (no drift between rows and total)
-    discount = c.money(recurring * discount_pct / 100)
+    discount = c.money(recurring * discount_pct / 100 + discount_flat)
+    if discount > recurring:
+        raise ToolError("Total discount exceeds the recurring subtotal.")
     after_discount = c.money(recurring - discount + one_time)
     tax = c.money(after_discount * tax_rate_pct / 100)
     grand = c.money(after_discount + tax)
@@ -254,9 +264,10 @@ def pricing_table(
     out["display_rows"] = [
         f"{l['name']}: {l['qty']:g} × {cur} {l['unit_price']:,.2f} /{l['period'].replace('_', '-')}"
         + (f" − {l['line_discount_pct']:g}%" if l.get("line_discount_pct") else "")
+        + (f" − {cur} {l['line_discount'] - l['line_gross'] * l['line_discount_pct'] / 100:,.2f}" if l.get("line_discount") and abs(l["line_discount"] - c.money(l["line_gross"] * l["line_discount_pct"] / 100)) > 0.005 else "")
         + f" = {cur} {l['line_total_for_term']:,.2f}" for l in lines
     ] + [
-        f"Discount ({discount_pct}% on recurring): -{cur} {discount:,.2f}" if discount else "",
+        (f"Discount ({discount_pct}% on recurring" + (f" + {cur} {discount_flat:,.2f} flat" if discount_flat else "") + f"): -{cur} {discount:,.2f}") if discount else "",
         f"Tax ({tax_rate_pct}%): {cur} {tax:,.2f}" if tax else "",
         f"Total for {term_months} months: {cur} {grand:,.2f}",
     ]

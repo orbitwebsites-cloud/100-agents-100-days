@@ -117,3 +117,31 @@ def test_company_size_far_outside_band_caps_at_tier_c():
     by = {r["name"]: r for r in out["ranked"]}
     assert by["tiny"]["score"] == 54 and by["tiny"]["tier"] == "C" and "capped at tier C" in by["tiny"]["caps"][0]
     assert by["near"]["score"] == 90 and by["near"]["caps"] == []
+
+
+def _history():
+    rows = []
+    # tech matched: 6 won / 2 lost ; tech missed: 2 won / 10 lost. Country split evenly: 4 of 10 won either side.
+    spec = [("salesforce", "won")] * 6 + [("salesforce", "lost")] * 2 + [("hubspot", "won")] * 2 + [("hubspot", "lost")] * 10
+    countries = ["US", "Canada"] * 10
+    won_by_country = {"US": 0, "Canada": 0}
+    for (tech, oc), ctry in zip(spec, countries):
+        rows.append({"industry": "SaaS", "tech": tech, "country": ctry, "outcome": oc})
+        won_by_country[ctry] += oc == "won"
+    return rows, won_by_country
+
+
+def test_calibrate_weights_learns_lift_from_history():
+    rows, wbc = _history()
+    icp = {"industry": {"values": ["saas"], "weight": 4}, "tech": {"values": ["salesforce"], "weight": 2}, "country": {"values": ["us"], "weight": 3}}
+    out = call("calibrate_weights", icp=icp, history=rows)
+    crit = {c["criterion"]: c for c in out["criteria"]}
+    assert out["leads"] == 20 and out["won"] == 8 and out["base_win_rate_pct"] == 40.0
+    assert crit["tech"]["win_rate_matched_pct"] == 75.0 and crit["tech"]["win_rate_unmatched_pct"] == round(100 * 2 / 12, 1)
+    assert crit["tech"]["lift_pts"] == round(100 * (6 / 8 - 2 / 12), 1) and crit["tech"]["suggested_weight"] == 5
+    us_wr, ca_wr = wbc["US"] / 10, wbc["Canada"] / 10
+    assert crit["country"]["lift_pts"] == round(100 * (us_wr - ca_wr), 1)
+    assert crit["industry"]["lift_pts"] is None and crit["industry"]["suggested_weight"] == 4  # no contrast
+    assert out["suggested_icp"]["tech"]["weight"] == 5
+    with pytest.raises(ToolError):
+        call("calibrate_weights", icp=icp, history=[{"tech": "x", "outcome": "won"}] * 12)

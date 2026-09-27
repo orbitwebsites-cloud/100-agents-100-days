@@ -19,7 +19,16 @@ def test_score_survey_nps_math_and_segments():
     assert out["promoters_pct"] == 50.0 and out["detractors_pct"] == 30.0
     assert out["moe"] == 54.0  # 1.96*sqrt((.25+.21+.3)/10)*100
     assert out["by_segment"]["a"]["reportable"] is False
-    assert out["delta"] == {"previous": 10.0, "change": 10.0, "beats_noise": False}
+    assert out["delta"] == {"previous": 10.0, "previous_n": 10, "change": 10.0, "moe_of_change": 76.4, "beats_noise": False}
+
+
+def test_score_survey_change_uses_margin_of_the_difference():
+    # n=400 both periods: p=.50, d=.20 → NPS 30, MoE = 1.96·√((.5+.2−.09)/400)·100 = 7.7
+    scores = [10] * 200 + [8] * 120 + [3] * 80
+    out = call("score_survey", scores=scores, previous_score=22, previous_n=400)
+    assert out["score"] == 30.0 and out["moe"] == 7.7
+    # +8 beats this period's ±7.7 but not the ±10.9 of a difference between two n=400 samples
+    assert out["delta"]["moe_of_change"] == round(7.7 * 2 ** 0.5, 1) == 10.9 and out["delta"]["beats_noise"] is False
 
 
 def test_score_survey_csat():

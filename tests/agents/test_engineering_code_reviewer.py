@@ -169,3 +169,8 @@ def test_scan_diff_smells_redacts_generic_password_literal():
     out = call("scan_diff_smells", diff=_new_file("app/db.py", ['password = "Hunter2Hunter2x"']))
     assert out["findings"][0]["smell"] == "hardcoded credential"
     assert "Hunter2Hunter2x" not in str(out)
+
+
+def test_scan_diff_smells_sql_fstring_on_its_own_line():
+    out = call("scan_diff_smells", diff=_new_file("app/q.py", ['    q = f"SELECT id FROM users WHERE email = {email}"', '    log.info(f"selected {n} rows")']))
+    assert [(f["line"], f["smell"]) for f in out["findings"]] == [(1, "sql built from string")]

@@ -73,7 +73,13 @@ AGENT = Agent(
        source. It applies the fit × intent matrix and returns owner type, response SLA and
        the first action. High-intent + high-fit gets a human within minutes; low-fit
        high-intent gets a polite self-serve path, not an AE.
-    6. **Report** in the output format: ranked table, top 5 with reasons, disqualified
+    6. **Calibrate on history** when the user can export past leads with outcomes
+       (won/lost, or converted to opportunity yes/no): call
+       `lead_qualifier__calibrate_weights` with the ICP and those leads. It measures, per
+       criterion, the win rate when the criterion matched vs. when it didn't, turns the
+       lift into suggested 1-5 weights, and checks whether the current score actually
+       separates winners from losers. Re-run step 3 with the suggested weights and say so.
+    7. **Report** in the output format: ranked table, top 5 with reasons, disqualified
        with the single reason, and the ICP used. For lists, add the distribution
        (how many A/B/C/D) so the user knows if the list or the ICP is the problem.
 
@@ -518,4 +524,99 @@ def route_lead(fit_score: int, intent: str, source: str = "inbound", business_ho
         "priority": priority,
         "priority_scale": "1 = drop everything … 6 = disqualify",
         "verdict": f"Tier {tier} × {it} intent → {owner}, respond within {sla}. {action}",
+    }
+
+
+@AGENT.tool
+def calibrate_weights(icp: dict, history: list[dict], min_leads: int = 20) -> dict:
+    """Learn ICP weights from past leads with outcomes: per-criterion win-rate lift, suggested 1-5 weights, and score separation.
+
+    Call when the user has historical leads with a known result. Each history row has the ICP
+    fields plus "outcome": "won"/"lost" (or converted: true/false). Uses the same matching
+    rules as icp_fit_score. Deterministic; no data leaves the conversation.
+
+    Args:
+        icp: The ICP criteria dict you score with (values + weight per criterion).
+        history: 10-5000 past leads, each with the ICP fields and an outcome.
+        min_leads: Minimum leads on each side of a criterion before its lift is trusted (default 20 total rows).
+    """
+    if not isinstance(icp, dict) or not icp:
+        raise ToolError("icp must be a non-empty dict of criteria.")
+    if not history or len(history) < 10 or len(history) > 5000:
+        raise ToolError("Give 10-5000 historical leads with outcomes.")
+    rows = []
+    for i, h in enumerate(history, 1):
+        if not isinstance(h, dict):
+            raise ToolError(f"History row {i} is not a dict.")
+        lead = {str(k).strip().lower(): v for k, v in h.items()}
+        oc = lead.get("outcome", lead.get("converted"))
+        if isinstance(oc, str):
+            oc = oc.strip().lower()
+            if oc not in ("won", "lost", "true", "false", "yes", "no"):
+                raise ToolError(f"History row {i}: outcome must be won/lost (or converted true/false).")
+            won = oc in ("won", "true", "yes")
+        elif isinstance(oc, bool):
+            won = oc
+        else:
+            raise ToolError(f"History row {i} has no outcome.")
+        if lead.get("title"):
+            parsed = _parse_title(str(lead["title"]))
+            lead.setdefault("seniority", parsed["seniority"])
+            lead.setdefault("function", parsed["function"])
+        full = _score_lead(lead, icp)
+        per = {m["criterion"]: m["points"] >= m["of"] * 0.99 for m in full["matched"] + full["missed"]}
+        rows.append((won, full["score"], per))
+    n = len(rows)
+    n_won = sum(1 for r in rows if r[0])
+    if n_won == 0 or n_won == n:
+        raise ToolError("History needs both won and lost outcomes to measure lift.")
+    base = n_won / n
+    crits = []
+    for crit in icp:
+        hit = [r for r in rows if r[2].get(crit)]
+        miss = [r for r in rows if not r[2].get(crit)]
+        wr_hit = sum(1 for r in hit if r[0]) / len(hit) if hit else None
+        wr_miss = sum(1 for r in miss if r[0]) / len(miss) if miss else None
+        lift = (wr_hit - wr_miss) if (wr_hit is not None and wr_miss is not None) else None
+        crits.append({"criterion": crit, "current_weight": float(icp[crit].get("weight", 1)), "matched_leads": len(hit), "unmatched_leads": len(miss),
+                      "win_rate_matched_pct": round(100 * wr_hit, 1) if wr_hit is not None else None,
+                      "win_rate_unmatched_pct": round(100 * wr_miss, 1) if wr_miss is not None else None,
+                      "lift_pts": round(100 * lift, 1) if lift is not None else None,
+                      "reliable": bool(hit) and bool(miss) and min(len(hit), len(miss)) >= max(5, min_leads // 4)})
+    max_lift = max((c_["lift_pts"] for c_ in crits if c_["lift_pts"] and c_["lift_pts"] > 0), default=0)
+    for c_ in crits:
+        lp = c_["lift_pts"]
+        if lp is None:
+            c_["suggested_weight"], c_["note"] = c_["current_weight"], "every lead matched (or none did) — no contrast to learn from"
+        elif lp <= 0:
+            c_["suggested_weight"], c_["note"] = 1, "matching this did not raise the win rate — drop it or weight it 1"
+        else:
+            c_["suggested_weight"] = 1 + round(4 * lp / max_lift)
+            c_["note"] = f"matched leads won {lp} pts more often"
+        if not c_["reliable"]:
+            c_["note"] += " (small sample — treat as directional)"
+    won_scores = [r[1] for r in rows if r[0]]
+    lost_scores = [r[1] for r in rows if not r[0]]
+    # probability a random winner outscores a random loser (ties count half) — 0.5 = the score is noise
+    pairs = sum((1.0 if w > l else 0.5 if w == l else 0.0) for w in won_scores for l in lost_scores)
+    separation = round(pairs / (len(won_scores) * len(lost_scores)), 3)
+    suggested_icp = {c_["criterion"]: {**icp[c_["criterion"]], "weight": c_["suggested_weight"]} for c_ in crits}
+    warnings = []
+    if n < min_leads:
+        warnings.append(f"only {n} historical leads — weights are directional; revisit at {min_leads}+")
+    if separation < 0.6:
+        warnings.append(f"current score barely separates winners from losers (AUC {separation}) — the ICP is missing what actually predicts a win")
+    return {
+        "leads": n,
+        "won": n_won,
+        "base_win_rate_pct": round(100 * base, 1),
+        "criteria": sorted(crits, key=lambda c_: -(c_["lift_pts"] or -999)),
+        "suggested_icp": suggested_icp,
+        "avg_score_won": round(sum(won_scores) / len(won_scores), 1),
+        "avg_score_lost": round(sum(lost_scores) / len(lost_scores), 1),
+        "score_separation_auc": separation,
+        "warnings": warnings,
+        "verdict": f"{n} past leads ({round(100 * base, 1)}% won). Current score AUC {separation} (0.5 = noise, 1.0 = perfect). "
+        + "Strongest signal: " + next((f"{c_['criterion']} (+{c_['lift_pts']} pts)" for c_ in sorted(crits, key=lambda c_: -(c_["lift_pts"] or -999)) if c_["lift_pts"] and c_["lift_pts"] > 0), "none")
+        + ".",
     }

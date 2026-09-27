@@ -111,3 +111,9 @@ def test_irreversible_verb_phrase_needs_verification():
 def test_cycle_time_reports_elapsed_days_not_8h_workdays():
     out = A.get_tool("cycle_time").call({"steps": [{"step": "Approve", "touch_minutes": 5, "wait_minutes": 1440, "role": "Finance"}]})
     assert "1.0 days" in out["verdict"] and "workdays" not in out["verdict"]
+
+
+def test_actor_prefix_with_lowercase_words_is_recognised():
+    out = A.get_tool("lint_steps").call({"roles": ["Support agent"], "steps": ["Support agent: Issue the refund in Stripe.", "Billing clerk: Tag the ticket.", "Verify the refund in Stripe."]})
+    assert out["steps"][0]["actor"] == "Support agent"
+    assert any("not a defined role" in i for i in out["steps"][1]["issues"])

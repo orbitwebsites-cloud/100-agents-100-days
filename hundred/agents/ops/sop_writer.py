@@ -155,7 +155,9 @@ _VERIFY = re.compile(r"\b(verify|confirm|check that|check the|ensure|validate|do
 _IRREVERSIBLE = re.compile(r"\b(send|delete|remove|pay|refund|deploy|publish|submit|approve|charge|wire|transfer|release|terminate|cancel|purge|drop|overwrite)\b", re.I)
 _IRREVERSIBLE_PHRASE = re.compile(r"^(issue|process|make|execute|initiate|trigger|run|push|post|file|sign)\s+(the\s+|a\s+|an\s+)?(\w+\s+)?(refund|payment|payout|transfer|wire|charge|deploy(ment)?|release|deletion|migration|payroll|invoice|contract)\b", re.I)
 _SYSTEM = re.compile(r"\b(in|on|via|using|open|from)\s+[A-Z][\w-]+|<[^>]+>", re.I)
-_ROLE_TOKEN = re.compile(r"\b([A-Z][a-z]+(?: [A-Z][a-z]+)?)\s*:")
+_ROLE_TOKEN = re.compile(r"[A-Z][\w&/-]*(?: [A-Za-z][\w&/-]*){0,3}")  # "Finance", "Support agent", "AP clerk"
+_ACTOR_PREFIX = re.compile(r"^\s*([^:\n]{2,40}?)\s*:\s+")
+_NOT_ACTORS = {"if", "when", "otherwise", "else", "note", "tip", "warning", "then", "result", "expected", "step", "important", "caution", "example", "e.g", "i.e"}
 _ACTION_VERBS = {"send", "email", "click", "open", "update", "save", "export", "notify", "create", "delete", "close", "submit", "record", "log", "check", "verify", "attach", "upload", "download", "file", "forward", "call", "review", "approve", "assign", "add", "remove", "enter", "select", "print", "copy", "paste", "move", "mark", "set", "run", "start", "stop", "restart", "archive", "escalate", "post", "reply", "confirm", "schedule", "book", "cancel", "refund", "charge", "pay", "ship", "deploy", "merge", "tag", "label", "flag", "import", "sync", "scan", "sign"}
 
 
@@ -180,7 +182,9 @@ def lint_steps(steps: list[str], roles: list[str] = []) -> dict:
             continue
         body = s
         actor = None
-        m = _ROLE_TOKEN.match(s)
+        m = _ACTOR_PREFIX.match(s)
+        if m and not (m.group(1).lower() in role_set or (_ROLE_TOKEN.fullmatch(m.group(1)) and m.group(1).split()[0].lower() not in _NOT_ACTORS)):
+            m = None
         if m:
             actor = m.group(1)
             body = s[m.end():].strip()

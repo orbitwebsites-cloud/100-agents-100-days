@@ -78,7 +78,7 @@ def test_meeting_ops_final_action_list_matches_ground_truth():
     ]
     out = run("meeting-ops", "format_action_items", items=items)
     assert out["ready_to_file"] is True and len(out["items"]) == 9
-    assert sorted((i["owner"], i["due"]) for i in out["items"]) == sorted(LAUNCH_ACTIONS.values())
+    assert sorted((i["owner"], i["due"] or "") for i in out["items"]) == sorted((o, d or "") for o, d in LAUNCH_ACTIONS.values())
     undated = [i["n"] for i in out["items"] if any("no due date" in x for x in i["issues"])]
     assert undated == [7, 9]  # flagged, never guessed
     assert "Carlos Ruiz" not in [i["owner"] for i in out["items"] if "runbook" in i["task"].lower() and "notes" not in i["task"].lower()]
@@ -579,7 +579,7 @@ def test_sop_writer_refund_sop():
         "The agent checks the order in Shopify and looks at the purchase date.",
         "If the order is older than 30 days, escalate to the Support lead.",
         "Support agent: Issue the refund in Stripe and email the customer.",
-        "Refunds over 00 should be approved by Finance as needed.",
+        "Refunds over $500 should be approved by Finance as needed.",
         "Tag the ticket refund-processed.",
         "Close the ticket.",
     ])
@@ -611,7 +611,7 @@ def test_sop_writer_refund_sop():
 
 def test_okr_coach_q4_grading_forecast_calendar():
     lint = run("okr-coach", "lint_okrs", objectives=[
-        {"objective": "Launch the new onboarding flow and grow revenue 30%", "key_results": ["Launch onboarding v2", "Improve activation", "Grow MRR from 80k to 40k", "Hire 2 growth engineers"]},
+        {"objective": "Launch the new onboarding flow and grow revenue 30%", "key_results": ["Launch onboarding v2", "Improve activation", "Grow MRR from $180k to $240k", "Hire 2 growth engineers"]},
         {"objective": "Make support feel instant for every customer", "key_results": ["Reduce median first-response time from 9h to 4h", "Raise CSAT from 88% to 93% by Dec 31"]},
     ])
     assert lint["score"] == 76 and lint["objectives"][1]["score"] == 100

@@ -146,3 +146,12 @@ def test_audit_recognises_iso_currency_prices():
     body = ("# Proposal\nValid until 2026-10-28\n## Summary\nx\n## Investment\n| Better | USD 34,905.33 |\n## Next step\nReply by 2026-10-02 to sign.\n" + "word " * 260)
     out = call("proposal_audit", proposal_text=body)
     assert out["price_mentions"] == 1 and not any("no prices" in f for f in out["fixes"])
+
+
+def test_pricing_table_flat_discounts():
+    out = call("pricing_table", line_items=[{"name": "Seat", "qty": 10, "unit_price": 100, "period": "month", "discount_amount": 200}, {"name": "Setup", "qty": 1, "unit_price": 1000, "period": "one_time"}], discount_pct=10, discount_flat=500, tax_rate_pct=10, term_months=12)
+    # 12,000 − 200 = 11,800 recurring; 10% = 1,180 + 500 flat = 1,680; 10,120 + 1,000 = 11,120; tax 1,112
+    assert out["lines"][0]["line_total_for_term"] == 11800 and out["discount_amount"] == 1680
+    assert out["subtotal_after_discount"] == 11120 and out["grand_total"] == 12232
+    with pytest.raises(ToolError):
+        call("pricing_table", line_items=[{"name": "x", "qty": 1, "unit_price": 10, "period": "month"}], term_months=1, discount_flat=50)

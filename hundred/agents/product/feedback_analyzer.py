@@ -46,7 +46,7 @@ AGENT = Agent(
     ## Intake
     Proceed with what you have. Ask (max 3) only if needed: (1) which survey type (NPS 0-10, CSAT
     1-5, CES 1-7) and the time window, (2) segment fields available (plan, tenure, platform),
-    (3) the previous period's score for a delta. If comments come without scores, skip driver
+    (3) the previous period's score and n for a delta. If comments come without scores, skip driver
     analysis and say so.
 
     ## Procedure
@@ -80,7 +80,8 @@ AGENT = Agent(
     - **NPS** = %promoters(9-10) − %detractors(0-6); range −100..100. SaaS median ≈ 30-40 (varies
       by source); B2C consumer apps often lower. Margin of error ≈ 1.96 × √(p_p(1−p_p) + p_d(1−p_d) + 2·p_p·p_d)/n.
     - **CSAT** = % of responses rating 4 or 5 (on 1-5). **CES** (1-7): report mean and % ≥ 5.
-    - **Minimum n:** don't report a segment under 30; don't claim a change smaller than the MoE.
+    - **Minimum n:** don't report a segment under 30; don't claim a change smaller than the MoE of the
+      change — both periods are noisy, so it is ≈ MoE × √2 for equal n (pass previous_n).
     - **Response-level counting:** themes are counted per response; a theme's share is
       responses-with-theme ÷ responses-with-comment.
     - **Severity scale:** 1 annoyance, 2 blocks a task (workaround exists), 3 blocks a task / churn risk.
@@ -156,7 +157,7 @@ def _moe_nps(pp: float, pd: float, n: int) -> float:
 
 
 @AGENT.tool
-def score_survey(scores: list[float], survey: str = "nps", segments: list[str] | None = None, previous_score: float | None = None) -> dict:
+def score_survey(scores: list[float], survey: str = "nps", segments: list[str] | None = None, previous_score: float | None = None, previous_n: int | None = None) -> dict:
     """Compute NPS / CSAT / CES with 95% margin of error, distribution, and per-segment scores (min n=30).
 
     Args:
@@ -164,6 +165,9 @@ def score_survey(scores: list[float], survey: str = "nps", segments: list[str] |
         survey: "nps", "csat" or "ces".
         segments: Optional segment label per response, same length and order as scores.
         previous_score: Last period's headline score, to judge whether the change beats the noise.
+        previous_n: Last period's number of responses. The change is tested against the margin of error of the
+            DIFFERENCE of two samples (both periods' noise), not this period's margin alone; if omitted, the
+            previous period is assumed to have the same n (difference MoE = this MoE × √2).
     """
     rows = check_rows(scores, "scores", 50_000)
     kind = str(survey).strip().lower()
@@ -202,14 +206,20 @@ def score_survey(scores: list[float], survey: str = "nps", segments: list[str] |
     delta = None
     if previous_score is not None:
         prev = to_float(previous_score, "previous_score")
-        delta = {"previous": prev, "change": round(head["score"] - prev, 1), "beats_noise": abs(head["score"] - prev) > head["moe"]}
+        n_now = head["n"]
+        n_prev = int(to_float(previous_n, "previous_n", 2)) if previous_n is not None else n_now
+        # SE of a difference of independent estimates = √(se₁² + se₂²); the previous period's variance is
+        # approximated by this period's (its distribution is unknown), scaled by its own n
+        moe_diff = round(head["moe"] * math.sqrt(1 + n_now / n_prev), 1)
+        change = round(head["score"] - prev, 1)
+        delta = {"previous": prev, "previous_n": n_prev, "change": change, "moe_of_change": moe_diff, "beats_noise": abs(change) > moe_diff}
     return {
         "survey": kind,
         **head,
         "distribution": {str(k): dist[k] for k in sorted(dist)},
         "by_segment": by_seg,
         "delta": delta,
-        "verdict": f"{kind.upper()} {head['score']} (±{head['moe']}, n={head['n']})" + (f"; change of {delta['change']:+} is {'real' if delta['beats_noise'] else 'within noise'}" if delta else ""),
+        "verdict": f"{kind.upper()} {head['score']} (±{head['moe']}, n={head['n']})" + (f"; change of {delta['change']:+} is {'real' if delta['beats_noise'] else 'within noise'} (±{delta['moe_of_change']} for a change)" if delta else ""),
         "note": "Do not quote segments with reportable=false (n<30). NPS benchmarks vary widely by industry; compare to your own history first.",
     }
 

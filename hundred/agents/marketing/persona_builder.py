@@ -208,7 +208,7 @@ def tally_survey(responses: list[dict], multi_select_fields: list[str] = [], num
 
 @AGENT.tool
 def cross_tab(responses: list[dict], row_field: str, col_field: str, max_categories: int = 8) -> dict:
-    """Cross-tabulate two survey fields with row percentages and a chi-square test of independence (is the difference real?).
+    """Cross-tabulate two survey fields with counts, row/column/total percentages, a chi-square test of independence, and the individual cells that differ significantly.
 
     Call to confirm a segment candidate actually behaves differently on an outcome field.
 
@@ -259,6 +259,22 @@ def cross_tab(responses: list[dict], row_field: str, col_field: str, max_categor
                 chi2 += (table[r][c] - e) ** 2 / e
     df = (len(rows) - 1) * (len(cols) - 1)
     p = chi2_sf(chi2, df) if df >= 1 else 1.0
+    # Cell-level test (like survey tools' "significant difference" highlighting): adjusted standardised
+    # residual r = (O − E) / sqrt(E · (1 − row/N) · (1 − col/N)); |r| > 1.96 ⇒ this cell differs at p < 0.05.
+    col_tot = {c: sum(table[x][c] for x in rows) for c in cols}
+    sig_cells = []
+    for m in matrix:
+        r_tot = m["n"]
+        m["col_pct"] = {c: round(100 * table[m["row"]][c] / col_tot[c], 1) if col_tot[c] else 0.0 for c in cols}
+        m["pct_of_total"] = {c: round(100 * table[m["row"]][c] / N, 1) for c in cols}
+        for c in cols:
+            e = r_tot * col_tot[c] / N
+            denom = (e * (1 - r_tot / N) * (1 - col_tot[c] / N)) ** 0.5
+            if denom > 0:
+                resid = (table[m["row"]][c] - e) / denom
+                if abs(resid) > 1.96:
+                    sig_cells.append({"row": m["row"], "col": c, "adjusted_residual": round(resid, 2), "direction": "over" if resid > 0 else "under", "row_pct": m["row_pct"][c]})
+    sig_cells.sort(key=lambda x: -abs(x["adjusted_residual"]))
     cramers_v = (chi2 / (N * (min(len(rows), len(cols)) - 1))) ** 0.5 if min(len(rows), len(cols)) > 1 and N else 0.0
     # Largest difference: the (row, col) with biggest deviation in row pct from the overall col pct.
     overall = {c: 100 * sum(table[r][c] for r in rows) / N for c in cols}
@@ -283,6 +299,7 @@ def cross_tab(responses: list[dict], row_field: str, col_field: str, max_categor
         "cramers_v": round(cramers_v, 3),
         "significant_at_05": significant,
         "biggest_difference": {"row": biggest[0], "col": biggest[1], "pct_points_vs_overall": round(biggest[2], 1)},
+        "significant_cells": sig_cells,
         "warnings": warnings,
         "summary": (f"{'Real difference' if significant else 'No significant difference'} between {row_field} groups on {col_field} (χ²={chi2:.2f}, df={df}, p={p:.3f}, V={cramers_v:.2f}). Biggest: '{biggest[0]}' is {biggest[2]:+.1f} pts on '{biggest[1]}'."),
     }
@@ -290,6 +307,19 @@ def cross_tab(responses: list[dict], row_field: str, col_field: str, max_categor
 
 SOLUTION_WORDS = re.compile(r"\b(app|software|tool|platform|dashboard|feature|button|plugin|integration|ai|automation|our product|the product|subscription|login|interface|template)\b", re.I)
 SITUATION_CUES = re.compile(r"\b(when|after|before|during|every|each|while|at the (start|end)|first time|once|whenever|as soon as|the moment|on (monday|friday)|quarter|month|week|morning|deadline)\b", re.I)
+
+
+_THIRD = [
+    (r"\bI'm\b|\bI’m\b|\bI am\b", "they're"), (r"\bI've\b|\bI’ve\b", "they've"), (r"\bI'll\b|\bI’ll\b", "they'll"),
+    (r"\bI\b", "they"), (r"\bmy\b", "their"), (r"\bMy\b", "Their"), (r"\bme\b", "them"), (r"\bmine\b", "theirs"), (r"\bmyself\b", "themselves"),
+]
+
+
+def _third_person(s: str) -> str:
+    """First person → singular 'they' for a job story told about a named persona."""
+    for pat, rep in _THIRD:
+        s = re.sub(pat, rep, s)
+    return s
 
 
 @AGENT.tool
@@ -316,14 +346,23 @@ def format_jtbd(situation: str, motivation: str, outcome: str, persona: str = ""
         for p in prefixes:
             if t.lower().startswith(p):
                 t = t[len(p) :].strip()
-        return t[:1].lower() + t[1:] if t else t
+        if not t:
+            return t
+        first = t.split()[0]
+        # Keep "I", acronyms and names capitalised ("I close…", "QBR prep", "Shopify orders"); lowercase the rest.
+        if first == "I" or first.startswith(("I'", "I’")) or (len(first) > 1 and first[1:].lower() != first[1:]) or first in product_names:
+            return t
+        return t[:1].lower() + t[1:]
 
     sit = strip_lead(situation, ("when ", "whenever "))
     mot = strip_lead(motivation, ("i want to ", "want to ", "i want ", "to "))
     out = strip_lead(outcome, ("so i can ", "so that i can ", "so that ", "so i ", "so "))
     statement = f"When {sit}, I want to {mot}, so I can {out}."
     who = persona.strip() or "I"
-    story = f"When {sit}, {who} want{'s' if who != 'I' else ''} to {mot}, so {'they' if who != 'I' else 'I'} can {out}."
+    if who == "I":
+        story = statement
+    else:
+        story = f"When {_third_person(sit)}, {who} wants to {_third_person(mot)}, so they can {_third_person(out)}."
     lint = []
     joined = f"{sit} {mot} {out}"
     for pn in product_names[:50]:

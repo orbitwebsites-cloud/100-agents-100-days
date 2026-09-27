@@ -271,7 +271,8 @@ def test_feedback_nps_and_margin_by_hand():
     out = run("feedback-analyzer", "score_survey", scores=scores, survey="nps", segments=[r[1] for r in NPS], previous_score=22)
     assert (out["score"], out["moe"]) == _nps(scores) == (15.0, 18.0)
     assert (out["promoters_pct"], out["passives_pct"], out["detractors_pct"]) == (42.5, 30.0, 27.5)
-    assert out["delta"] == {"previous": 22.0, "change": -7.0, "beats_noise": False}
+    # a change is judged against the MoE of the difference (both periods' noise): 18.0 × √2 = 25.5
+    assert out["delta"] == {"previous": 22.0, "previous_n": 80, "change": -7.0, "moe_of_change": 25.5, "beats_noise": False}
     seg = out["by_segment"]
     for name in ("Pro", "Starter", "Enterprise"):
         assert (seg[name]["score"], seg[name]["moe"]) == _nps([r[0] for r in NPS if r[1] == name])

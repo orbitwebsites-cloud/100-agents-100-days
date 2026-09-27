@@ -128,3 +128,18 @@ def test_scan_secrets_redacts_every_secret_on_a_shared_line():
     assert out["count"] == 2
     for f in out["findings"]:  # each context used to leak the *other* secret
         assert kid not in f["context"] and sec not in f["context"]
+
+
+@pytest.mark.parametrize("src,lang,line", [
+    ('def f(cur, uid):\n    q = f"SELECT * FROM users WHERE id = {uid}"\n    cur.execute(q)\n', "python", 2),
+    ('def build(uid):\n    return "DELETE FROM t WHERE id = {}".format(uid)\n', "python", 2),
+    ("const q = `SELECT * FROM users WHERE id = ${req.params.id}`;\nawait db.query(q);\n", "javascript", 1),
+])
+def test_lint_catches_sql_built_away_from_the_execute_call(src, lang, line):
+    hits = [f for f in call("lint_risky_code", source=src, language=lang)["findings"] if f["cwe"] == "CWE-89"]
+    assert [f["line"] for f in hits] == [line]
+
+
+def test_lint_no_sql_false_positive_on_params_or_plain_fstrings():
+    src = 'def f(cur, uid, n):\n    cur.execute("SELECT * FROM users WHERE id = %s", (uid,))\n    log.info(f"selected {n} rows from the cache")\n'
+    assert call("lint_risky_code", source=src, language="python")["findings"] == []
