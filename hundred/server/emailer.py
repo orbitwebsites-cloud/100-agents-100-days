@@ -1,12 +1,14 @@
-"""Transactional email: license keys, dunning, access restored.
+"""Transactional email: license keys, sign-in codes, dunning, access restored.
 
-Live through Resend when RESEND_API_KEY is set; otherwise dry-run (prints the
-email) — same pattern as the Meeting Ops connectors.
+Live through Brevo when BREVO_API_KEY is set (Resend still works via
+RESEND_API_KEY); otherwise dry-run (prints the email) — same pattern as the
+Meeting Ops connectors.
 """
 
 from __future__ import annotations
 
 import logging
+from email.utils import parseaddr
 
 import requests
 
@@ -14,22 +16,55 @@ from .settings import settings
 
 log = logging.getLogger("hundred.email")
 
+BREVO_URL = "https://api.brevo.com/v3/smtp/email"
+RESEND_URL = "https://api.resend.com/emails"
 
-def send(to: str, subject: str, text: str) -> str:
-    if not settings.resend_api_key:
-        log.warning("[email · DRY-RUN] to=%s subject=%r\n%s", to, subject, text)
-        return "email:dry-run"
-    resp = requests.post(
-        "https://api.resend.com/emails",
+
+def provider() -> str:
+    if settings.brevo_api_key:
+        return "brevo"
+    if settings.resend_api_key:
+        return "resend"
+    return "dry-run"
+
+
+def _sender() -> dict:
+    name, address = parseaddr(settings.email_from)
+    return {"name": name or settings.brand, "email": address or settings.email_from}
+
+
+def _post(to: str, subject: str, text: str) -> requests.Response:
+    if provider() == "brevo":
+        return requests.post(
+            BREVO_URL,
+            headers={"api-key": settings.brevo_api_key, "accept": "application/json"},
+            json={"sender": _sender(), "to": [{"email": to}], "subject": subject, "textContent": text,
+                  "replyTo": {"email": settings.support_email}},
+            timeout=15,
+        )
+    return requests.post(
+        RESEND_URL,
         headers={"Authorization": f"Bearer {settings.resend_api_key}"},
         json={"from": settings.email_from, "to": [to], "subject": subject, "text": text,
               "reply_to": settings.support_email},
         timeout=15,
     )
-    if resp.status_code >= 300:
-        log.error("email send failed %s: %s", resp.status_code, resp.text[:300])
+
+
+def send(to: str, subject: str, text: str) -> str:
+    if provider() == "dry-run":
+        log.warning("[email · DRY-RUN] to=%s subject=%r\n%s", to, subject, text)
+        return "email:dry-run"
+    try:
+        resp = _post(to, subject, text)
+    except requests.RequestException as exc:
+        log.error("email send failed (%s): %s", provider(), exc)
         return "email:failed"
-    return resp.json().get("id", "email:sent")
+    if resp.status_code >= 300:
+        log.error("email send failed %s %s: %s", provider(), resp.status_code, resp.text[:300])
+        return "email:failed"
+    body = resp.json() if resp.content else {}
+    return body.get("messageId") or body.get("id") or "email:sent"
 
 
 def connect_instructions(key: str) -> str:

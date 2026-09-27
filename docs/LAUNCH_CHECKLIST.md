@@ -29,8 +29,17 @@ watch it come back. Use the Stripe CLI to replay events locally:
 `stripe listen --forward-to localhost:8000/stripe/webhook`.
 
 ## 2. Email
-Create a Resend account, verify your domain, set `RESEND_API_KEY` and `EMAIL_FROM`. Without it
-emails are logged instead of sent (fine for testing, not for launch — the key is emailed).
+Email goes through **Brevo**. In Brevo: SMTP & API → API keys → create a key, and store it as the
+`BREVO_API_KEY` secret on your host (never commit it or paste it anywhere else). `EMAIL_FROM` must be a
+verified Brevo sender; `alex@orbitboyzz.me` already is, so `EMAIL_FROM="Hundred <alex@orbitboyzz.me>"`
+works today. Without a key, emails are logged instead of sent (fine for testing, not for launch: the
+license key and sign-in codes are emailed).
+- Deliverability: in Brevo → Senders, Domains & Dedicated IPs → Domains, authenticate
+  `orbitboyzz.me` (Brevo code, DKIM and DMARC records). If the domain's DNS is on Cloudflare, add those
+  records in Cloudflare → DNS, with the proxy **off** (grey cloud) for any CNAMEs.
+- The Brevo free plan sends 300 emails a day. That covers early launch; move to a paid plan (from
+  ~$9/mo) before daily signups plus sign-ins approach it, because a missed sign-in code is a lost customer.
+- `RESEND_API_KEY` still works as an alternative and is used only when `BREVO_API_KEY` is blank.
 
 ## 2b. Sign-in from AI apps (OAuth)
 Customers add just `https://<your-domain>/mcp`; Claude, ChatGPT, Cursor, VS Code and Claude Code
@@ -47,7 +56,7 @@ then open your `/connect` page, the customer enters their email, gets a 6-digit 
 fly launch --no-deploy            # uses fly.toml
 fly volumes create hundred_data --size 1
 fly secrets set STRIPE_SECRET_KEY=sk_live_... STRIPE_WEBHOOK_SECRET=whsec_... \
-  RESEND_API_KEY=re_... EMAIL_FROM="Hundred <agents@yourdomain.com>" PUBLIC_URL=https://yourdomain.com
+  BREVO_API_KEY=xkeysib-... EMAIL_FROM="Hundred <alex@orbitboyzz.me>" PUBLIC_URL=https://yourdomain.com
 fly deploy
 ```
 Point your domain at it, then update `PUBLIC_URL` and the Stripe webhook URL.

@@ -29,6 +29,9 @@ class Settings:
     # Signs one-click upgrade links. Set a long random value in production.
     app_secret: str = os.getenv("APP_SECRET", "")
 
+    # Transactional email: Brevo first, Resend if that's what's set, else dry-run.
+    # EMAIL_FROM must be a sender verified in the provider.
+    brevo_api_key: str = os.getenv("BREVO_API_KEY", "")
     resend_api_key: str = os.getenv("RESEND_API_KEY", "")
     email_from: str = os.getenv("EMAIL_FROM", "Hundred <agents@example.com>")
     support_email: str = os.getenv("SUPPORT_EMAIL", "support@example.com")
