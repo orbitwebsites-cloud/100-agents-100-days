@@ -7,6 +7,8 @@
     python -m hundred.admin revoke --key hnd_live_...
     python -m hundred.admin reconcile                       # re-sync every license from Stripe (cron this)
     python -m hundred.admin licenses                        # list licenses
+    python -m hundred.admin brief cold-email "task"          # what the customer's AI receives
+    python -m hundred.admin run cold-email score_subject_line '{"subjects": ["quick q"]}'
     python -m hundred.admin serve                           # run the web + MCP server
 """
 
@@ -93,6 +95,40 @@ def cmd_licenses(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_brief(args: argparse.Namespace) -> int:
+    """Print exactly what a customer's AI receives from <agent>__start."""
+    agent = registry.get(args.agent)
+    if agent is None:
+        print(f"unknown agent {args.agent!r}", file=sys.stderr)
+        return 1
+    print(agent.briefing(args.task or ""))
+    for t in agent.tools:
+        import json
+
+        print(f"\n### {t.name} arguments\n" + json.dumps(t.input_schema(), indent=1))
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Call one agent tool with JSON arguments, exactly as the MCP server would."""
+    import json
+
+    from .core import ToolError, render_result
+
+    agent = registry.get(args.agent)
+    tool = agent.get_tool(args.tool) if agent else None
+    if tool is None:
+        print(f"unknown agent/tool {args.agent}/{args.tool}", file=sys.stderr)
+        return 1
+    raw = sys.stdin.read() if args.json == "-" else args.json
+    try:
+        print(render_result(tool.call(json.loads(raw or "{}"))))
+    except ToolError as e:
+        print(f"ToolError: {e}")
+        return 3
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -117,6 +153,15 @@ def main(argv: list[str] | None = None) -> int:
     r.set_defaults(fn=cmd_revoke)
     sub.add_parser("reconcile").set_defaults(fn=cmd_reconcile)
     sub.add_parser("licenses").set_defaults(fn=cmd_licenses)
+    b = sub.add_parser("brief")
+    b.add_argument("agent")
+    b.add_argument("task", nargs="?")
+    b.set_defaults(fn=cmd_brief)
+    rn = sub.add_parser("run")
+    rn.add_argument("agent")
+    rn.add_argument("tool")
+    rn.add_argument("json", nargs="?", default="{}", help="JSON arguments, or - to read stdin")
+    rn.set_defaults(fn=cmd_run)
     s = sub.add_parser("serve")
     s.add_argument("--host", default="0.0.0.0")
     s.add_argument("--port", type=int, default=8000)
