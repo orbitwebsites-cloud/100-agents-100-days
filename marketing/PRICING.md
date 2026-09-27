@@ -193,7 +193,49 @@ missing or showed no price. Each is flagged in the research files. Among them:
 Mealime reportedly shuts down on 2026-10-21, which removes a cheap meal-planning
 comparable.
 
-## 8. Decisions for you
+## 8. The post-purchase upgrade offer (built)
+
+Everyone who buys something cheaper than All-Access sees an All-Access offer on the
+welcome page, before the setup instructions. The same offer goes in their welcome
+email. It's valid for 48 hours and takes one click on the card they just used. It
+replaces their plan, and billing starts when the trial ends.
+(`hundred/server/upsell.py`)
+
+**Offer price** = the higher of (half the All-Access list price) and (what they pay
+now + $5). It's capped at what they pay now + $15, never goes above the list price,
+and is rounded up to a .99 ending.
+
+| They bought | They pay | Offer: all 100 agents | Extra per month | Off list |
+|---|---|---|---|---|
+| 1 agent | $4.99 | **$14.99, locked for life** | +$10.00 | 50% |
+| 3 agents | $14.97 | $19.99 | +$5.02 | 33% |
+| 1 pack or any-5 | $14.99 | $19.99 | +$5.00 | 33% |
+| 6 agents | $29.94 | $29.99 | +$0.05 | 0% (same money, 20× the agents) |
+
+Why it's shaped this way *(judgement)*:
+
+- **The +$5 floor** means every acceptance raises revenue.
+- **The 50%-off ceiling** makes the value gap absurd. A $4.99 buyer gets 20× the
+  agents for 3× the price.
+- **The +$15 cap** keeps the step small enough to accept on impulse.
+
+It's also the right *product* move. The research shows cheap single-agent plans churn
+hardest, while buyers with more agents in their daily workflow have more reasons to
+stay. Measure the acceptance rate by plan and tune the floor and cap from real data.
+I haven't cited an industry take-rate because I couldn't verify one.
+
+**The one rule:** the offer can be unreasonably good, but the terms can't be hidden.
+The price, "every month", "replaces your current plan", "starts when your trial ends"
+and "cancel anytime" all sit next to the button. There's a plain "No thanks" link.
+Links are signed and expire, and the server recalculates the price on click, so a
+link can't be forged or re-priced. US rules on recurring charges (ROSCA, the FTC's
+negative-option rules) require exactly this clear disclosure and express consent.
+It's also what keeps chargebacks low.
+
+Next step (not built): a reminder email 24 hours before the offer expires. That
+needs a scheduled job.
+
+## 9. Decisions for you
 
 1. Adopt the ladder in §3: $4.99 single, $9.99 Everyday pack, $19.99 Pro pack, $29.99
    All-Access, $14.99 founder, and drop any-5?

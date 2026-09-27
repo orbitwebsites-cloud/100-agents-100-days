@@ -3,7 +3,8 @@
     /                    storefront (landing + pricing + catalog)
     /agents/<slug>       one SEO landing page per agent
     /checkout            → Stripe Checkout (subscription, 7-day trial)
-    /welcome             post-checkout: one-time key reveal + setup
+    /welcome             post-checkout: one-time key reveal + All-Access upgrade offer + setup
+    /offer, /upsell/accept   the signed, one-click 48-hour upgrade offer (also linked from the welcome email)
     /account             update card / cancel (Stripe portal), recover a lost key
     /setup               connect guide for Claude, ChatGPT, Cursor, VS Code, Claude Code…
     /stripe/webhook      Stripe events → licenses (access follows payment)
@@ -22,7 +23,7 @@ from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Route
 
 from .. import plans, registry
-from . import billing, emailer, web
+from . import billing, emailer, upsell, web
 from .mcp_server import build_server
 from .settings import settings
 from .store import Store
@@ -97,7 +98,48 @@ async def welcome(request: Request) -> Response:
                     key = store.take_reveal(session_id)
         except Exception:
             log.exception("welcome: could not provision from session")
-    return HTMLResponse(web.welcome_page(key))
+    lic = store.by_key(key) if key else None
+    offer = upsell.offer_for(lic)
+    fields = upsell.token_fields(offer) if offer else None
+    return HTMLResponse(web.welcome_page(key, offer, fields))
+
+
+def _offer_from(params) -> tuple[upsell.Offer | None, str]:
+    """Validate a signed offer link/form. Returns (offer, error)."""
+    try:
+        sub_id, offer_cents, exp = str(params.get("sub", "")), int(params.get("offer", 0)), int(params.get("exp", 0))
+    except (TypeError, ValueError):
+        return None, "That offer link is broken."
+    if not upsell.verify(sub_id, offer_cents, exp, str(params.get("sig", ""))):
+        return None, "This offer has expired or the link is invalid."
+    offer = upsell.offer_for(store.by_subscription(sub_id))
+    if offer is None or offer.offer_cents != offer_cents:
+        return None, "This offer isn't available on your subscription anymore."
+    return upsell.Offer(sub_id, offer.current_cents, offer_cents, offer.list_cents, exp), ""
+
+
+async def offer_page(request: Request) -> Response:
+    offer, error = _offer_from(request.query_params)
+    if offer is None:
+        return HTMLResponse(web.message_page("Offer unavailable", error, back="/#pricing"), status_code=410)
+    return HTMLResponse(web.offer_page(offer, upsell.token_fields(offer)))
+
+
+async def upsell_accept(request: Request) -> Response:
+    form = await request.form()
+    offer, error = _offer_from(form)
+    if offer is None:
+        return HTMLResponse(web.message_page("Offer unavailable", error, back="/#pricing"), status_code=400)
+    try:
+        billing.apply_upsell(store, offer.subscription_id, offer.offer_cents)
+    except billing.BillingError as e:
+        return HTMLResponse(web.message_page("Couldn't upgrade", str(e), back="/account"), status_code=409)
+    except Exception:
+        log.exception("upsell failed for %s", offer.subscription_id)
+        return HTMLResponse(web.message_page("Couldn't upgrade", "Something went wrong on our side — you were not "
+                                             "charged. Try again from your welcome email."), status_code=502)
+    log.info("upsell accepted %s → %s", offer.subscription_id, offer.offer_cents)
+    return HTMLResponse(web.upgraded_page(upsell.money(offer.offer_cents)))
 
 
 async def account(request: Request) -> Response:
@@ -164,6 +206,8 @@ ROUTES = [
     Route("/welcome", welcome),
     Route("/account", account, methods=["GET", "POST"]),
     Route("/setup", setup_page),
+    Route("/offer", offer_page),
+    Route("/upsell/accept", upsell_accept, methods=["POST"]),
     Route("/stripe/webhook", stripe_webhook, methods=["POST"]),
     Route("/healthz", healthz),
     Route("/r/{code}", ref),

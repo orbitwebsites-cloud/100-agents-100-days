@@ -51,12 +51,13 @@ will pick the right agent. Full setup guide: {settings.public_url}/setup
 """
 
 
-def send_welcome(to: str, key: str, plan_name: str) -> str:
+def send_welcome(to: str, key: str, plan_name: str, offer_line: str = "") -> str:
     return send(
         to,
         f"Your {settings.brand} agents are ready",
         f"Welcome to {settings.brand} — {plan_name}.\n\n{connect_instructions(key)}\n"
-        f"Manage billing anytime: {settings.public_url}/account\n",
+        + (f"{offer_line}\n\n" if offer_line else "")
+        + f"Manage billing anytime: {settings.public_url}/account\n",
     )
 
 

@@ -44,6 +44,9 @@ details{border-bottom:1px solid var(--line);padding:14px 0}summary{cursor:pointe
 footer{color:var(--muted);font-size:14px;padding:40px 0;border-top:1px solid var(--line);margin-top:40px}
 .plans{grid-template-columns:repeat(auto-fit,minmax(196px,1fr))}
 @media (max-width:560px){nav a{margin-left:12px;font-size:14px}nav a:first-child{display:none}.hero h1 br{display:none}}
+.offer{border:2px solid var(--accent);border-radius:16px;padding:22px;margin:0 0 26px;background:var(--panel)}
+.offer .was{text-decoration:line-through;color:var(--muted);font-size:20px;margin-right:8px}.offer .now{font-size:40px;font-weight:800;letter-spacing:-.02em}
+.offer .terms{color:var(--muted);font-size:13px;margin-top:10px}.offer .timer{color:var(--warn);font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.06em}
 .notice{border:1px solid var(--warn);color:var(--warn);border-radius:10px;padding:10px 14px;margin:14px 0}
 """
 
@@ -188,7 +191,39 @@ def setup_page() -> str:
     return layout(f"Setup — {settings.brand}", body)
 
 
-def welcome_page(key: str | None) -> str:
+def offer_card(offer, fields: dict[str, str]) -> str:
+    """The post-purchase All-Access offer. Big value, plain terms, one click."""
+    from .upsell import money
+
+    n = len(registry.all_agents())
+    hidden = "".join(f'<input type="hidden" name="{k}" value="{e(v)}">' for k, v in fields.items())
+    extra = offer.extra_cents
+    delta = f"just {money(extra)}/mo more than you pay now" if extra > 0 else "the same price you pay now"
+    return f"""<div class="offer"><div class="timer">One-time offer · not on our pricing page · expires in 48 hours</div>
+<h2 style="margin:8px 0 4px">Wait — get all {n} agents instead.</h2>
+<p class="sub" style="margin:0 0 10px">Every agent we've built and every one we ship next — for {delta}.</p>
+<div><span class="was">{money(offer.list_cents)}</span><span class="now">{money(offer.offer_cents)}</span><span class="sub">/mo · {offer.percent_off}% off, locked for life</span></div>
+<form method="post" action="/upsell/accept" style="margin-top:14px">{hidden}
+<button class="btn" style="width:100%;max-width:460px">Yes — upgrade me to all {n} agents for {money(offer.offer_cents)}/mo</button></form>
+<p class="terms">Replaces your current plan (you won't pay for both). Billed {money(offer.offer_cents)} every month to the card you just used,
+starting when your free trial ends. Cancel anytime in <a href="/account">Account</a>. Same MCP link — new agents appear automatically.</p>
+<p class="terms"><a href="#setup">No thanks, I'll keep my plan</a></p></div>"""
+
+
+def offer_page(offer, fields: dict[str, str]) -> str:
+    body = f'<div class="wrap hero" style="text-align:left">{offer_card(offer, fields)}</div>'
+    return layout(f"Your upgrade offer — {settings.brand}", body)
+
+
+def upgraded_page(price: str) -> str:
+    n = len(registry.all_agents())
+    body = f"""<div class="wrap hero"><h1>Done — all {n} agents are yours.</h1>
+<p>They're already live on the link you set up. {e(price)}/mo, locked for life. Ask your AI for anything.</p>
+<a class="btn" href="/setup">Setup guide</a></div>"""
+    return layout(f"Upgraded — {settings.brand}", body)
+
+
+def welcome_page(key: str | None, offer=None, offer_fields: dict[str, str] | None = None) -> str:
     if key:
         url = f"{settings.mcp_url}?key={key}"
         top = f"""<h1>You're in. 🎉</h1><p style="margin-left:0">Here's your private MCP link. It's shown <b>once</b> (it's also in your email). Treat it like a password.</p>
@@ -198,8 +233,9 @@ def welcome_page(key: str | None) -> str:
         top = """<h1>Payment received — finishing setup</h1><p style="margin-left:0">Your key is on its way to your inbox (usually within a minute).
 If this page was already opened once, the key is only in the email now. Nothing there in 5 minutes? Use <a href="/account">Account → recover key</a>.</p>"""
         blocks = _setup_blocks(settings.mcp_url + "?key=YOUR_KEY")
+    upsell_html = offer_card(offer, offer_fields or {}) if offer else ""
     body = f"""<div class="wrap hero" style="text-align:left">{top}</div>
-<div class="wrap"><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">{blocks}</div></div>"""
+<div class="wrap">{upsell_html}<div id="setup" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">{blocks}</div></div>"""
     return layout(f"Welcome — {settings.brand}", body)
 
 

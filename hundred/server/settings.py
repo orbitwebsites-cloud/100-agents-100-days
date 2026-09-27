@@ -26,6 +26,8 @@ class Settings:
     stripe_secret_key: str = os.getenv("STRIPE_SECRET_KEY", "")
     stripe_webhook_secret: str = os.getenv("STRIPE_WEBHOOK_SECRET", "")
     trial_days: int = _int("TRIAL_DAYS", 7)
+    # Signs one-click upgrade links. Set a long random value in production.
+    app_secret: str = os.getenv("APP_SECRET", "")
 
     resend_api_key: str = os.getenv("RESEND_API_KEY", "")
     email_from: str = os.getenv("EMAIL_FROM", "Hundred <agents@example.com>")

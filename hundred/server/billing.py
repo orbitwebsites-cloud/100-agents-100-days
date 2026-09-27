@@ -18,7 +18,7 @@ from typing import Any
 
 import stripe
 
-from .. import plans
+from .. import plans, registry
 from . import emailer
 from .settings import settings
 from .store import Store
@@ -176,7 +176,16 @@ def sync_subscription(store: Store, sub: Any, email: str = "", session_id: str =
     if session_id:
         store.put_reveal(session_id, key)
     plan = plans.PLANS.get(plan_code)
-    emailer.send_welcome(lic.email, key, plan.name if plan else plan_code)
+    from . import upsell
+
+    offer = upsell.offer_for(lic)
+    offer_line = (
+        f"One-time offer (48 hours): all {len(registry.all_agents())} agents for "
+        f"{upsell.money(offer.offer_cents)}/mo, locked for life (normally {upsell.money(offer.list_cents)}). "
+        f"One click: {upsell.offer_url(offer)}"
+        if offer else ""
+    )
+    emailer.send_welcome(lic.email, key, plan.name if plan else plan_code, offer_line)
     return lic, key
 
 
@@ -202,6 +211,50 @@ def _invoice_subscription_id(invoice: dict) -> str | None:
     details = ((invoice.get("parent") or {}).get("subscription_details") or {})
     sub = details.get("subscription")
     return sub.get("id") if isinstance(sub, dict) else sub
+
+
+# ── post-purchase upgrade ───────────────────────────────────
+def _upsell_coupon(c: stripe.StripeClient, amount_off: int) -> str:
+    """A forever amount-off coupon for this offer size (idempotent by id)."""
+    coupon_id = f"hundred_upsell_{amount_off}"
+    try:
+        c.v1.coupons.retrieve(coupon_id)
+    except stripe.InvalidRequestError:
+        c.v1.coupons.create(params={
+            "id": coupon_id,
+            "amount_off": amount_off,
+            "currency": "usd",
+            "duration": "forever",
+            "name": f"All-Access upgrade offer (-${amount_off / 100:.2f}/mo)",
+        })
+    return coupon_id
+
+
+def apply_upsell(store: Store, sub_id: str, offer_cents: int, stripe_client=None, fetch=None):
+    """Swap a subscription to All-Access at the offer price. Same card, same trial."""
+    from . import upsell
+
+    c = stripe_client or client()
+    fetch = fetch or _fetch_subscription
+    lic = store.by_subscription(sub_id)
+    offer = upsell.offer_for(lic)
+    if offer is None:
+        raise BillingError("This offer isn't available on this subscription anymore.")
+    if offer.offer_cents != offer_cents:
+        raise BillingError("This offer has changed — reload the page for the current one.")
+    sub = fetch(sub_id)
+    items = (sub.get("items") or {}).get("data", [])
+    params: dict[str, Any] = {
+        "items": [{"id": i["id"], "deleted": True} for i in items]
+        + [{"price": price_id(plans.PLANS["all"].lookup_key), "quantity": 1}],
+        "metadata": {"plan": "all", "upsell_from": lic.plan, "upsell_price_cents": str(offer_cents)},
+        "proration_behavior": "none" if sub.get("status") == "trialing" else "create_prorations",
+    }
+    if offer.discount_cents > 0:
+        params["discounts"] = [{"coupon": _upsell_coupon(c, offer.discount_cents)}]
+    c.v1.subscriptions.update(sub_id, params=params)
+    lic, _ = sync_subscription(store, fetch(sub_id))
+    return lic
 
 
 # ── webhooks ────────────────────────────────────────────────
