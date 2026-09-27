@@ -1,0 +1,31 @@
+[
+ {
+  "scenario": "seo-meta",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": false,
+  "started": [
+   "meta-writer"
+  ],
+  "tools": [
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description",
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description",
+   "meta-writer/serp_preview",
+   "meta-writer/score_description",
+   "meta-writer/serp_preview"
+  ],
+  "tool_errors": [],
+  "turns": 10,
+  "cost": 0.023305000000000006,
+  "error": "",
+  "answer": "",
+  "passed": false
+ }
+]

@@ -1,0 +1,27 @@
+[
+ {
+  "scenario": "seo-meta",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "meta-writer"
+  ],
+  "tools": [
+   "meta-writer/serp_preview",
+   "meta-writer/serp_preview",
+   "meta-writer/serp_preview",
+   "meta-writer/serp_preview",
+   "meta-writer/serp_preview"
+  ],
+  "tool_errors": [],
+  "turns": 7,
+  "cost": 0.018497750000000004,
+  "error": "",
+  "answer": "# Snippet \u2014 Best standing desks for small apartments page \u00b7 keyword: best standing desks for small apartments\n\n## Recommended\n**Title:** Best Standing Desks for Small Apartments: 9 Space\u2011Saving Picks  \n582.5px desktop (fits) \u00b7 62 chars \u00b7 score 100/100  \n**Description:** Find the best standing desks for small apartments \u2014 compact, adjustable picks under $300. Compare 9 models with pros, cons, and tips.  \n849.7px desktop (fits) \u00b7 133 chars \u00b7 score 100/100\n\nWill they be truncated in Google?\n- Desktop: Title and description will display in full (both fit Google\u2019s desktop pixel limits).  \n- Mobile: Title fits mobile; description will be truncated on mobile (description is ~850px vs mobile limit ~680px \u2014 it will be cut, showing the first ~99\u2013105 characters and ellipses).\n\n## Alternatives\n1. Best Standing Desks for Small Apartments: 9 Space-Saving Picks (2026) \u2014 646.9px title \u00b7 tests urgency/currentness with year but will likely truncate on desktop.  \n2. 9 Best Standing Desks for Small Apartments (Compact & Affordable) \u2014 609.1px title \u00b7 leads with \u201c9\u201d (good for listicle CTR) but slightly long for desktop and may be cut.\n\n## SERP preview (desktop)\nBest Standing Desks for Small Apartments: 9 Space\u2011Saving Picks  \nyoursite.com \u203a path  \nFind the best standing desks for small apartments \u2014 compact, adjustable picks under $300. Compare 9 models with pros, cons, and tips.\n\n## Notes\n- I assumed no brand suffix (you didn\u2019t provide a brand). If your brand has search demand, add it as a short suffix (e.g., \"\u2026Picks | Brand\") only if space allows.\n- What would lift CTR further: A/B test one element for ~4 weeks \u2014 either (A) include the year (e.g., \u201c(2026)\u201d) for freshness or (B) lead with a specific differentiator in the title (e.g., \u201c9 Space\u2011Saving Picks \u2014 Best Under $300\u201d). The current pair is optimized for clarity and pixel fit.\n- To avoid mobile truncation of the description, you can either shorten it by ~35 characters (or ~170px) or move the strongest call-to-action/value into the first 100 characters (e.g., start with \u201cUnder $300 \u2014 find compact, adjustable standing desks for small apartments\u2026\u201d) so mobile users see the key benefit.\n\nIf you want, I can:\n- shorten the description for full mobile visibility, or\n- produce 3 more A/B variants optimized for mobile-first display. Which would you prefer?",
+  "passed": true
+ }
+]

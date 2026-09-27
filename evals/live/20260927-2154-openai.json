@@ -1,0 +1,26 @@
+[
+ {
+  "scenario": "seo-meta",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "meta-writer"
+  ],
+  "tools": [
+   "meta-writer/serp_preview",
+   "meta-writer/serp_preview",
+   "meta-writer/serp_preview",
+   "meta-writer/serp_preview"
+  ],
+  "tool_errors": [],
+  "turns": 6,
+  "cost": 0.018425749999999998,
+  "error": "",
+  "answer": "# Snippet \u2014 page about standing desks \u00b7 keyword: best standing desks for small apartments\n\n## Recommended\n**Title:** Best Standing Desks for Small Apartments \u2014 10 Compact Picks  \n570.2px desktop (fits) \u00b7 59 chars \u00b7 score 100/100\n\n**Description:** Find the best standing desks for small apartments: 10 compact, adjustable, budget-friendly picks with dimensions, pros and setup tips.  \n830.3px desktop (fits) \u00b7 134 chars \u00b7 score 90/100\n\n## Alternatives\n1. Best Standing Desks for Small Apartments: 12 Space-Saving Picks (2026) \u2014 658px desktop \u00b7 may win for people who prefer bigger roundups / year signal, but it will be truncated on desktop (cut after \"Space-Saving \u2026\").\n2. Small Apartment Standing Desks: Space-Saving, Foldable & Cheap (2026) \u2014 663.6px desktop \u00b7 tests different phrasing (cheap/foldable) but the exact query words aren't in the first half and the title truncates on desktop.\n\n## SERP preview (desktop)\nBest Standing Desks for Small Apartments \u2014 10 Compact Picks  \nexample.com \u203a /best-standing-desks-small-apartments  \nFind the best standing desks for small apartments: 10 compact, adjustable, budget-friendly picks with dimensions, pros and setup tips.\n\n## Notes\n- I omitted a brand suffix because you didn't supply one; add \"| Brand\" only if the brand is well-known or the page is a branded query. Brand at the end is fine if the query is not brand-focused.\n- The chosen title and description fit Google desktop pixel limits and keep the keyword at the start of the title (good for bolding). Mobile will also show the full title.\n- The description currently repeats the title phrase \u2014 to lift CTR and the description score, add one unique hook from the page (only if true), e.g.: \"Includes exact dimensions, load capacity and best picks under $200.\" If your page has measurement/price/stability details, include that unique proof to reduce title/description overlap.\n- A/B test the description vs. a specificity-focused variant (dimensions / price / best for studios under X sq ft) for ~4 weeks to see which raises CTR.\n\nIf you want, tell me your site/brand and one unique thing on the page (number of picks, price focus, test data) and I\u2019ll fold that into a final title+description and re-run the pixel check.",
+  "passed": true
+ }
+]

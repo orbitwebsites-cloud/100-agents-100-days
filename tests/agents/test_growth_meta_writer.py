@@ -87,3 +87,12 @@ def test_audit_snippets_finds_duplicates_and_limits():
     assert out["problems"][0]["severity"] == "high"
     with pytest.raises(ToolError):
         call("audit_snippets", rows=[])
+
+
+def test_serp_preview_with_keyword_scores_in_one_call():
+    # Live runs: models called preview, score_title and score_description one per turn and ran out of turns.
+    title, desc = "Best Standing Desks for Small Apartments (2026) | DeskCo", "Compact standing desks under 48 inches, tested for wobble and noise. See our top 7 picks."
+    out = call("serp_preview", title=title, description=desc, keyword="standing desks for small apartments", brand="DeskCo")
+    assert out["title_score"] == call("score_title", title=title, keyword="standing desks for small apartments", brand="DeskCo")
+    assert out["description_score"] == call("score_description", description=desc, keyword="standing desks for small apartments", title=title)
+    assert "title_score" not in call("serp_preview", title=title)

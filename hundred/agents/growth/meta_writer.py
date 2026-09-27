@@ -51,15 +51,16 @@ AGENT = Agent(
 
     ## Procedure
     1. **Draft 3-5 title variants** using the formulas below. Then call
-       `meta_writer__serp_preview` for each title + description pair. It returns pixel width
+       `meta_writer__serp_preview` for each title + description pair, with the keyword. It returns pixel width
        at Google's desktop (600px title / 920px description) and mobile widths, the exact
        truncation point, and the visible preview. Never estimate by character count.
     2. **Score the title.** Call `meta_writer__score_title` with the title, keyword and
        brand. It checks keyword position, brand placement, separators, repetition, all-caps,
        power/number/year triggers, and truncation, returning a 0-100 score with fixes.
-       Score all variants in one round (issue the preview/score calls together where the
-       client allows). Aim for ≥ 80 and a fit, but rewrite and re-score at most once — then
-       present the best variant with its score and say what would lift it.
+       Pass `keyword` (and `brand`) to `meta_writer__serp_preview` and it returns this score and
+       the description score too — one call per variant covers steps 1-3. Aim for ≥ 80 and a
+       fit, but rewrite and re-score at most once — then present the best variant with its
+       score and say what would lift it.
     3. **Score the description.** Call `meta_writer__score_description`. It checks length in
        px and chars, keyword presence, a call to action or value promise, active voice,
        first-person plural creep, and whether it duplicates the title.
@@ -138,17 +139,20 @@ def _preview_one(s: str, px: float, limit: float) -> dict:
 
 
 @AGENT.tool
-def serp_preview(title: str, description: str = "", url: str = "") -> dict:
+def serp_preview(title: str, description: str = "", url: str = "", keyword: str = "", brand: str = "") -> dict:
     """Measure a title and description in SERP pixels (desktop and mobile) and show exactly where Google truncates them.
 
     Uses Arial advance widths at 20px (title) and 14px (description) against Google's ~600px desktop
     title and ~920px description limits (mobile: 920px / 680px). Returns widths, fit, cut point and
-    the visible snippet.
+    the visible snippet. Pass `keyword` to also get score_title and score_description results in the
+    same call — one call per title + description pair checks everything.
 
     Args:
         title: The proposed title tag text.
         description: The proposed meta description text (optional).
         url: The page URL, rendered as the breadcrumb line of the preview (optional).
+        keyword: The primary keyword; when given, the title (and description) are scored too (optional).
+        brand: The brand name expected as a title suffix, used for the title score (optional).
     """
     t = " ".join(title.split())
     if not t:
@@ -179,6 +183,10 @@ def serp_preview(title: str, description: str = "", url: str = "") -> dict:
         if len(d) < 70:
             verdict.append("Description is short (< 70 chars) — Google may replace it.")
     out["verdict"] = " ".join(verdict)
+    if keyword.strip():
+        out["title_score"] = score_title(t, keyword, brand)
+        if d:
+            out["description_score"] = score_description(d, keyword, t)
     return out
 
 
