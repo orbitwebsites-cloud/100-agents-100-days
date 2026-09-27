@@ -10,7 +10,7 @@ from typing import Literal
 
 from ...core import Agent, ToolError
 from ...lib import text
-from ._common import CTA_VERBS, POWER_WORDS, caps_ratio, count_emoji, spam_hits, visible_len
+from ._common import CTA_VERBS, POWER_WORDS, caps_ratio, count_emoji, visible_len
 
 AGENT = Agent(
     slug="ad-copy-lab",
@@ -63,14 +63,17 @@ AGENT = Agent(
        none duplicate another's meaning. For Meta write 3-5 primary texts with the hook in
        the first 125 characters (the "See more" fold), plus 5 headlines ≤ 40 chars.
     3. **Validate limits** with `ad_copy_lab__validate_platform_copy`. Fix every asset that
-       overflows; do not truncate with "…" — rewrite. For RSA, respect the pin plan the tool
-       reports: pinning more than one position kills combinations and Ad Strength.
-    4. **Check angle coverage** with `ad_copy_lab__angle_coverage`. If fewer than 5 angles
+       overflows; do not truncate with "…" — rewrite. For RSA, pin only must-show text, and
+       pin 2-3 unique assets to each pinned position (Google's guidance); must-show text goes
+       in H1, H2 or D1 — H3 and D2 are not guaranteed to show. Fix every pin issue it lists.
+    4. **Check angle coverage** with `ad_copy_lab__angle_coverage` (pass the keyword and
+       brand so keyword headlines count as relevance assets). If fewer than 5 angles
        are represented, or one angle owns > 40 % of lines, rewrite the surplus lines into
        the missing angles (see Frameworks).
     5. **Score and rank** every headline / primary text with `ad_copy_lab__score_ad_copy`.
        Keep lines ≥ 65; rewrite lines < 50 using the fixes returned. Never ship a line the
-       tool flags for policy (excessive punctuation, ALL CAPS, "click here").
+       tool flags for policy (excessive punctuation, ALL CAPS, "click here") or claim risk
+       (unproven guarantees, health/income promises).
     6. **Deliver** in the output format, with the test plan: which 2-3 angles to test
        first, what "winning" means (CPA target from step 1), and the minimum spend before
        judging (≥ 50 conversions per variant or 2 weeks).
@@ -119,6 +122,14 @@ AGENT = Agent(
     - Superlatives with no proof ("best", "#1") — replace with a number or drop.
     - Judging a variant after 8 clicks.
     """,
+)
+
+# Claims ad reviewers and readers distrust. Deliberately NOT the email spam lexicon: "free trial",
+# "no credit card" and "get paid" are normal, effective ad copy; email-filter words don't apply to ads.
+AD_RISK_RE = re.compile(
+    r"\b(guaranteed?|risk[- ]free|miracle|cure[sd]?|lose weight|get rich|make money fast|instant income|"
+    r"100% (?:free|guaranteed|safe)|no risk|act now|click here|you have been selected|winner)\b",
+    re.I,
 )
 
 Platform = Literal["google_rsa", "microsoft_rsa", "meta", "linkedin", "x", "tiktok", "pinterest", "reddit"]
@@ -304,8 +315,22 @@ def validate_platform_copy(
         unpinned = _rsa_combinations(headlines, descriptions, {}) if headlines and descriptions else 0
         out["rsa_combinations"] = combos
         out["rsa_combinations_unpinned"] = unpinned
-        if pin_map and unpinned and combos / unpinned < 0.25:
-            out["issues"].append(f"Pins cut combinations to {combos:,} of {unpinned:,} ({100 * combos / unpinned:.0f}%) — expect 'Poor' Ad Strength.")
+        # Google's guidance: pin 2-3 unique assets to each pinned position so the system can still rotate,
+        # and only positions H1, H2 and D1 are guaranteed to show in every ad.
+        pinned_positions: dict[str, list[str]] = {}
+        for k, v in pin_map.items():
+            for pos in v:
+                pinned_positions.setdefault(f"{'H' if k[0] == 'h' else 'D'}{pos}", []).append(k)
+        out["pinned_positions"] = {pos: sorted(v) for pos, v in sorted(pinned_positions.items())}
+        for pos, assets in sorted(pinned_positions.items()):
+            if len(assets) == 1:
+                out["issues"].append(f"Only {assets[0]} is pinned to {pos} — Google recommends pinning 2-3 unique assets to each pinned position so the ad can still rotate and test.")
+            if pos in ("H3", "D2"):
+                out["issues"].append(f"{pos} is not guaranteed to show in every ad — pin must-show text to H1, H2 or D1 instead.")
+        if pin_map and unpinned:
+            out["rsa_combination_share_pct"] = round(100 * combos / unpinned, 1)
+            if combos / unpinned < 0.05:
+                out["issues"].append(f"Pins cut combinations to {combos:,} of {unpinned:,} ({100 * combos / unpinned:.0f}%) — heavy pinning limits testing and lowers Ad Strength; unpin all but the must-show assets.")
         if keyword:
             kw = keyword.lower()
             with_kw = [r["n"] for r in out["headlines"] if kw in r["text"].lower()]
@@ -333,21 +358,24 @@ ANGLE_PATTERNS: dict[str, re.Pattern] = {
     "fear_loss": re.compile(r"\b(stop|losing|lose|missing|mistakes?|risk|wasting|avoid|never again|tired of|broken|leak)\b", re.I),
     "comparison": re.compile(r"\b(vs\.?|versus|alternative|instead of|switch from|better than|compare|unlike)\b", re.I),
     "identity": re.compile(r"\b(for|built for|made for|designed for)\s+(small|busy|growing|remote|modern|startups?|founders|teams|agencies|marketers|developers|ops|hr|sales|smbs?|enterprises?|creators|freelancers)\b", re.I),
-    "feature": re.compile(r"\b(with|includes?|built-in|integrat|automat|ai-powered|dashboard|template|sync|api|analytics|real-time|reports?)\b", re.I),
-    "benefit": re.compile(r"\b(get|grow|boost|double|cut|reduce|faster|more|less|increase|improve|save time|close more|ship|win|hit|reach)\b", re.I),
+    "feature": re.compile(r"\b(with|includes?|built-in|integrat\w*|automat\w*|auto|reminders?|ai-powered|dashboard|template|sync|api|analytics|real-time|reports?|from your (phone|inbox|desktop)|mobile app)\b", re.I),
+    "benefit": re.compile(r"\b(get|grow|boost|double|cut|reduce|fast|faster|quick|quicker|sooner|more|less|increase|improve|save time|close more|ship|win|hit|reach|in \d+ clicks?)\b", re.I),
     "curiosity": re.compile(r"\b(secret|why|what|nobody|surprising|weird|truth|behind|hidden|actually)\b", re.I),
 }
 ANGLE_ORDER = list(ANGLE_PATTERNS)
 
 
-def _angles_for(line: str) -> list[str]:
+def _angles_for(line: str, relevance_terms: tuple[str, ...] = ()) -> list[str]:
     hits = [a for a in ANGLE_ORDER if ANGLE_PATTERNS[a].search(line)]
-    # Curiosity via "why/what" is only meaningful in a question or without a benefit verb.
+    if not hits and any(t and t in line.lower() for t in relevance_terms):
+        # A keyword/brand headline is a deliberate relevance asset (Google wants the keyword in ≥ 3 headlines),
+        # not a vague line to rewrite.
+        return ["relevance"]
     return hits or ["generic"]
 
 
 @AGENT.tool
-def angle_coverage(lines: list[str], min_angles: int = 5) -> dict:
+def angle_coverage(lines: list[str], min_angles: int = 5, keyword: str = "", brand: str = "") -> dict:
     """Map each headline / primary text to persuasion angles and report which angles the set is missing.
 
     Call on a drafted set to stop it being one idea rephrased fifteen times.
@@ -355,6 +383,8 @@ def angle_coverage(lines: list[str], min_angles: int = 5) -> dict:
     Args:
         lines: Headlines or primary texts to classify.
         min_angles: Minimum distinct angles a good set should cover (default 5).
+        keyword: Target keyword; lines that only carry the keyword/brand count as "relevance" assets, not vague ones.
+        brand: Brand name, treated like the keyword for relevance lines.
     """
     if not lines:
         raise ToolError("lines is empty.")
@@ -362,16 +392,17 @@ def angle_coverage(lines: list[str], min_angles: int = 5) -> dict:
         raise ToolError("Too many lines (max 200).")
     per_line = []
     counts: Counter[str] = Counter()
+    relevance_terms = tuple(t.strip().lower() for t in (keyword, brand) if t and t.strip())
     for i, raw in enumerate(lines, 1):
         s = str(raw).strip()
-        angles = _angles_for(s)
+        angles = _angles_for(s, relevance_terms)
         primary = angles[0]
         counts[primary] += 1
         per_line.append({"n": i, "text": s, "primary_angle": primary, "all_angles": angles})
     n = len(lines)
     covered = [a for a in ANGLE_ORDER if counts[a]]
     missing = [a for a in ANGLE_ORDER if not counts[a]]
-    dominant = counts.most_common(1)[0]
+    dominant = next(((a, c) for a, c in counts.most_common() if a != "relevance"), counts.most_common(1)[0])
     dominance_pct = round(100 * dominant[1] / n, 1)
     fixes = []
     if len(covered) < min_angles:
@@ -485,10 +516,11 @@ def score_ad_copy(line: str, max_chars: int = 30, keyword: str = "", asset_type:
     if count_emoji(s) > 2:
         score -= 5
         reasons.append("emoji overload")
-    hits = spam_hits(s)
+    hits = sorted({m.group(0).lower() for m in AD_RISK_RE.finditer(s)})
     if hits:
         score -= min(15, 5 * len(hits))
-        reasons.append(f"spam-trigger words: {', '.join(hits[:3])}")
+        reasons.append(f"ad-policy/claim risk: {', '.join(hits[:3])}")
+        fixes.append("Drop or substantiate the risky claim (ad reviewers flag unproven guarantees and health/income promises).")
     # Readability: long words
     long_words = [w for w in ws if len(w) >= 12]
     if long_words:
@@ -501,6 +533,8 @@ def score_ad_copy(line: str, max_chars: int = 30, keyword: str = "", asset_type:
             score -= 8
             fixes.append("Put a number, a question or 'you' in the first 125 chars (the fold).")
     score = max(0, min(100, score))
+    if hits:
+        score = min(score, 60)  # a claim-risk line never grades "ship", however well it scores otherwise
     grade = "ship" if score >= 65 else "revise" if score >= 50 else "rewrite"
     return {
         "line": s,
@@ -572,6 +606,7 @@ def ad_math(
         "break_even_cvr_pct": round(100 * be_cvr, 2),
         "target_cpa": round(target_cpa, 2),
         "max_cpc_for_target": round(max_cpc, 2),
+        "break_even_cpc": round(break_even_cpa * cvr, 2),
         "profitable": net > 0,
         "days_to_50_conversions": math.ceil(50 / conversions) if conversions > 0 else None,
     }
@@ -580,7 +615,7 @@ def ad_math(
     if net > 0:
         verdict = f"Profitable: CPA {cpa:.2f} vs break-even {break_even_cpa:.2f}; ROAS {roas:.2f} vs break-even {break_even_roas:.2f}."
     else:
-        verdict = f"Loses money: CPA {cpa:.2f} > break-even {break_even_cpa:.2f}. Need CVR ≥ {100 * be_cvr:.2f}% or CPC ≤ {max_cpc:.2f}."
+        verdict = f"Loses money: CPA {cpa:.2f} > break-even {break_even_cpa:.2f}. Need CVR ≥ {100 * be_cvr:.2f}% or CPC ≤ {break_even_cpa * cvr:.2f} to break even."
     if target_profit_share_pct and cpa > target_cpa:
         verdict += f" Misses the {target_profit_share_pct:.0f}% profit target (CPA must be ≤ {target_cpa:.2f})."
     out["verdict"] = verdict

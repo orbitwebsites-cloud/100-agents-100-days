@@ -99,3 +99,10 @@ def test_cache_math():
 def test_cache_math_rejects_bad_hit_rate():
     with pytest.raises(ToolError):
         call("cache_math", request_rps=100, hit_rate_pct=120)
+
+
+def test_capacity_id_space_for_short_codes():
+    out = call("estimate_capacity", daily_active_users=100_000_000, actions_per_user_per_day=11, read_write_ratio=10,
+               avg_record_bytes=100, retention_days=0, peak_multiplier=1, replication_factor=1, years=10)
+    assert out["id_space"] == {"records_over_horizon": 365_000_000_000, "base62_chars": 7, "base36_chars": 8, "hex_chars": 10,
+                               "fits_int32": False, "fits_int64": True}

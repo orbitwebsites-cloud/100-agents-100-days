@@ -140,7 +140,7 @@ DATE_PHRASE_RE = re.compile(
     re.I,
 )
 COMMIT_RE = re.compile(r"\b(i'?ll|i will|we'?ll|we will|let'?s|can you|could you|will you|can we|could we|shall we|should we|you'?ll|send (?:you|over|me)|schedule|set up|book|calendar|invite|loop in|introduce|intro|share|get back|circle back|follow up|next step|pilot|trial|proposal|pricing|quote|contract|redline|legal|procurement|sign)\b", re.I)
-AGREE_RE = re.compile(r"\b(sounds good|works for me|perfect|great|yes|sure|let'?s do (?:that|it)|deal|agreed|that works|ok(?:ay)?|i'?ll be there|i'?ll join|i'?ll make sure)\b", re.I)
+AGREE_RE = re.compile(r"\b(sounds good|works for (?:me|us)|(?:mon|tues|wednes|thurs|fri)day works|that (?:day|time) works|perfect|great|yes|sure|let'?s do (?:that|it)|deal|agreed|that works|ok(?:ay)?|i'?ll be there|i'?ll join|i'?ll make sure)\b", re.I)
 
 
 def _resolve_phrase(phrase: str, base: date) -> date | None:
@@ -341,6 +341,15 @@ def detect_next_steps(transcript: str, call_date: str = "", rep_name: str = "") 
         phrases = [m.group(0) for m in DATE_PHRASE_RE.finditer(said)]
         resolved_all = [d for d in (_resolve_phrase(ph, base) for ph in phrases) if d]
         resolved = min(resolved_all) if resolved_all else None
+        ambiguous = []
+        for ph in phrases:
+            mm = re.match(r"next (mon|tues|wednes|thurs|fri|satur|sun)day", ph.lower())
+            if mm:
+                i = [w[:3] for w in WEEKDAYS].index(mm.group(1)[:3])
+                nearest = base + timedelta(days=(i - base.weekday()) % 7 or 7)
+                meant = _resolve_phrase(ph, base)
+                if meant and nearest != meant:
+                    ambiguous.append(f"'{ph}' read as {meant.isoformat()} (next calendar week); some people mean {nearest.isoformat()} — confirm in the follow-up")
         # prospect agreement in the next two turns
         agreed_by_prospect = spk != rep
         if not agreed_by_prospect:
@@ -358,6 +367,7 @@ def detect_next_steps(transcript: str, call_date: str = "", rep_name: str = "") 
             "resolved_date": resolved.isoformat() if resolved else None,
             "resolved_weekday": resolved.strftime("%a") if resolved else None,
             "all_resolved_dates": [d.isoformat() for d in resolved_all],
+            "date_ambiguity": ambiguous,
             "has_action": has_action,
             "prospect_agreed": agreed_by_prospect,
             "quality": "next step" if score == 3 else "intention" if score == 2 else "mention",

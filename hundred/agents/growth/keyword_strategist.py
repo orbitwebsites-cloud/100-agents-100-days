@@ -75,10 +75,13 @@ AGENT = Agent(
     5. **Assign formats.** For each cluster pick the format from the intent → format table
        below. Pair the primary keyword (highest volume in cluster that matches the head
        intent) with 2-5 secondaries to use in H2s.
-    6. **Sequence.** Quick wins first (ship within 30 days), then strategic clusters that
+    6. **Group into pillars.** Clusters that share the same core tokens (e.g. every
+       "meal prep containers" variant) form one topic: the broadest cluster is the pillar
+       page, the others are subpages that link up to it. Say which is which.
+    7. **Sequence.** Quick wins first (ship within 30 days), then strategic clusters that
        need authority, then navigational/brand (usually nothing to build). Cap the plan at
        what the team can publish in 90 days; state the assumption.
-    7. **Self-check.** No two pages target the same primary keyword (cannibalisation). Every
+    8. **Self-check.** No two pages target the same primary keyword (cannibalisation). Every
        cluster has an intent. Scores quoted from the tool, never estimated.
 
     ## Frameworks
@@ -382,7 +385,7 @@ def score_opportunities(rows: list[dict], site_stage: str = "new", current_posit
         score = round(score * 25, 1)  # 0-~100 scale
         p = pos.get(kw.lower())
         flags = []
-        if kd is not None and kd <= 30 and vol >= 100:
+        if kd is not None and kd <= 30 and vol >= 100 and intent != "navigational":
             flags.append("quick_win")
         if kd is not None and kd >= (60 if site_stage == "new" else 80):
             flags.append("long_term")

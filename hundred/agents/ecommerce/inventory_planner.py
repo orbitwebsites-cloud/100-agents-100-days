@@ -64,7 +64,8 @@ AGENT = Agent(
        you which daily demand to use: for seasonal or trending SKUs use
        `forecast_daily_demand_over_lead_time` — the historical average under-orders ahead
        of a peak and over-orders ahead of a trough; for stable SKUs `daily_demand_mean`.
-       Always use its `daily_demand_std`, never your own averages. If history is < 4
+       Pass `stockout_days` when the SKU was out of stock in any period — lost sales are
+       not low demand. Always use its `daily_demand_std`, never your own averages. If history is < 4
        periods, say the forecast is low-confidence and use a wider service level margin.
     2. **Classify the catalogue** with `inventory_planner__abc_xyz_classify` when there are
        ≥ 5 SKUs. A = the SKUs that make the first 80% of revenue; XYZ = demand stability.
@@ -179,7 +180,14 @@ def _seasonal_decompose(xs: list[float]) -> tuple[list[float], float, float]:
 
 
 @AGENT.tool
-def forecast_demand(history: list[float], period: str = "monthly", horizon_periods: int = 3, recent_weight_periods: int = 0, lead_time_days: float = 0.0) -> dict:
+def forecast_demand(
+    history: list[float],
+    period: str = "monthly",
+    horizon_periods: int = 3,
+    recent_weight_periods: int = 0,
+    lead_time_days: float = 0.0,
+    stockout_days: list[float] | None = None,
+) -> dict:
     """Forecast demand from a units-sold history and return the daily mean/std the safety-stock formula needs.
 
     Fits a linear trend (least squares) and, with 24+ monthly points, multiplicative seasonal
@@ -194,6 +202,7 @@ def forecast_demand(history: list[float], period: str = "monthly", horizon_perio
         horizon_periods: How many future periods to forecast (1-24).
         recent_weight_periods: If > 0, compute the baseline from only the last N periods (use after a step change, e.g. a viral spike or delisting).
         lead_time_days: Optional supplier lead time in days; returns lead_time_demand_forecast and forecast_daily_demand_over_lead_time.
+        stockout_days: Optional days out of stock in each history period (same length as history). Sales in those periods are scaled up to true demand (units × period days ÷ in-stock days) so a stockout is not forecast as low demand.
     """
     if period not in ("daily", "weekly", "monthly"):
         raise ToolError("period must be 'daily', 'weekly' or 'monthly'.")
@@ -208,6 +217,18 @@ def forecast_demand(history: list[float], period: str = "monthly", horizon_perio
     if lead_time_days < 0 or lead_time_days > 730:
         raise ToolError("lead_time_days must be 0-730.")
     xs = [float(h) for h in history]
+    days = _period_days(period)
+    adjusted_periods = []
+    if stockout_days:
+        if len(stockout_days) != len(xs):
+            raise ToolError("stockout_days must have one value per history period.")
+        for i, so in enumerate(stockout_days):
+            so = float(so or 0)
+            if so < 0 or so >= days:
+                raise ToolError(f"stockout_days[{i}] must be 0 to < {days:g} (a fully out-of-stock period carries no demand signal — drop it).")
+            if so > 0:
+                xs[i] = xs[i] * days / (days - so)
+                adjusted_periods.append(i)
     base = xs[-recent_weight_periods:] if 0 < recent_weight_periods < len(xs) else xs
     n = len(xs)
     seasonal: list[float] | None = None
@@ -231,7 +252,6 @@ def forecast_demand(history: list[float], period: str = "monthly", horizon_perio
         return max(0.0, val)
 
     forecast = [round(_fc(k), 1) for k in range(1, horizon_periods + 1)]
-    days = _period_days(period)
     base_mean = mean(base)
     raw_std = stdev(base)
     # σ for safety stock is the *unexplained* variation: residuals around trend (and season),
@@ -275,6 +295,7 @@ def forecast_demand(history: list[float], period: str = "monthly", horizon_perio
         "forecast_total": round(sum(forecast), 1),
         "forecast_daily_by_period": [round(f / days, 3) for f in forecast],
         "confidence": confidence,
+        "stockout_adjusted_periods": adjusted_periods,
     }
     shifts = bool(seasonal) or abs(trend_pct_per_period) >= 2.0
     if lead_time_days > 0:

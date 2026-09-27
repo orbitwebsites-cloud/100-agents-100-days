@@ -62,8 +62,9 @@ AGENT = Agent(
        enthusiastic–matter-of-fact. Describe each as a range, with a "we do / we don't"
        pair (see Frameworks).
     3. **Check any draft.** Call `brand_voice__score_against_profile` with the draft and the
-       profile from step 1. Then call `brand_voice__lexicon_check` with the banned and
-       preferred terms and brand-name spellings. Every drift the tools return gets a
+       profile from step 1. Then call `brand_voice__lexicon_check` with the banned,
+       preferred and use-carefully terms and brand-name spellings (it also flags common
+       non-inclusive terms). Every drift the tools return gets a
        specific rewrite in your response; don't just list metrics.
     4. **Rewrite if asked.** Change only what drifts. Keep the author's meaning and
        structure; voice edits are surgical, not a rewrite from scratch. Re-run step 3 on
@@ -143,6 +144,14 @@ COMMON = frozenset(
         here there where than then them these those come came look looks said say says""".split()
     )
 )
+# Common non-inclusive terms → neutral alternatives (a starter list; the brand's own lexicon wins).
+INCLUSIVE = {
+    "guys": "everyone / folks / team", "manpower": "workforce / staff", "man-hours": "person-hours",
+    "chairman": "chair", "salesman": "salesperson", "salesmen": "salespeople", "businessman": "businessperson",
+    "whitelist": "allowlist", "blacklist": "blocklist", "master/slave": "primary/replica", "grandfathered": "legacy / exempt",
+    "crazy": "surprising / wild", "insane": "remarkable", "lame": "weak / dull", "dumb": "unhelpful", "sanity check": "quick check",
+    "handicapped": "disabled / people with disabilities", "tribe": "community / group",
+}
 ADVERB_RE = re.compile(r"\b\w{4,}ly\b", re.I)
 HUMOR_RE = re.compile(r"\b(lol|haha|joke|pun|nerd|weird|silly|awkward|literally|honestly|okay so|plot twist|spoiler|shh|ahem)\b|😂|🙃|😅|🤷|🎉", re.I)
 IRREVERENT_RE = re.compile(r"\b(damn|hell|crap|screw|sucks|badass|heck|nope|yep|whatever|meh|ugh|yikes|guess what|spoiler)\b", re.I)
@@ -213,7 +222,11 @@ def extract_voice_profile(samples: list[str], brand_name: str = "") -> dict:
         warnings.append(f"Only {total_words} words — rates below are noisy; treat bands as wide.")
     # Signature words: frequent here, not common English, not the brand name.
     brand_words = {w.lower() for w in text.words(brand_name)}
-    freq = Counter(w.lower() for w in text.words(combined) if len(w) > 3 and w.lower() not in COMMON and w.lower() not in brand_words and not w.isdigit())
+    freq = Counter(
+        w.lower()
+        for w in text.words(combined)
+        if len(w) > 3 and w.lower() not in COMMON and w.lower() not in brand_words and not w.isdigit() and "'" not in w and "’" not in w
+    )
     sig = [w for w, c in freq.most_common(40) if c >= 2 and (c / total_words) >= 0.002][:12]
     # Consistency across samples: coefficient of variation of sentence length.
     sl = [m["avg_sentence_words"] for m in per_sample if m["words"] >= 20]
@@ -336,8 +349,15 @@ def score_against_profile(draft: str, profile: dict, banned_terms: list[str] = [
 
 
 @AGENT.tool
-def lexicon_check(content: str, banned_terms: list[str] = [], preferred_terms: dict = {}, proper_casing: list[str] = []) -> dict:
-    """Find banned terms, non-preferred synonyms (with the replacement), and mis-cased brand/product names, with positions.
+def lexicon_check(
+    content: str,
+    banned_terms: list[str] = [],
+    preferred_terms: dict = {},
+    proper_casing: list[str] = [],
+    use_carefully: dict = {},
+    check_inclusive: bool = True,
+) -> dict:
+    """Find banned terms, non-preferred synonyms (with the replacement), use-carefully terms, mis-cased brand/product names and non-inclusive terms, with positions.
 
     Call on every draft when a lexicon exists. preferred_terms maps the wrong word to the right one.
 
@@ -346,10 +366,12 @@ def lexicon_check(content: str, banned_terms: list[str] = [], preferred_terms: d
         banned_terms: Terms never to use (e.g. ["leverage", "synergy"]).
         preferred_terms: Map of avoid → use, e.g. {"users": "customers", "utilize": "use"}.
         proper_casing: Correctly-cased names to enforce, e.g. ["GitHub", "iPhone", "HubSpot"].
+        use_carefully: Map of term → the rule for using it, e.g. {"free": "only with the trial length", "AI": "never as the subject of a sentence"}.
+        check_inclusive: Also flag common non-inclusive terms (e.g. "guys", "whitelist", "manpower") with neutral alternatives (default True).
     """
     c = require_text(content, "content")
-    if len(banned_terms) > 500 or len(preferred_terms) > 500 or len(proper_casing) > 200:
-        raise ToolError("Lexicon too large (max 500 banned, 500 preferred, 200 casing entries).")
+    if len(banned_terms) > 500 or len(preferred_terms) > 500 or len(proper_casing) > 200 or len(use_carefully) > 500:
+        raise ToolError("Lexicon too large (max 500 banned, 500 preferred, 500 use-carefully, 200 casing entries).")
     low = c.lower()
     findings = []
     for term in banned_terms:
@@ -372,13 +394,29 @@ def lexicon_check(content: str, banned_terms: list[str] = [], preferred_terms: d
             found = c[mt.start() : mt.end()]
             if found != nm:
                 findings.append({"type": "casing", "term": found, "position": mt.start(), "context": c[max(0, mt.start() - 30) : mt.end() + 30].replace("\n", " "), "fix": f"write '{nm}'"})
+    for term, rule in use_carefully.items():
+        t = str(term).strip()
+        if not t or len(t) > 80:
+            continue
+        for mt in re.finditer(rf"\b{re.escape(t.lower())}\b", low):
+            findings.append({"type": "use_carefully", "term": c[mt.start() : mt.end()], "position": mt.start(), "context": c[max(0, mt.start() - 30) : mt.end() + 30].replace("\n", " "), "fix": f"check the rule: {rule}"})
+    if check_inclusive:
+        own = {str(t).strip().lower() for t in list(banned_terms) + list(preferred_terms)}
+        for term, alt in INCLUSIVE.items():
+            if term in own:
+                continue
+            for mt in re.finditer(rf"\b{re.escape(term)}\b", low):
+                findings.append({"type": "inclusive", "term": c[mt.start() : mt.end()], "position": mt.start(), "context": c[max(0, mt.start() - 30) : mt.end() + 30].replace("\n", " "), "fix": f"consider '{alt}'"})
     findings.sort(key=lambda f: f["position"])
     counts = Counter(f["type"] for f in findings)
     return {
         "findings": findings,
         "counts": dict(counts),
         "clean": not findings,
-        "summary": "Lexicon clean." if not findings else f"{len(findings)} issue(s): {counts.get('banned', 0)} banned, {counts.get('preferred', 0)} non-preferred, {counts.get('casing', 0)} casing.",
+        "summary": "Lexicon clean."
+        if not findings
+        else f"{len(findings)} issue(s): {counts.get('banned', 0)} banned, {counts.get('preferred', 0)} non-preferred, {counts.get('casing', 0)} casing, "
+        f"{counts.get('use_carefully', 0)} use-carefully, {counts.get('inclusive', 0)} inclusive-language.",
     }
 
 

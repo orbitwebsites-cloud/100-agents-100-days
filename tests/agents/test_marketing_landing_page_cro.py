@@ -27,7 +27,7 @@ def test_audit_page_scores_dimensions_and_flags_structure():
     assert set(out["dimensions"]) == {"value_proposition", "clarity", "relevance", "anxiety", "distraction", "urgency"}
     assert out["stats"]["jargon"] == ["empower", "seamless", "synergy"]
     assert out["stats"]["ctas_detected"] == ["book a demo", "start my free trial"]
-    assert out["stats"]["message_match_ratio"] == 0.2
+    assert out["stats"]["message_match_ratio"] == 0.33  # "google ads:" channel label no longer counts as promise words
     assert out["fixes"][0].startswith("Speed")
     clean = call("audit_page", page_text=PAGE, form_fields=2, nav_links=0)
     assert clean["score"] > out["score"]
@@ -43,7 +43,7 @@ def test_headline_clarity_grades():
     assert bad["grade"] in ("C", "F")
     assert bad["checks"]["no_jargon"] is False and bad["checks"]["cta_ok"] is False
     good = call("headline_clarity", headline="Plan projects your team actually finishes", subheadline="Task software trusted by 12,000 remote teams", cta_label="Start my free trial")
-    assert good["grade"] == "A" and good["passed"] == "9/10"
+    assert good["grade"] == "A" and good["passed"] == "10/10"  # headline read as its own sentence now
 
 
 def test_headline_clarity_rejects_empty():

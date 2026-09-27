@@ -84,3 +84,15 @@ def test_tag_links_requires_campaign():
         call("tag_links", urls=["https://a.com"], campaign="")
     with pytest.raises(ToolError):
         call("tag_links", urls=[], campaign="x")
+
+
+def test_tag_links_keeps_existing_encoding_byte_for_byte():
+    out = call("tag_links", urls=["https://a.com/p?src=email%20footer&tags=a,b#top"], campaign="i-1")
+    assert out["tagged"] == ["https://a.com/p?src=email%20footer&tags=a,b&utm_source=newsletter&utm_medium=email&utm_campaign=i-1#top"]
+
+
+def test_subject_issue_number_is_not_specificity_and_greeting_intro_flagged():
+    lab = call("subject_line_check", subject="Issue #42: the weekly roundup of news")
+    assert "+10 contains a number" not in lab["reasons"]
+    audit = call("issue_audit", markdown="Hope you're all well! " + "Word " * 60 + "\n\n## Lead\n" + "Text [a link](https://a.com) " * 40)
+    assert any(f.startswith("Opens with a greeting") for f in audit["flags"])

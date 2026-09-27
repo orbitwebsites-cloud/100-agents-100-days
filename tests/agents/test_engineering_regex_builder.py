@@ -103,3 +103,10 @@ def test_convert_flavor_python_to_javascript_and_go():
 def test_convert_flavor_rejects_empty():
     with pytest.raises(ToolError):
         call("convert_flavor", pattern="", target="go")
+
+
+def test_optional_leading_separator_still_counts_as_overlap():
+    # OWASP's ReGexLib email regex: the separator group is optional, so iterations can start with [a-zA-Z0-9]
+    p = r"^([a-zA-Z0-9])(([\-.]|[_]+)?([a-zA-Z0-9]+))*(@){1}[a-z0-9]+[.]{1}(([a-z]{2,3})|([a-z]{2,3}[.]{1}[a-z]{2,3}))$"
+    assert call("check_regex_safety", pattern=p)["risk"] == "dangerous"
+    assert call("check_regex_safety", pattern=r"^[a-z0-9]+(?:[._-][a-z0-9]+)*@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,24}$")["risk"] == "safe"

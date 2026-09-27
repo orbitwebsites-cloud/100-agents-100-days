@@ -68,3 +68,16 @@ def test_compare_rewards_ranks_by_net_value():
     assert out["recommended"] == "two-sided 20/20"
     with pytest.raises(ToolError):
         call("compare_rewards", structures=[{"name": "x"}], ltv=100, paid_cac=10)
+
+
+def test_compare_rewards_respects_guardrails():
+    out = call("compare_rewards", structures=[
+        {"name": "one-sided $100", "referrer_reward": 100, "expected_conversion": 0.08},
+        {"name": "two-sided $50/$50", "referrer_reward": 50, "referee_reward": 50, "expected_conversion": 0.12},
+        {"name": "$30/$30 at signup", "referrer_reward": 30, "referee_reward": 30, "expected_conversion": 0.14, "paid_on": "signup", "signup_to_paid": 0.4},
+    ], ltv=507.5, paid_cac=180, contribution_per_month=20.3)
+    assert out["recommended"] == "two-sided $50/$50"
+    last = out["ranked"][-1]
+    assert last["name"] == "$30/$30 at signup" and last["net_value_per_100_invites"] == 5005.0
+    assert any("signup" in f for f in last["guardrail_failures"]) and any("payback" in f for f in last["guardrail_failures"])
+    assert "failing guardrails" in out["summary"]

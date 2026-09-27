@@ -462,7 +462,8 @@ def proposal_audit(proposal_text: str, deal_value: float = 0.0) -> dict:
     tail = proposal_text[-1500:]
     tail_ctas = set(m.lower() for m in CTA_RE.findall(tail))
     n_options = len(re.findall(r"\b(option [abc1-3]|good|better|best|starter|standard|premium|essential|professional|enterprise|basic|plus|pro)\b", low))
-    money_mentions = re.findall(r"[$£€]\s?\d[\d,]*(?:\.\d+)?", proposal_text)
+    # symbols ($12,000) and ISO codes (USD 12,000 / 12,000 EUR — the format pricing_table's display rows use)
+    money_mentions = re.findall(r"[$£€]\s?\d[\d,]*(?:\.\d+)?|\b(?:USD|EUR|GBP|CAD|AUD|NZD|CHF|SEK|NOK|DKK|JPY|INR|SGD)\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:USD|EUR|GBP|CAD|AUD)\b", proposal_text)
     passive = len(text.passive_sentences(proposal_text))
     score, fixes = 100, []
     critical = {"investment", "next_step", "approach"}

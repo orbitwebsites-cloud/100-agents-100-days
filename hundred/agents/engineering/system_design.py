@@ -61,7 +61,9 @@ AGENT = Agent(
     2. **Compute the envelope.** Call `system_design__estimate_capacity` with DAU, actions/user
        /day, read:write ratio, payload sizes, retention, peak multiplier (3× default; 10× for
        spiky consumer traffic), replication factor and growth. Use the peak QPS, storage at
-       year 3 and egress numbers everywhere below; never estimate them in your head.
+       year 3 and egress numbers everywhere below; never estimate them in your head. Its
+       `id_space` gives the key length for short codes/ids (e.g. 365B records → 7 base62
+       chars) and whether an int32 primary key overflows within the horizon.
     3. **Sketch the simplest architecture** that handles the envelope: client → LB → stateless
        API → primary datastore, plus a cache and a queue only if the numbers demand them.
        Add a component only when you can name the number that forces it (e.g. "peak read QPS
@@ -155,6 +157,15 @@ def _pos(name: str, value: float, allow_zero: bool = False) -> float:
     return v
 
 
+def _key_len(records: float, base: int) -> int:
+    """Smallest n with base**n >= records (integer arithmetic — no float log rounding)."""
+    n, cap, need = 1, base, math.ceil(records)
+    while cap < need:
+        n += 1
+        cap *= base
+    return n
+
+
 @AGENT.tool
 def estimate_capacity(
     daily_active_users: float,
@@ -168,7 +179,7 @@ def estimate_capacity(
     growth_pct_per_year: float = 0,
     years: int = 3,
 ) -> dict:
-    """Compute the capacity envelope: requests/day, average and peak QPS split into reads and writes, storage per day/year with retention and replication, growth projections, and peak ingress/egress bandwidth.
+    """Compute the capacity envelope: requests/day, average and peak QPS split into reads and writes, storage per day/year with retention and replication, growth projections, peak ingress/egress bandwidth, and the ID space (records over the horizon → base62/base36/hex key length, int32/int64 fit).
 
     Call before drawing any architecture; use its peak numbers everywhere.
 
@@ -221,6 +232,15 @@ def estimate_capacity(
             "year": y, "dau": round(dau * factor), "avg_qps": round(avg_qps * factor, 1), "peak_qps": round(avg_qps * factor * peak, 1),
             "storage_raw": human_bytes(retained), "storage_replicated": human_bytes(retained * rf), "storage_raw_bytes": round(retained),
         })
+    total_records = sum(writes_day * (1 + growth) ** (y - 1) * 365 for y in range(1, years + 1))
+    id_space = {
+        "records_over_horizon": round(total_records),
+        "base62_chars": _key_len(total_records, 62),
+        "base36_chars": _key_len(total_records, 36),
+        "hex_chars": _key_len(total_records, 16),
+        "fits_int32": total_records < 2**31,
+        "fits_int64": total_records < 2**63,
+    }
     peak_w, peak_r = w_qps * peak, r_qps * peak
     ingress_bps = peak_w * req_b * 8
     egress_bps = peak_r * req_b * 8
@@ -247,6 +267,7 @@ def estimate_capacity(
         "storage_per_year_raw": human_bytes(storage_day * 365),
         "storage_per_year_replicated": human_bytes(storage_day * 365 * rf),
         "projection": projections,
+        "id_space": id_space,
         "bandwidth_peak": {"ingress": f"{ingress_bps / 1e6:.1f} Mbps", "egress": f"{egress_bps / 1e6:.1f} Mbps", "ingress_bytes_per_s": round(peak_w * req_b), "egress_bytes_per_s": round(peak_r * req_b)},
         "notes": notes,
         "summary": (f"{human_number(per_day)} req/day → avg {avg_qps:,.0f} QPS, peak {avg_qps * peak:,.0f} QPS ({peak_r:,.0f} r / {peak_w:,.0f} w). "

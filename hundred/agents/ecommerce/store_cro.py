@@ -59,7 +59,10 @@ AGENT = Agent(
        we believe [change] for [segment] will [metric] by [x%]."
     3. **Model AOV levers** when the leak is small or AOV < category norm. Call
        `store_cro__free_shipping_threshold` with order values (or AOV) and shipping cost —
-       it finds the threshold that maximises net contribution, not just "AOV × 1.2". Call
+       it finds the threshold that maximises net contribution, not just "AOV × 1.2". Read
+       its `warnings`: when the best candidate is the highest tested, reaches < 25% of
+       orders, or the spread is within noise, the honest answer is "free shipping is a
+       conversion bet here" — pick a reachable threshold (AOV × 1.15-1.30) and test it. Call
        `store_cro__aov_levers` to compare bundles, upsells, gift-with-purchase and threshold
        in contribution dollars per month.
     4. **Prioritise the backlog** with `store_cro__prioritize_tests` (ICE with expected

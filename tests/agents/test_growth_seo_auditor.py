@@ -140,3 +140,33 @@ def test_link_audit_bad_input():
         call("link_audit", html="")
     with pytest.raises(ToolError):
         A.get_tool("link_audit").call({"html": 5})
+
+
+def test_parameterised_url_gets_clean_canonical_and_url_hygiene():
+    html = GOOD_HTML.replace('<link rel="canonical" href="https://beans.com/cold-brew">', "").replace('<img src="a.jpg"', '<img src="http://cdn.beans.com/a.jpg"')
+    out = call("audit_page", html=html, url="https://beans.com/Cold_Brew?utm_source=x", keyword="cold brew coffee")
+    canon = next(i for i in out["issues"] if i["element"] == "canonical")
+    assert canon["severity"] == "high"
+    assert 'href="https://beans.com/Cold_Brew"' in canon["fix"] and "utm_source" not in canon["fix"]
+    url = next(i for i in out["issues"] if i["element"] == "url")
+    assert "uppercase" in url["problem"] and "underscores" in url["problem"] and "query parameters" in url["problem"]
+    assert "/cold-brew" in url["fix"]
+    assert any(i["element"] == "security" and "Mixed content" in i["problem"] for i in out["issues"])
+    clean = call("audit_page", html=GOOD_HTML, url="https://beans.com/cold-brew", keyword="cold brew coffee")
+    assert not any(i["element"] in ("url", "security") for i in clean["issues"])
+
+
+def test_content_signals_checks_keyword_in_slug():
+    out = call("content_signals", html=GOOD_HTML, keyword="cold brew coffee", url="https://beans.com/cold-brew")
+    assert out["placement"]["url"] is False and out["placement_score"].endswith("/8")
+    assert any("URL slug lacks the keyword" in f for f in out["fixes"])
+    ok = call("content_signals", html=GOOD_HTML, keyword="cold brew coffee", url="https://beans.com/cold-brew-coffee")
+    assert ok["placement"]["url"] is True
+
+
+def test_image_alt_length_and_size_attributes():
+    html = GOOD_HTML.replace('<img src="b.jpg" alt="" width="1" height="1">', '<img src="b.jpg" alt="' + "cold brew coffee " * 8 + '">')
+    out = call("audit_page", html=html, url="https://beans.com/cold-brew", keyword="cold brew coffee")
+    probs = [i["problem"] for i in out["issues"] if i["element"] == "images"]
+    assert "1 alt text(s) over 100 characters" in probs
+    assert "1 image(s) lack width/height (layout shift / CLS)" in probs

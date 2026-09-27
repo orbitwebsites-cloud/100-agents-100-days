@@ -55,7 +55,10 @@ AGENT = Agent(
        and stage. It returns the primary and secondary category, confidence, whether it
        looks like a smokescreen (a polite exit dressed as an objection), the recommended
        framework, and the isolation question. Trust the classifier over your first read —
-       "we don't have budget" in stage 1 is usually *need*, not *price*.
+       "we don't have budget" in stage 1 is usually *need*, not *price*. For price objections
+       it also returns the sub-type(s) (sticker shock / budget / value gap / competitor
+       cheaper); answer each sub-type it finds with its own move — "double what we pay for X,
+       and I can't justify it" is a TCO comparison *and* a value rebuild, not one rebuttal.
     2. **Isolate before you answer.** Every response begins with the isolation question
        from step 1 or an acknowledgement + clarifying question (LAER: Listen, Acknowledge,
        Explore, Respond). Answering the stated objection without exploring costs you the
@@ -95,11 +98,19 @@ AGENT = Agent(
       not a pitch, and offer a graceful exit — people tell the truth when leaving is easy.
     - **Never** discount to answer a price objection before the value is agreed; a
       discount confirms the price was padded.
+    - **Match the person, not just the objection.** Read their style from how they write
+      and talk (a labelled guess, never a claim about their personality): *direct/driver*
+      (short, blunt, results words) → lead with the number and the ask, skip the empathy
+      paragraph; *analytical* (questions about detail, method, proof) → show the ROI inputs
+      and a reference, no superlatives; *relational/steady* (team, "we", risk of change) →
+      stress low-disruption rollout and a named peer; *expressive* (enthusiasm, vision) →
+      open with the outcome story, then the number. Same facts, different order.
 
     ## Output format
     ```
     ## What they actually said
-    "<verbatim>" → **<category>** (<confidence>%) · secondary: <category> · smokescreen: <yes/no>
+    "<verbatim>" → **<category>** (<confidence>%) · secondary: <category> · price sub-type(s): <…> · smokescreen: <yes/no>
+    Style read (guess): <direct / analytical / relational / expressive> — <the words that suggest it>
 
     ## Isolate first
     "<isolation question>"
@@ -137,6 +148,18 @@ CATEGORIES = {
 }
 _CAT_RES = {k: re.compile(v, re.I) for k, v in CATEGORIES.items()}
 SMOKESCREEN_RE = re.compile(r"\b(send (?:me|us|over) (?:some|more|the) (?:info|information|details|material)|think about it|let me think|get back to you|not the right time|circle back|touch base later|keep (?:me|us) (?:posted|in mind)|reach out (?:next|in))\b", re.I)
+PRICE_SUBTYPES = {
+    "competitor_cheaper": (r"\b(cheaper|(?:double|twice|triple|\d+x|half) (?:what|the price)|more than (?:what )?we (?:pay|paid)|what we pay (?:for|to)|compared (?:to|with)|(?:other|another) (?:quote|vendor|option) (?:is|was|came in)|lower quote|undercut)\b",
+                           "Compare total cost of ownership (licence + the work it removes + switching), not licence price; ask what the cheaper option includes."),
+    "value_gap": (r"\b(can'?t justify|not worth|don'?t see (?:the )?(?:value|roi)|hard to justify|justify (?:it|the|this|\$)|what(?:'s| is) the roi|prove (?:the )?(?:value|roi))\b",
+                  "Go back to discovery: rebuild the value with their numbers (ROI, payback, cost of delay) before touching price."),
+    "budget": (r"\b(no budget|(?:don'?t|do not) have (?:the )?budget|budget (?:is )?(?:frozen|cut|spent|allocated|set)|not in (?:the|this year'?s|our) budget|next (?:year'?s|fiscal) budget|can'?t afford|funding)\b",
+               "Phase the rollout, align the start to the fiscal year, or find who owns the budget — don't discount."),
+    "sticker_shock": (r"\b(expensive|too much|pricey|steep|sticker|a lot of money|high(?:er)? than (?:expected|we thought))\b",
+                      "Reframe per user per day and anchor on payback; ask what they expected and why."),
+}
+_PRICE_SUB_RES = {k: re.compile(v[0], re.I) for k, v in PRICE_SUBTYPES.items()}
+
 FRAMEWORK = {
     "price": ("Isolate → reframe per unit → payback + cost of delay", "Setting price aside for a moment — is everything else what you'd need? And what are you comparing the price to?"),
     "timing": ("Cost of delay → shrink the first step", "What changes next quarter that makes it easier then? And what does the delay cost you in the meantime?"),
@@ -154,7 +177,8 @@ def classify_objection(objection: str, stage: str = "unknown") -> dict:
     """Classify an objection (price/timing/authority/need/competitor/trust/status_quo/feature_gap), spot smokescreens, pick the framework.
 
     Call first with the prospect's verbatim words. Returns primary + secondary category
-    with confidence, the smokescreen flag, the response framework and the isolation question.
+    with confidence, the smokescreen flag, the response framework, the isolation question,
+    and for price objections the sub-type(s): sticker_shock, budget, value_gap, competitor_cheaper.
 
     Args:
         objection: The objection exactly as the prospect said or wrote it.
@@ -185,6 +209,7 @@ def classify_objection(objection: str, stage: str = "unknown") -> dict:
     if n_words <= 6 and total <= 1:
         smoke = smoke or primary in ("timing", "need")
     framework, isolate = FRAMEWORK[primary]
+    price_subtypes = [k for k, rx in _PRICE_SUB_RES.items() if rx.search(objection)] if "price" in (primary, secondary) or scores["price"] else []
     return {
         "primary": primary,
         "secondary": secondary,
@@ -192,6 +217,8 @@ def classify_objection(objection: str, stage: str = "unknown") -> dict:
         "signal_counts": {k: v for k, v in scores.items() if v},
         "smokescreen": smoke,
         "framework": framework,
+        "price_subtypes": price_subtypes,
+        "price_responses": {k: PRICE_SUBTYPES[k][1] for k in price_subtypes},
         "isolation_question": isolate,
         "stage": st or "unknown",
         "verdict": f"{primary} objection ({conf}% confident)" + (f", possibly {secondary}" if secondary else "") + (" — reads as a smokescreen: ask a diagnostic question and make leaving easy." if smoke else "."),

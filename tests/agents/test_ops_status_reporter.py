@@ -118,3 +118,18 @@ def test_lint_report_scores_good_vs_bad():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("compute_rag").call({"metrics": {"name": "x"}})
+
+
+def test_milestone_slip_skips_holidays():
+    out = A.get_tool("milestone_health").call({"as_of": "2026-11-20", "holidays": ["2026-11-26", "2026-11-27"], "milestones": [{"name": "Backend", "baseline": "2026-11-25", "forecast": "2026-12-02"}]})
+    assert out["milestones"][0]["slip_working_days"] == 3  # Thanksgiving Thu/Fri are not working days
+
+
+def test_lint_uses_section_headings_and_ignores_tables():
+    report = (
+        "**Proj — 🟡 AMBER**\n\n**TL;DR**\n- We shipped SSO (+1 vs last week).\n\n**Asks**\n- Approve hire by Nov 24.\n\n"
+        "**Progress**\n| Metric | Target | This week | Last week | Delta | RAG | Owner | Notes | More | Columns |\n|---|---|---|---|---|---|---|---|---|---|\n"
+        "| A | 1 | 2 | 3 | +1 | G | x | y | z | w |\n| B | 1 | 2 | 3 | +1 | G | x | y | z | w |\n\n**Risks**\n- Risk 1, owner Raj.\n\n**Next week**\n- Ship 2."
+    )
+    out = A.get_tool("lint_report").call({"report": report})
+    assert out["asks_before_progress"] is True and out["long_sentences"] == []

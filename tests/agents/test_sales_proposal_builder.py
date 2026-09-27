@@ -126,3 +126,23 @@ def test_proposal_audit_full_and_thin():
 def test_proposal_audit_bad_input():
     with pytest.raises(ToolError):
         call("proposal_audit", proposal_text="   ")
+
+
+def test_pricing_table_rounds_once_and_display_matches_fields():
+    # 32,060 × 8.875% = 2,845.325 exactly → half-up to 2,845.33 everywhere (fields, rows, verdict)
+    out = call("pricing_table", line_items=[{"name": "Seat", "qty": 40, "unit_price": 65, "period": "month"}, {"name": "Onboarding", "qty": 1, "unit_price": 3500, "period": "one_time"}, {"name": "Support", "qty": 1, "unit_price": 2400, "period": "year"}], discount_pct=15, tax_rate_pct=8.875, term_months=12)
+    assert out["tax_amount"] == 2845.33 and out["grand_total"] == 34905.33
+    assert "Tax (8.875%): USD 2,845.33" in out["display_rows"] and out["display_rows"][-1].endswith("34,905.33")
+    assert "34,905.33" in out["verdict"]
+
+
+def test_pricing_table_line_item_discount():
+    out = call("pricing_table", line_items=[{"name": "Seat", "qty": 10, "unit_price": 100, "period": "month", "discount_pct": 10}], discount_pct=5, term_months=12)
+    assert out["lines"][0]["line_total_for_term"] == 10800 and out["lines"][0]["line_discount"] == 1200
+    assert out["discount_amount"] == 540 and out["grand_total"] == 10260
+
+
+def test_audit_recognises_iso_currency_prices():
+    body = ("# Proposal\nValid until 2026-10-28\n## Summary\nx\n## Investment\n| Better | USD 34,905.33 |\n## Next step\nReply by 2026-10-02 to sign.\n" + "word " * 260)
+    out = call("proposal_audit", proposal_text=body)
+    assert out["price_mentions"] == 1 and not any("no prices" in f for f in out["fixes"])

@@ -48,10 +48,14 @@ AGENT = Agent(
     deck is a set of slide titles, coach structure; if it includes text, coach content too.
 
     ## Procedure
-    1. **Check the skeleton.** Call `pitch_deck_coach__check_deck_structure` with the slide titles
-       (in order) and stage. It maps each slide to the canonical 12 (title, problem, solution,
-       why now, market, product, business model, traction, competition, team, financials/ask,
-       use of funds), reports missing and out-of-order slides, and flags a deck over 15-18
+    1. **Check the skeleton.** Read every slide and classify it yourself into the canonical 12
+       (title, problem, solution, why_now, market, product, business_model, traction,
+       competition, team, financials_ask, use_of_funds; or appendix/other), then call
+       `pitch_deck_coach__check_deck_structure` with the slide titles in order, the stage and your
+       `slide_types`. Good decks use claim titles ("Front desks lose 11 hours a week…") that carry
+       no section keyword, so without `slide_types` the tool's keyword fallback can report a slide
+       as "missing" that is really there — never tell a founder a slide is missing on keyword
+       matching alone. It reports missing and out-of-order slides and flags a deck over 15-18
        slides. Fix order before wording: problem before solution, traction before ask.
     2. **Size the market properly.** Call `pitch_deck_coach__market_size` with a bottom-up input
        (number of target customers × annual contract value, with a realistic capture % for SOM)
@@ -125,46 +129,74 @@ AGENT = Agent(
 
 CANON: list[tuple[str, str, str]] = [
     ("title", r"\btitle\b|\bcover\b|\bintro\b|company name|welcome", "one-line what-we-do + stage"),
-    ("problem", r"problem|pain|challenge|status quo|today", "who hurts, how much, quantified"),
-    ("solution", r"solution|what we do|our approach|how it works|product overview", "the insight, in one sentence"),
-    ("why_now", r"why now|timing|trend|shift|tailwind|inflection", "the change that makes this possible today"),
-    ("market", r"market|tam|sam|som|opportunity|market size", "bottom-up sizing"),
-    ("product", r"product|demo|screenshots?|how it works|features?|platform", "2-3 screenshots, the magic moment"),
-    ("business_model", r"business model|pricing|revenue model|how we make money|monetization|monetisation|unit economics", "who pays, how much, gross margin"),
-    ("traction", r"traction|metrics|growth|revenue|customers|results|milestones|kpi", "revenue/retention/growth rate chart"),
-    ("competition", r"competition|competitors|competitive|landscape|alternatives|moat|differentiation", "real alternatives incl. do-nothing; your wedge"),
-    ("team", r"team|founders|who we are|about us|advisors", "why this team wins, in one line each"),
-    ("financials_ask", r"financials?|projections?|forecast|the ask|ask|raise|round|funding|investment", "3-yr projection + amount"),
-    ("use_of_funds", r"use of (?:funds|proceeds)|milestones|roadmap|plan|next 18 months|what we'll do", "what the money buys and the milestone it reaches"),
+    ("problem", r"\bproblems?\b|\bpain\b|\bchallenges?\b|status quo|\b(?:lose|loses|losing|lost|waste|wastes|wasting|struggle|struggles)\b", "who hurts, how much, quantified"),
+    ("solution", r"\bsolution\b|what we do|our approach|how it works|product overview|\bintroducing\b|\bmeet \w+", "the insight, in one sentence"),
+    ("why_now", r"why now|\btiming\b|\btrends?\b|\bshift\b|tailwinds?|inflection", "the change that makes this possible today"),
+    ("market", r"\bmarket\b|\btam\b|\bsam\b|\bsom\b|market size|\bopportunity\b", "bottom-up sizing"),
+    ("product", r"\bproduct\b|\bdemo\b|screenshots?|how it works|\bfeatures?\b|\bplatform\b", "2-3 screenshots, the magic moment"),
+    ("business_model", r"business model|\bpricing\b|revenue model|how we make money|monetization|monetisation|unit economics", "who pays, how much, gross margin"),
+    ("traction", r"\btraction\b|\bmetrics\b|\bgrowth\b|\brevenue\b|\bcustomers\b|\bresults\b|\bkpis?\b|\bmrr\b|\barr\b", "revenue/retention/growth rate chart"),
+    ("competition", r"competition|competitors?|competitive|landscape|alternatives|\bmoat\b|differentiation", "real alternatives incl. do-nothing; your wedge"),
+    ("team", r"\bteam\b|\bfounders?\b|who we are|about us|advisors", "why this team wins, in one line each"),
+    ("financials_ask", r"\bfinancials?\b|projections?|\bforecast\b|the ask|\bask\b|\braise\b|\braising\b|\bround\b|\bfunding\b|\binvestment\b", "3-yr projection + amount"),
+    ("use_of_funds", r"use of (?:funds|proceeds)|\bmilestones\b|\broadmap\b|next 18 months|what we'll do", "what the money buys and the milestone it reaches"),
 ]
+# Checked before the generic list so a slide labelled "Use of funds: …" or "Why now: …" is not stolen by "funding"/"today".
+_PRIORITY = ("use_of_funds", "why_now", "business_model", "competition", "team", "traction", "market")
 STAGE_LEN = {"pre-seed": (8, 12), "seed": (10, 15), "series-a": (12, 18), "series-b": (14, 20)}
 
 
 @AGENT.tool
-def check_deck_structure(slide_titles: list[str], stage: str = "seed") -> dict:
-    """Map slide titles to the canonical investor-deck structure; report missing, misordered and extra slides.
+def check_deck_structure(slide_titles: list[str], stage: str = "seed", slide_types: list[str] | None = None) -> dict:
+    """Map slides to the canonical investor-deck structure; report missing, misordered and extra slides.
+
+    Claim-style titles ("Front desks lose 11 hours a week…") often carry no section keyword, so pass
+    `slide_types` with your own classification of each slide; the keyword matcher is only a fallback.
 
     Args:
         slide_titles: Slide titles in deck order (one per slide).
         stage: "pre-seed", "seed", "series-a" or "series-b" (sets the length target).
+        slide_types: Optional canonical type per slide, same order and length as slide_titles — one of title,
+            problem, solution, why_now, market, product, business_model, traction, competition, team,
+            financials_ask, use_of_funds, appendix, other. Overrides keyword matching slide by slide.
     """
     titles = check_rows(slide_titles, "slide_titles", 60)
     st = str(stage).strip().lower().replace(" ", "-")
     if st not in STAGE_LEN:
         raise ToolError("stage must be pre-seed, seed, series-a or series-b.")
+    valid_types = {k for k, _, _ in CANON} | {"appendix", "other"}
+    if slide_types is not None:
+        if len(slide_types) != len(titles):
+            raise ToolError(f"slide_types has {len(slide_types)} entries but slide_titles has {len(titles)}.")
+        bad = [t for t in slide_types if str(t).strip().lower() not in valid_types]
+        if bad:
+            raise ToolError(f"Unknown slide type(s) {bad}; use one of {', '.join(sorted(valid_types))}.")
+    regexes = {k: rx for k, rx, _ in CANON}
     mapping, found_order = [], []
     for i, t in enumerate(titles, 1):
         s = str(t).strip()
         if not s:
             raise ToolError(f"slide_titles[{i - 1}] is empty.")
-        match = None
-        for key, rx, _ in CANON:
-            if re.search(rx, s, re.I):
-                match = key
-                break
-        if i == 1 and match is None:
+        match, source = None, "keyword"
+        if slide_types is not None:
+            match, source = str(slide_types[i - 1]).strip().lower(), "given"
+            if match in {"appendix", "other"}:
+                match = None
+        else:
+            # an explicit "Label: claim" prefix wins; then the specific sections; then the generic order
+            head = s.split(":", 1)[0] if ":" in s[:40] else ""
+            for key in [k for k, _, _ in CANON] if head else []:
+                if re.search(regexes[key], head, re.I):
+                    match = key
+                    break
+            if match is None:
+                for key in list(_PRIORITY) + [k for k, _, _ in CANON if k not in _PRIORITY]:
+                    if re.search(regexes[key], s, re.I):
+                        match = key
+                        break
+        if i == 1 and match is None and slide_types is None:
             match = "title"
-        mapping.append({"slide": i, "title": s, "canonical": match})
+        mapping.append({"slide": i, "title": s, "canonical": match, "source": source})
         if match and match not in found_order:
             found_order.append(match)
     canon_keys = [k for k, _, _ in CANON]
@@ -181,12 +213,20 @@ def check_deck_structure(slide_titles: list[str], stage: str = "seed") -> dict:
     n = len(titles)
     label_titles = [m["title"] for m in mapping if len(text.words(m["title"])) <= 2 and m["canonical"] not in ("title", None)]
     unmapped = [m["title"] for m in mapping if m["canonical"] is None]
+    if unmapped and slide_types is None:
+        problems_hint = f"{len(unmapped)} slide(s) matched no section keyword — classify them and re-run with slide_types before trusting 'missing'"
+    else:
+        problems_hint = None
     score = len(found_order)
     problems = []
+    if problems_hint:
+        problems.append(problems_hint)
     if missing:
         problems.append(f"missing {len(missing)} canonical slide(s): {', '.join(m['slide'] for m in missing)}")
     if critical_order:
         problems.extend(critical_order)
+    if len(inversions) > 3:
+        problems.append(f"{len(inversions)} order inversions vs the Sequoia/YC sequence — fine only if deliberate (e.g. traction up front because it is your strongest card); otherwise follow proposed_order")
     if n > hi:
         problems.append(f"{n} slides — over the {lo}-{hi} target for {st}; move detail to appendix")
     if n < lo:
@@ -242,7 +282,8 @@ def market_size(target_customers: float, annual_revenue_per_customer: float, ser
         td = to_float(top_down_tam, "top_down_tam", 1)
         ratio = tam / td
         if ratio > 1.5 or ratio < 0.33:
-            flags.append(f"bottom-up TAM is {ratio:.1f}× the top-down figure — reconcile before presenting (different definitions?)")
+            rel = f"{ratio:.1f}× the top-down figure" if ratio >= 1 else f"only {ratio * 100:.1f}% of the top-down figure"
+            flags.append(f"bottom-up TAM is {rel} (${tam:,.0f} vs ${td:,.0f}) — reconcile before presenting (different definitions?)")
     per_year_customers = som_customers / years
     return {
         "tam": round(tam),
@@ -258,7 +299,7 @@ def market_size(target_customers: float, annual_revenue_per_customer: float, ser
 
 
 @AGENT.tool
-def raise_math(amount: float, valuation: float, valuation_is_post: bool = True, option_pool_pct: float = 0.0, monthly_burn: float = 0.0, burn_growth_pct_per_month: float = 0.0, start_date: str = "") -> dict:
+def raise_math(amount: float, valuation: float, valuation_is_post: bool = True, option_pool_pct: float = 0.0, monthly_burn: float = 0.0, burn_growth_pct_per_month: float = 0.0, start_date: str = "", existing_cash: float = 0.0) -> dict:
     """Compute dilution, post-money ownership, option-pool effect, and runway months for a fundraise.
 
     Args:
@@ -269,6 +310,7 @@ def raise_math(amount: float, valuation: float, valuation_is_post: bool = True, 
         monthly_burn: Net monthly burn after the raise (dollars). 0 skips runway.
         burn_growth_pct_per_month: Expected monthly growth in burn (e.g. 3 for 3%/month as you hire).
         start_date: YYYY-MM-DD the money lands (optional) to date the runway end.
+        existing_cash: Cash already in the bank when the round closes (dollars); runway counts it too.
     """
     from ...lib import dates
 
@@ -277,6 +319,7 @@ def raise_math(amount: float, valuation: float, valuation_is_post: bool = True, 
     pool = to_float(option_pool_pct, "option_pool_pct", 0, 50) / 100
     burn = to_float(monthly_burn, "monthly_burn", 0)
     growth = to_float(burn_growth_pct_per_month, "burn_growth_pct_per_month", 0, 30) / 100
+    bank = to_float(existing_cash, "existing_cash", 0)
     post = val if valuation_is_post else val + amt
     pre = post - amt
     if pre <= 0:
@@ -291,7 +334,7 @@ def raise_math(amount: float, valuation: float, valuation_is_post: bool = True, 
         flags.append(f"a {pool * 100:.0f}% pre-money pool lowers your effective pre-money from ${pre:,.0f} to ${effective_pre:,.0f}")
     runway = None
     if burn > 0:
-        cash, months = amt, 0
+        cash, months = amt + bank, 0
         b = burn
         while cash > 0 and months < 120:
             cash -= b
@@ -308,7 +351,8 @@ def raise_math(amount: float, valuation: float, valuation_is_post: bool = True, 
             end = sd.replace(year=sd.year + end_month // 12, month=end_month % 12 + 1, day=1)
             runway["end_date"] = end.isoformat()
         if months_f < 18:
-            flags.append(f"runway {months_f:.1f} months < 18 — raise ${burn * 18 - amt:,.0f} more or cut burn to ${amt / 18:,.0f}/month" if burn * 18 > amt else f"runway {months_f:.1f} months < 18 due to burn growth — flatten hiring")
+            need = sum(burn * (1 + growth) ** k for k in range(18))  # cash needed for 18 months at this burn path
+            flags.append(f"runway {months_f:.1f} months < 18 — 18 months on this burn path needs ${need:,.0f}; raise ${need - amt - bank:,.0f} more or cut burn")
     return {
         "pre_money": round(pre),
         "post_money": round(post),
@@ -353,6 +397,8 @@ def slide_density(slides: list[dict]) -> dict:
             issues.append(f"title is {title_words} words — ≤ 12")
         if not has_number and i > 1 and words > 0:
             issues.append("no number on the slide — add the metric or size that proves the claim")
+        if re.search(r"\b(?:need|capture|get|take|win|grab)s?\s+(?:just\s+|only\s+)?\d+(?:\.\d+)?\s?%\s+of\b|\b\d+(?:\.\d+)?\s?%\s+of\s+(?:a|the|this)\s+\$?[\d.,]+\s?[bmk]", title + " " + body, re.I):
+            issues.append("'we only need 1% of the market' — top-down share claims are discounted to zero; show bottom-up customers × ACV")
         longest = max((len(text.words(s)) for s in text.sentences(body)), default=0)
         if longest > 25:
             issues.append(f"a {longest}-word sentence — slides are not paragraphs")

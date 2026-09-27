@@ -78,7 +78,9 @@ AGENT = Agent(
        ("Summer '19") are the real ATS failures. Page estimate: 1 page under ~10 years of
        experience, 2 pages otherwise; never 3.
     3. **Verify the timeline.** Call `resume_optimizer__compute_tenure` with each role's
-       start/end. Use its exact tenure strings in the resume. Gaps > 6 months: never hide them;
+       start/end. Use its exact tenure strings in the resume, and compare `total_months` with
+       `years_required` from the match (job-level check): make the summary's "N+ years" match
+       the tool, never round up past it. Gaps > 6 months: never hide them;
        decide with the user whether to add a one-line honest entry (career break, caregiving,
        study) — modern recruiters accept these, and unexplained gaps read worse than explained ones.
     4. **Score the bullets.** Call `resume_optimizer__score_bullets` with every experience
@@ -294,6 +296,7 @@ def match_keywords(resume: str, job_description: str, job_title: str = "") -> di
         "missing": missing,
         "phrasing": phrasing,
         "alternatives": alternatives,
+        "years_required": max((r["years"] for r in reqs if r["years"] and r["tier"] == "must"), default=None),
         "requirements_parsed": len(reqs),
         "ats_truth": "ATS parse fields and let recruiters keyword-search; they do not auto-reject on a score. Exact spelling of the JD's terms is what makes a search hit.",
         "verdict": verdict,

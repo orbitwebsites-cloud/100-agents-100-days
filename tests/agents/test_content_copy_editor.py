@@ -110,3 +110,33 @@ def test_readability_diff_rejects_empty():
         call("readability_diff", before=GOOD, after=" ")
     with pytest.raises(ToolError):
         A.get_tool("readability_diff").call({"before": 3, "after": GOOD})
+
+
+def test_style_check_no_false_positive_on_capital_i():
+    out = call("style_check", draft="I think I was right. Then I left, and i came back.")
+    errs = [i["issue"] for i in out["issues"] if i["kind"] == "error"]
+    assert errs == ["'i' → I (capitalise)"]
+
+
+def test_style_check_grammar_patterns_and_misspellings():
+    out = call("style_check", draft="For the first time in it's history we was late. The people who wasn't there recieved more then enough. The whole the team agreed.")
+    issues = " | ".join(i["issue"] for i in out["issues"])
+    for needle in ("'in it's history'", "'we was'", "'people who wasn't'", "'recieved' → received", "'more then' → than", "'The whole the'"):
+        assert needle in issues, needle
+    ok = call("style_check", draft="It's been a long year, and it's not over. I checked its history.")
+    assert not [i for i in ok["issues"] if i["kind"] == "error"]
+
+
+def test_style_check_variant_from_original():
+    out = call("style_check", draft="We cancelled the plan and will organise a new one.", original="We will utilize the color palette and organize the launch.")
+    assert out["spelling_variant"] == "US"
+    assert {i["issue"].split("'")[1] for i in out["issues"] if i["kind"] == "spelling"} == {"cancelled", "organise"}
+    uk = call("style_check", draft="Check the colour. Check the flavour. Check the programme.")
+    assert uk["spelling_variant"] == "UK" and not [i for i in uk["issues"] if i["kind"] == "spelling"]
+
+
+def test_rather_than_is_not_a_hedge_and_spelled_numbers_are_kept():
+    d = call("diagnose", draft="It is a habit rather than a tool. It is rather slow, and we ship 3 things.")
+    assert d["baseline"]["hedges"] == 1
+    diff = call("readability_diff", before="We shipped 3 features in 12 days.", after="We shipped three features in twelve days.")
+    assert not any("Numbers in the original" in w for w in diff["warnings"])

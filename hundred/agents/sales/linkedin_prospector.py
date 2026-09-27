@@ -60,9 +60,12 @@ AGENT = Agent(
        school/city, and company signals. Use the top hook; never use two.
     2. **Write the connection note** (optional but use it when you have a hook): ≤ 300
        chars, no pitch, no link, one specific reference, no ask beyond connecting. Call
-       `linkedin_prospector__check_message` with `kind="connection_note"`. It enforces the
-       300-char limit (200 for some mobile flows — it warns above 200), catches pitch
-       words, links, "I/my company" openers and template phrases. Rewrite until it passes.
+       `linkedin_prospector__check_message` with `kind="connection_note"` and `premium`
+       (false if the sender has a free LinkedIn account). It enforces the note limit —
+       300 chars on Premium/Sales Navigator, 200 on a free account (LinkedIn's help page;
+       free accounts also get only a few noted invites a month) — warns above 200 either
+       way, and catches pitch words, links, "I/my company" openers and template phrases.
+       Rewrite until it passes. Ask whether the account is free or Premium if you don't know.
     3. **Write the first message** for after acceptance (24-48 h later): a thank-you that
        continues the hook + one open question about their world. Zero pitch. Check with
        `check_message` (`kind="message"`, target ≤ 500 chars). InMails (`kind="inmail"`)
@@ -86,7 +89,9 @@ AGENT = Agent(
       (school, city, former employer) > headline claim. Never "I see we're both in SaaS".
     - **No-pitch rule:** the connection note and message 1 contain zero product language.
       The pitch arrives in message 2 or the email bridge, and only as a question.
-    - **Limits (LinkedIn, as commonly enforced):** connection note 300 chars; ~100
+    - **Limits (LinkedIn, as commonly enforced):** connection note 300 chars on
+      Premium/Sales Navigator, 200 on free accounts (which also get only ~3-5 noted
+      invites a month — see linkedin.com/help/linkedin/answer/a563153); ~100
       invites/week for most accounts (Sales Navigator adds InMail credits, not invites);
       InMail subject 200 / body 1,900 chars; pending invites count against you — withdraw
       after ~3 weeks. Acceptance rates: notes with a specific hook ≈ 30-50%; blank
@@ -147,16 +152,18 @@ LINK_RE = re.compile(r"(https?://\S+|www\.\S+|calendly|hubspot\.com/meetings|lnk
 
 
 @AGENT.tool
-def check_message(message: str, kind: str = "connection_note", subject: str = "") -> dict:
+def check_message(message: str, kind: str = "connection_note", subject: str = "", premium: bool = True) -> dict:
     """Check a LinkedIn connection note, message or InMail against character limits and reply-killing patterns.
 
-    Call on every draft. kind: connection_note (300 chars), message (post-accept DM),
-    inmail (subject 200 / body 1,900), or headline (220). Returns counts, violations and a 0-100 score.
+    Call on every draft. kind: connection_note (300 chars on Premium/Sales Navigator; LinkedIn's
+    help page states 200 for free accounts), message (post-accept DM), inmail (subject 200 /
+    body 1,900), or headline (220). Returns counts, violations and a 0-100 score.
 
     Args:
         message: The note/message body.
         kind: connection_note, message, inmail or headline.
         subject: InMail subject line (only for kind="inmail").
+        premium: True if the sender has Premium or Sales Navigator (300-char notes); False for a free account, where the note box stops at 200 chars and only a few noted invites are allowed per month.
     """
     k = kind.strip().lower()
     if k not in LIMITS:
@@ -165,14 +172,16 @@ def check_message(message: str, kind: str = "connection_note", subject: str = ""
         raise ToolError("message is empty.")
     if len(message) > 20_000:
         raise ToolError("message over 20k chars.")
-    lim = LIMITS[k]
+    lim = dict(LIMITS[k])
+    if k == "connection_note" and not premium:
+        lim["body"] = 200
     n = len(message)
     ws = text.words(message)
     fixes, score = [], 100
     if n > lim["body"]:
         score -= 40
         fixes.append(f"{n} chars — LinkedIn limit is {lim['body']}; cut {n - lim['body']} chars or it won't send")
-    elif n > lim["warn"] and k != "headline":
+    elif n > lim["warn"] and k != "headline" and lim["warn"] < lim["body"]:
         score -= 10
         fixes.append(f"{n} chars — over the {lim['warn']}-char sweet spot; shorter gets more replies")
     if k == "inmail":
@@ -232,6 +241,7 @@ def check_message(message: str, kind: str = "connection_note", subject: str = ""
         "kind": k,
         "chars": n,
         "limit": lim["body"],
+        "account": ("premium" if premium else "free") if k == "connection_note" else None,
         "fits": n <= lim["body"],
         "over_by": max(0, n - lim["body"]),
         "words": len(ws),
@@ -326,7 +336,9 @@ def extract_hooks(profile_text: str, today: str = "", my_school: str = "", my_ci
         if comp.strip() and comp.strip().lower() in low:
             hooks.append({"type": "shared_former_employer", "priority": 4, "evidence": comp, "angle": "Alumni of the same company — a strong trust signal; ask about their time there."})
             break
-    hm = HEADLINE_CLAIM_RE.search(profile_text.splitlines()[0] if profile_text.strip() else "")
+    # a pasted profile usually starts with the name, then the headline — look at the first 3 non-empty lines
+    head_lines = [ln for ln in profile_text.splitlines() if ln.strip()][:3]
+    hm = next((m for m in (HEADLINE_CLAIM_RE.search(ln) for ln in head_lines) if m), None)
     if hm:
         hooks.append({"type": "headline_claim", "priority": 7, "evidence": hm.group(0).strip()[:120], "angle": "Ask how they're doing that — genuinely curious, not challenging."})
     hooks.sort(key=lambda h: h["priority"])

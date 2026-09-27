@@ -257,9 +257,12 @@ def audit_page(html: str, url: str = "", keyword: str = "") -> dict:
         insecure = [i["src"] for i in imgs if i["src"].lower().startswith("http://")]
         if insecure:
             add("medium", "security", f"Mixed content: {len(insecure)} image(s) loaded over http on an https page", "Serve the images over https (browsers block or warn on mixed content).", ", ".join(x[-50:] for x in insecure[:3]))
+    long_alt = [i for i in imgs if i["alt"] and len(i["alt"]) > 100]
+    if long_alt:
+        add("low", "images", f"{len(long_alt)} alt text(s) over 100 characters", "Describe the image in ≤ 100 characters; alt is not a place for keyword lists.", long_alt[0]["alt"][:120])
     no_dims = [i for i in imgs if not i["width"] or not i["height"]]
-    if len(no_dims) >= 3:
-        add("low", "images", f"{len(no_dims)} images lack width/height (layout shift / CLS)", "Set width and height attributes.")
+    if no_dims:
+        add("low", "images", f"{len(no_dims)} image(s) lack width/height (layout shift / CLS)", "Set width and height attributes.", ", ".join(i["src"][-40:] for i in no_dims[:3]))
     if imgs and not any(i["loading"] == "lazy" for i in imgs) and len(imgs) > 6:
         add("low", "images", f"{len(imgs)} images, none lazy-loaded", "Add loading=\"lazy\" to below-the-fold images.")
 

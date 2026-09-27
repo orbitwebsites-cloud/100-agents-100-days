@@ -106,3 +106,19 @@ def test_raise_value_compounds():
 def test_raise_value_rejects_bad_years():
     with pytest.raises(ToolError):
         call("raise_value", base_before=100000, base_after=110000, years=0)
+
+
+def test_compare_offers_reports_crossover_when_leader_flips():
+    out = call(
+        "compare_offers",
+        offers=[
+            {"name": "Back", "base": 100000, "equity_value": 200000, "schedule": "amazon"},
+            {"name": "Even", "base": 100000, "equity_value": 180000, "schedule": "even"},
+        ],
+    )
+    assert out["crossover"]["early_leader"] == "Even" and out["crossover"]["final_leader"] == "Back"
+
+
+def test_vesting_schedule_semiannual_amazon():
+    out = call("vesting_schedule", grant_value=100000, start_date="2026-01-15", schedule="amazon", frequency="semiannual")
+    assert [e["amount"] for e in out["events"]] == [5000, 7500, 7500, 20000, 20000, 20000, 20000]

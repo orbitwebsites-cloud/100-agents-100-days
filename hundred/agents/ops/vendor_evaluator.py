@@ -58,7 +58,8 @@ AGENT = Agent(
        reference confirmed / claimed in RFP). Call `vendor_evaluator__score_rfp`. It applies
        knockouts (a vendor failing a must-have is out, whatever its score), computes weighted
        totals, category subtotals, gap to leader, and flags unverified must-haves.
-    3. **Price the truth.** For each vendor gather: one-time implementation, per-seat price,
+    3. **Price the truth.** Price only the vendors that passed the must-haves — a knocked-out
+       vendor's low TCO is irrelevant (include it only as a labelled reference). For each gather: one-time implementation, per-seat price,
        platform fees, annual increase (escalator), internal hours for setup and ongoing admin,
        exit/migration cost. Call `vendor_evaluator__calculate_tco` with a 3-year (or 5-year)
        horizon. Report TCO, NPV, cost per seat-month, and hidden-cost share. Sticker price
@@ -68,7 +69,8 @@ AGENT = Agent(
        deadline and ranks red flags. Present the top 3-5 asks in priority order. This is not
        legal advice — flag anything on liability, indemnity, IP or data protection for counsel.
     5. **Translate the SLA.** Call `vendor_evaluator__sla_downtime` with the promised uptime
-       and credit tiers. Report allowed downtime per month in minutes/hours and whether the
+       and credit tiers (and, for a real outage, the `month` it happened in — a 30-day
+       month allows ~1.5% less downtime than the average the headline figure uses). Report allowed downtime per month in minutes/hours and whether the
        credits are meaningful (usually they are not: 10% of a month's fee for 36 hours down).
     6. **Reference-check plan.** For the top 2: three questions to ask a customer of similar
        size — "what broke in the first 90 days", "how did support behave during an outage",
@@ -232,7 +234,7 @@ def score_rfp(vendors: list[dict], criteria: list[dict], must_haves: list[str] =
 
 
 @AGENT.tool
-def calculate_tco(vendors: list[dict], years: int = 3, discount_rate_pct: float = 8.0, hourly_rate: float = 75.0) -> dict:
+def calculate_tco(vendors: list[dict], years: int = 3, discount_rate_pct: float = 8.0, hourly_rate: float = 75.0, billing: str = "annual_advance") -> dict:
     """Multi-year total cost of ownership per vendor: seats × growth × escalator, fees, implementation, internal labour, exit, NPV.
 
     Args:
@@ -240,7 +242,10 @@ def calculate_tco(vendors: list[dict], years: int = 3, discount_rate_pct: float 
         years: Horizon in years (1-10). Use 3 for SaaS, 5 for systems of record.
         discount_rate_pct: Annual discount rate for NPV (default 8).
         hourly_rate: Fully loaded internal hourly cost used to price internal hours (default 75).
+        billing: When subscription/platform fees are paid, for NPV: "annual_advance" (default — standard SaaS order forms bill each year up front) or "arrears" (end of each year). Internal labour, other costs and exit are discounted at year end; one-time costs at signing.
     """
+    if billing not in ("annual_advance", "arrears"):
+        raise ToolError("billing must be 'annual_advance' or 'arrears'.")
     vendors = require_list(vendors, "vendors", 20)
     if not (1 <= years <= 10):
         raise ToolError("years must be 1-10.")
@@ -256,6 +261,7 @@ def calculate_tco(vendors: list[dict], years: int = 3, discount_rate_pct: float 
         growth, esc = g("seat_growth_pct_yr", -100, 500) / 100, g("annual_increase_pct", -100, 100) / 100
         platform, one_time, training, exit_cost, other = g("platform_fee_yr"), g("one_time"), g("training"), g("exit_cost"), g("other_annual")
         setup_h, admin_h = g("internal_hours_setup"), g("internal_hours_per_month")
+        raw_total = 0.0
         yearly, npv, subscription_total, hidden_total = [], one_time + training + setup_h * rate, 0.0, one_time + training + setup_h * rate
         for y in range(1, years + 1):
             seats_y = seats * (1 + growth) ** (y - 1)
@@ -266,9 +272,10 @@ def calculate_tco(vendors: list[dict], years: int = 3, discount_rate_pct: float 
             year_cost = sub + internal + other + ex + (one_time + training + setup_h * rate if y == 1 else 0.0)
             subscription_total += sub
             hidden_total += internal + ex
-            npv += (sub + internal + other + ex) / (1 + r) ** y
+            npv += sub / (1 + r) ** (y - 1 if billing == "annual_advance" else y) + (internal + other + ex) / (1 + r) ** y
+            raw_total += year_cost
             yearly.append({"year": y, "seats": round(seats_y, 1), "subscription": round(sub), "internal_labour": round(internal), "one_time": round(one_time + training + setup_h * rate) if y == 1 else 0, "exit": round(ex), "other": round(other), "total": round(year_cost)})
-        total = sum(yr["total"] for yr in yearly)
+        total = raw_total  # sum unrounded years; rounding each year first drifts by a dollar or two
         seat_months = sum(yr["seats"] for yr in yearly) * 12
         out.append(
             {
@@ -299,10 +306,18 @@ def calculate_tco(vendors: list[dict], years: int = 3, discount_rate_pct: float 
     lowest_sticker = min(out, key=lambda o: o["sticker_subscription_only"])
     if lowest_sticker["vendor"] != cheapest["vendor"]:
         verdict += f" Note: {lowest_sticker['vendor']} has the lowest sticker price but not the lowest TCO."
-    return {"ranking": out, "assumptions": {"years": years, "discount_rate_pct": discount_rate_pct, "hourly_rate": rate}, "markdown_table": table, "verdict": verdict}
+    return {"ranking": out, "assumptions": {"years": years, "discount_rate_pct": discount_rate_pct, "hourly_rate": rate, "billing": billing, "npv_timing": "one-time at signing; subscription at the start of each year" if billing == "annual_advance" else "one-time at signing; subscription at the end of each year"}, "markdown_table": table, "verdict": verdict}
 
 
 _BOOL_TRUE = ("yes", "true", "y", "1", "included")
+
+
+def _add_months(d: date, months: int) -> date:
+    y, m = divmod(d.month - 1 + months, 12)
+    try:
+        return d.replace(year=d.year + y, month=m + 1)
+    except ValueError:  # Jan 31 + 1 month -> Feb 28/29
+        return (d.replace(year=d.year + y, month=m + 1, day=1) + timedelta(days=31)).replace(day=1) - timedelta(days=1)
 
 
 def _b(v) -> bool | None:
@@ -320,7 +335,7 @@ def contract_risk_check(terms: dict, today: str = "", annual_fees: float = 0) ->
     Not legal advice — it applies procurement rules of thumb; liability, indemnity, IP and data-protection clauses need counsel.
 
     Args:
-        terms: Object with any of: start_date, term_months, renewal_date, auto_renew (bool), notice_days, price_cap_pct, sla_uptime_pct, sla_credits (bool), termination_for_convenience (bool), termination_notice_days, data_export (bool), data_deletion_days, liability_cap_months (cap as months of fees), payment_terms_days, minimum_commit (bool), unilateral_changes (bool), soc2 (bool), dpa (bool).
+        terms: Object with any of: start_date, term_months, renewal_date (first day of the renewal term), term_end_date (last day of the current term), renewal_term_months, auto_renew (bool), notice_days, price_cap_pct, sla_uptime_pct, sla_credits (bool), termination_for_convenience (bool), termination_notice_days, data_export (bool), data_deletion_days, liability_cap_months (cap as months of fees), payment_terms_days, minimum_commit (bool), unilateral_changes (bool), soc2 (bool), dpa (bool).
         today: Today's date as YYYY-MM-DD (defaults to today) for deadline math.
         annual_fees: Annual contract value, used to express caps and credits in dollars (optional).
     """
@@ -339,19 +354,24 @@ def contract_risk_check(terms: dict, today: str = "", annual_fees: float = 0) ->
     elif t.get("start_date") and t.get("term_months"):
         start = dates.parse_date(str(t["start_date"]))
         months = int(as_float(t["term_months"], "term_months", lo=1, hi=120))
-        y, m = divmod(start.month - 1 + months, 12)
-        try:
-            renewal = start.replace(year=start.year + y, month=m + 1)
-        except ValueError:
-            renewal = (start.replace(year=start.year + y, month=m + 1, day=1) + timedelta(days=31)).replace(day=1) - timedelta(days=1)
+        renewal = _add_months(start, months)
+    if t.get("term_end_date"):
+        renewal = dates.parse_date(str(t["term_end_date"])) + timedelta(days=1)
     auto = _b(t.get("auto_renew"))
     notice_days = int(as_float(t.get("notice_days"), "notice_days", lo=0, hi=365, default=0.0)) if t.get("notice_days") not in (None, "") else None
     term_months = int(as_float(t.get("term_months"), "term_months", lo=1, hi=120)) if t.get("term_months") not in (None, "") else None
-    deadline = None
+    renewal_term = int(as_float(t.get("renewal_term_months"), "renewal_term_months", lo=1, hi=120)) if t.get("renewal_term_months") not in (None, "") else (term_months or 12)
+    deadline = term_end = next_deadline = next_renewal = None
     if auto:
         nd = notice_days if notice_days is not None else 30
         if renewal:
-            deadline = renewal - timedelta(days=nd)
+            # "N days prior to the end of the term": the term's last day is the day BEFORE the renewal date;
+            # counting from the renewal date would give a deadline one day too late.
+            term_end = renewal - timedelta(days=1)
+            deadline = term_end - timedelta(days=nd)
+            if deadline < now:  # window missed: it renews; compute the next cycle's deadline
+                next_renewal = _add_months(renewal, renewal_term)
+                next_deadline = next_renewal - timedelta(days=1) - timedelta(days=nd)
         if notice_days is None:
             flag("medium", "Auto-renews but notice period not stated — assume 30 days until confirmed.", "Confirm the notice period in writing; ask for 30 days.", 2)
         elif notice_days > 60:
@@ -406,14 +426,31 @@ def contract_risk_check(terms: dict, today: str = "", annual_fees: float = 0) ->
     risk = "HIGH" if score < 50 else "MEDIUM" if score < 75 else "LOW"
     days_left = (deadline - now).days if deadline else None
     deadline_note = None
+    send_by = None
     if deadline:
-        deadline_note = f"Notice deadline {dates.fmt(deadline)} — {days_left} days from {now.isoformat()}" + (" — PASSED: the contract has (or will have) renewed." if days_left < 0 else " — set reminders 30 and 7 days before." if days_left <= 45 else ".")
+        send_by = dates.add_business_days(deadline, -3) if days_left is not None and days_left >= 0 else None
+        if days_left < 0:
+            deadline_note = (
+                f"Notice deadline {dates.fmt(deadline)} PASSED {-days_left} days ago: the contract renews on {renewal.isoformat()} "
+                f"for {renewal_term} months. Next non-renewal deadline: {dates.fmt(next_deadline)}. Ask the vendor for a "
+                f"one-time waiver now, and put the next deadline in the calendar."
+            )
+        elif days_left <= 7:
+            deadline_note = f"Notice deadline {dates.fmt(deadline)} — only {days_left} days away: send written notice (per the notices clause) now, and get a delivery receipt."
+        else:
+            reminders = [r for r in (deadline - timedelta(days=30), deadline - timedelta(days=7)) if r > now]
+            deadline_note = f"Notice deadline {dates.fmt(deadline)} — {days_left} days from {now.isoformat()}; send by {send_by.isoformat()} to allow for delivery" + (f"; reminders on {', '.join(r.isoformat() for r in reminders)}." if reminders else ".")
     return {
         "as_of": now.isoformat(),
         "renewal_date": renewal.isoformat() if renewal else None,
+        "term_end_date": term_end.isoformat() if term_end else (renewal - timedelta(days=1)).isoformat() if renewal else None,
         "auto_renew": auto,
         "notice_deadline": deadline.isoformat() if deadline else None,
+        "notice_deadline_rule": f"{notice_days if notice_days is not None else 30} days before the term's last day ({term_end.isoformat()}); notice must arrive on or before this date" if term_end else None,
+        "recommended_send_by": send_by.isoformat() if send_by else None,
         "days_until_notice_deadline": days_left,
+        "next_renewal_date": next_renewal.isoformat() if next_renewal else None,
+        "next_notice_deadline": next_deadline.isoformat() if next_deadline else None,
         "deadline_note": deadline_note,
         "risk_score": score,
         "risk_level": risk,
@@ -430,7 +467,7 @@ _MIN_PER_MONTH = 365.25 * 24 * 60 / 12  # 43829.06
 
 
 @AGENT.tool
-def sla_downtime(uptime_pct: float, monthly_fee: float = 0, credit_tiers: list[dict] = [], actual_downtime_minutes: float = -1, outage_cost_per_hour: float = 0) -> dict:
+def sla_downtime(uptime_pct: float, monthly_fee: float = 0, credit_tiers: list[dict] = [], actual_downtime_minutes: float = -1, outage_cost_per_hour: float = 0, month: str = "") -> dict:
     """Turn an SLA percentage into allowed downtime per week/month/year, and compute the credit owed for an actual outage.
 
     Args:
@@ -439,6 +476,7 @@ def sla_downtime(uptime_pct: float, monthly_fee: float = 0, credit_tiers: list[d
         credit_tiers: List of {"below_pct": 99.9, "credit_pct": 10} — credit as % of monthly fee when uptime falls below the threshold; highest matching credit applies.
         actual_downtime_minutes: Actual downtime in a month (optional, -1 = not provided).
         outage_cost_per_hour: Your cost of an outage per hour, to compare against credits (optional).
+        month: The calendar month the outage happened in, "YYYY-MM". SLAs measure uptime per calendar month, so a 30-day month allows less downtime than the 30.44-day average; pass it whenever you check a real outage for breach/credit.
     """
     u = as_float(uptime_pct, "uptime_pct", lo=0, hi=100)
     if u < 90:
@@ -453,9 +491,19 @@ def sla_downtime(uptime_pct: float, monthly_fee: float = 0, credit_tiers: list[d
             raise ToolError(f"credit_tiers[{i}] must be {{'below_pct','credit_pct'}}.")
         tiers.append({"below_pct": as_float(tier.get("below_pct"), f"credit_tiers[{i}].below_pct", lo=0, hi=100), "credit_pct": as_float(tier.get("credit_pct"), f"credit_tiers[{i}].credit_pct", lo=0, hi=100)})
     tiers.sort(key=lambda x: -x["below_pct"])
+    month_minutes, month_label = _MIN_PER_MONTH, "average month (30.44 days)"
+    if month:
+        try:
+            y, mo = (int(x) for x in str(month).strip()[:7].split("-"))
+            first = date(y, mo, 1)
+        except ValueError:
+            raise ToolError(f"month must look like 2026-11, got {month!r}.") from None
+        days_in = ((first.replace(day=28) + timedelta(days=4)).replace(day=1) - first).days
+        month_minutes, month_label = days_in * 24 * 60, f"{first.strftime('%B %Y')} ({days_in} days)"
+        allowed["this_month"] = round(down_frac * month_minutes, 1)
     actual = None
     if actual_downtime_minutes is not None and actual_downtime_minutes >= 0:
-        act_up = 100 * (1 - actual_downtime_minutes / _MIN_PER_MONTH)
+        act_up = 100 * (1 - actual_downtime_minutes / month_minutes)
         breach = act_up < u
         credit_pct = max((t["credit_pct"] for t in tiers if act_up < t["below_pct"]), default=0.0)
         credit_usd = round(fee * credit_pct / 100, 2)
@@ -464,7 +512,8 @@ def sla_downtime(uptime_pct: float, monthly_fee: float = 0, credit_tiers: list[d
             "downtime_minutes": actual_downtime_minutes,
             "actual_uptime_pct": round(act_up, 4),
             "breach": breach,
-            "over_allowance_minutes": round(max(0.0, actual_downtime_minutes - allowed["per_month"]), 1),
+            "measured_over": month_label,
+            "over_allowance_minutes": round(max(0.0, actual_downtime_minutes - down_frac * month_minutes), 1),
             "credit_pct": credit_pct,
             "credit_usd": credit_usd,
             "your_outage_cost_usd": outage_cost,

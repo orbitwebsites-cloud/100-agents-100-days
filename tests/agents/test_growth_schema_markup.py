@@ -124,3 +124,19 @@ def test_breadcrumbs_from_url():
     assert out["errors"] == []
     with pytest.raises(ToolError):
         call("breadcrumbs_from_url", url="/relative/path")
+
+
+def test_extract_schema_reports_conflicting_duplicate_blocks():
+    html = ('<script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"Shoe","offers":{"@type":"Offer","price":"$129.99","priceCurrency":"USD","availability":"In Stock"}}</script>'
+            '<script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"Shoe","offers":{"@type":"Offer","price":"139.99","priceCurrency":"USD","availability":"https://schema.org/InStock"}}</script>')
+    out = call("extract_schema", html=html)
+    # formatting differences ($, "In Stock") are not conflicts; the 129.99 vs 139.99 price is
+    assert out["conflicting_values"] == ["Product.offers.price: '129.99' vs '139.99'"]
+
+
+def test_ambiguous_slash_date_is_flagged():
+    out = call("build_schema", schema_type="Event", fields={"name": "Run", "start_date": "03/04/2026", "location_name": "Park", "street": "1 Main St", "city": "Austin", "postal_code": "78701", "country": "US"})
+    assert out["jsonld"]["startDate"] == "2026-03-04"
+    assert any("ambiguous" in w for w in out["warnings"])
+    unamb = call("build_schema", schema_type="Event", fields={"name": "Run", "start_date": "12/31/2026", "location_name": "Park", "street": "1 Main St", "city": "Austin", "postal_code": "78701", "country": "US"})
+    assert unamb["jsonld"]["startDate"] == "2026-12-31" and not any("ambiguous" in w for w in unamb["warnings"])

@@ -120,3 +120,12 @@ def test_capacity_check_bad_input():
         call("capacity_check", hours_per_week=0, platforms=[{"platform": "x", "posts_per_week": 1}])
     with pytest.raises(ToolError):
         A.get_tool("capacity_check").call({"hours_per_week": "lots", "platforms": []})
+
+
+def test_build_schedule_quarterly_cadence_and_explicit_time_stays_local():
+    out = call("build_schedule", start_date="2026-10-05", weeks=8, pillars=["A", "B"], timezone="Europe/Berlin", audience_timezone="America/New_York",
+               platforms=[{"platform": "youtube", "posts_per_week": 0.25, "time": "18:00"}])
+    assert [r["date"] for r in out["slots"]] == ["2026-10-09", "2026-11-06"]
+    assert all(r["time_local"] == "18:00" and r["time_anchored_to"] == "creator" for r in out["slots"])
+    with pytest.raises(ToolError):
+        call("build_schedule", start_date="2026-10-05", weeks=2, pillars=["A"], platforms=[{"platform": "x", "posts_per_week": 0.3}])

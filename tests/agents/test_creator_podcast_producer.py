@@ -65,7 +65,8 @@ def test_plan_ad_breaks_positions_and_revenue():
     assert types == ["pre-roll", "mid-roll 1", "mid-roll 2", "post-roll"]
     mids = [b["at_s"] for b in out["breaks"] if b["type"].startswith("mid")]
     assert all(480 <= s <= 0.9 * 3500 for s in mids) and mids[0] < mids[1]
-    assert out["estimated_revenue"] == 12000 / 1000 * 25 * 4
+    # placement-weighted: pre-roll 0.75×, two mid-rolls 1×, post-roll 0.5× of the 60-s mid-roll CPM
+    assert out["estimated_revenue"] == round(12000 / 1000 * 25 * (0.75 + 1 + 1 + 0.5), 2)
     assert out["ad_load_pct"] == round(100 * 180 / 3500, 1)
     light = call("plan_ad_breaks", duration="20:00", ad_load="light")
     assert [b["type"] for b in light["breaks"]] == ["pre-roll", "mid-roll 1"]

@@ -97,3 +97,25 @@ def test_check_reportable():
     assert any("personal information" in r["reason"] for r in pii["reportable_reasons"])
     with pytest.raises(ToolError):
         call("check_reportable", review_text="   ")
+
+
+def test_tag_reviews_leak_safety_delivery_and_policy_flags():
+    out = call("tag_reviews", today="2026-10-01", reviews=[
+        {"id": "leak", "rating": 2, "text": "Not leak proof at all, soaked my bag."},
+        {"id": "praise", "rating": 5, "text": "Totally leak proof, never leaks. Love it."},
+        {"id": "injury", "rating": 1, "text": "A sharp edge on the lid cut my son's lip, we went to urgent care."},
+        {"id": "courier", "rating": 1, "text": "The FedEx driver left it at the wrong porch and it was stolen."},
+        {"id": "pii", "rating": 1, "text": "Wrong item. Call me at 555-201-3344."},
+    ])
+    by = {r["id"]: r for r in out["reviews"]}
+    assert "leaking" in by["leak"]["issue_tags"] and "leaking" not in by["praise"]["issue_tags"]
+    assert out["queue_order"][0] == "injury" and out["safety_escalations"] == ["injury"]
+    assert "delivery_lost" in by["courier"]["issue_tags"] and by["courier"]["policy_flags"] == ["courier-only"]
+    assert by["pii"]["policy_flags"] == ["personal information"]
+
+
+def test_lint_blocks_admissions_on_injury_reviews():
+    review = "The lid cracked and a sharp edge cut my son's lip. We had to go to urgent care."
+    reply = "Jess, I'm sorry. This should never have happened and we are recalling the same batch. Please email care@hydra.com and I'll help. — Maya, Care"
+    out = call("lint_response", response=reply, review_text=review, rating=1, reviewer_name="Jess")
+    assert out["ready_to_post"] is False and any("concedes cause" in i for i in out["issues"])

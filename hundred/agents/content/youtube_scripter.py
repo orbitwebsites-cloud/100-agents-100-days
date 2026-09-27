@@ -78,7 +78,9 @@ AGENT = Agent(
        Recommend two and say what the thumbnail must show to complement each (the title
        and thumbnail should not say the same thing).
     7. **Description and chapters.** Call `youtube_scripter__build_chapters` with the
-       section titles and durations from the timing tool. It computes cumulative
+       `chapters` list script_timing returned (titles + exact start times — don't re-add
+       rounded durations, that drifts a second per section); rename titles for viewers and
+       drop an end-screen section under 10 s. It computes cumulative
        timestamps (first must be 0:00, ≥ 3 chapters, each ≥ 10 s), and checks the
        description's first 150 characters — the part shown above "Show more" — for the
        promise and the keyword. Deliver the description block ready to paste.
@@ -221,6 +223,7 @@ def script_timing(script: str, wpm: int = 150, target_minutes: float = 0.0) -> d
         "runtime_seconds": round(total_sec),
         "runtime_minutes": round(total_sec / 60, 1),
         "sections": rows,
+        "chapters": [{"title": r["section"], "start": r["start"]} for r in rows],
         "hook_seconds": round(hook_sec),
         "hook_fits_30s": hook_sec <= 30,
         "target_minutes": target_minutes or None,
@@ -453,6 +456,9 @@ def build_chapters(chapters: list[dict], description: str = "", keyword: str = "
         rows.append({"n": i, "timestamp": c.mmss(start), "seconds": round(start), "title": title})
     if rows[0]["seconds"] != 0:
         flags.append("First chapter must start at 0:00 or YouTube ignores all chapters.")
+    last = chapters[-1]
+    if isinstance(last, dict) and last.get("duration") not in (None, "") and _parse_duration(last["duration"]) < 10:
+        flags.append(f"Chapter '{rows[-1]['title'][:30]}' is under 10 s — YouTube requires ≥ 10 s per chapter; merge it into the previous one.")
     if len(rows) < 3:
         flags.append(f"Only {len(rows)} chapters — YouTube needs at least 3.")
     for a, b in zip(rows, rows[1:]):
@@ -486,6 +492,6 @@ def build_chapters(chapters: list[dict], description: str = "", keyword: str = "
         "total_runtime": c.mmss(total) if total is not None else None,
         "description": desc_report,
         "flags": flags,
-        "valid": not any(f.startswith(("First chapter", "Only", "Chapter '")) for f in flags),
+        "valid": not any(f.startswith(("First chapter", "Only", "Chapter ")) for f in flags),
         "verdict": "Chapters valid." if not flags else f"{len(flags)} issue(s) with chapters/description.",
     }

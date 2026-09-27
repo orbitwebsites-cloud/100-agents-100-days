@@ -83,8 +83,12 @@ def test_build_chapters_cumulative_and_rules():
     out = call("build_chapters", chapters=[{"title": "Hook", "duration": 30}, {"title": "Why", "duration": "2:10"}, {"title": "Fix", "duration": "3m 5s"}, {"title": "Close", "duration": 8}], description="In this video I show you cold emails.", keyword="cold emails")
     assert out["chapter_block"] == "0:00 Hook\n0:30 Why\n2:40 Fix\n5:45 Close"
     assert out["total_runtime"] == "5:53"
-    assert out["valid"] is True
+    # the last chapter runs 8 s — YouTube's minimum is 10 s per chapter, so the set is invalid
+    assert out["valid"] is False
+    assert any("'Close' is under 10 s" in f for f in out["flags"])
     assert any("In this video" in f for f in out["description"]["flags"])
+    ok = call("build_chapters", chapters=[{"title": "Hook", "duration": 30}, {"title": "Why", "duration": "2:10"}, {"title": "Close", "duration": 12}])
+    assert ok["valid"] is True
     bad = call("build_chapters", chapters=[{"title": "A", "start": "0:10"}, {"title": "B", "start": "0:15"}])
     assert bad["valid"] is False
     assert any("0:00" in f for f in bad["flags"]) and any("at least 3" in f for f in bad["flags"]) and any("under 10 s" in f for f in bad["flags"])
@@ -95,3 +99,11 @@ def test_build_chapters_rejects_bad_duration():
         call("build_chapters", chapters=[{"title": "A", "duration": "soon"}])
     with pytest.raises(ToolError):
         call("build_chapters", chapters=[{"title": ""}])
+
+
+def test_script_timing_returns_exact_chapter_starts():
+    script = "## HOOK\n" + "word " * 70 + "\n## PART ONE\n" + "word " * 70 + "\n## PART TWO\n" + "word " * 70
+    out = call("script_timing", script=script, wpm=150)
+    assert out["chapters"] == [{"title": "HOOK", "start": "0:00"}, {"title": "PART ONE", "start": "0:28"}, {"title": "PART TWO", "start": "0:56"}]
+    built = call("build_chapters", chapters=out["chapters"])
+    assert built["chapter_block"] == "0:00 HOOK\n0:28 PART ONE\n0:56 PART TWO"

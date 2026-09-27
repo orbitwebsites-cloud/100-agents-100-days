@@ -123,7 +123,10 @@ AGENT = Agent(
     """,
 )
 
-TOKEN_RE = re.compile(r"\{\{\s*([\w.]+)\s*\}\}|\{([\w.]+)\}|\*\|([A-Z_]+)\|\*|%%([\w.]+)%%")
+# Merge tokens: {{ first_name }}, {{first_name|there}}, {{ first_name | default: "there" }}, {first_name},
+# Mailchimp *|FNAME|* and %%first_name%%. The fallback part is allowed but not captured.
+TOKEN_RE = re.compile(r"\{\{\s*([\w.]+)\s*(?:\|[^{}]*)?\}\}|\{([\w.]+)\}|\*\|([A-Z0-9_]+)(?::[^|]*)?\|\*|%%([\w.]+)%%")
+ACRONYMS = frozenset("SAAS HTML HTTP HTTPS ASAP FAQ ROI CEO USA NYC API CRM SEO PDF".split())
 LINK_RE = re.compile(r"https?://\S+|\[[^\]]+\]\([^)]+\)|<a\s", re.I)
 CTA_RE = re.compile(r"\[([^\]]{2,60})\]")
 SHORTENER_RE = re.compile(r"\b(bit\.ly|tinyurl\.com|t\.co|goo\.gl|ow\.ly|rebrand\.ly|cutt\.ly)\b", re.I)
@@ -131,7 +134,8 @@ SHORTENER_RE = re.compile(r"\b(bit\.ly|tinyurl\.com|t\.co|goo\.gl|ow\.ly|rebrand
 
 def _subject_score(subject: str, preheader: str) -> dict:
     s = subject.strip()
-    L = visible_len(s)
+    # Merge tokens render as the subscriber's value; count them as a typical 7-char first name.
+    L = visible_len(TOKEN_RE.sub("Jessica", s))
     ws = text.words(s)
     score = 60
     flags, fixes = [], []
@@ -160,6 +164,16 @@ def _subject_score(subject: str, preheader: str) -> dict:
         score -= 20
         flags.append("ALL CAPS")
         fixes.append("Use sentence case.")
+    else:
+        shouty = [w for w in ws if len(w) >= 4 and w.isupper() and w.isalpha() and w not in ACRONYMS]
+        if shouty:
+            score -= 8
+            flags.append(f"ALL-CAPS word: {', '.join(shouty[:3])}")
+            fixes.append("Write it in sentence case; caps read as shouting and trip filters.")
+    punct = len(re.findall(r"[!?.,;:#&*$%@]", TOKEN_RE.sub("", s)))
+    if punct > 3:
+        score -= 5
+        flags.append(f"{punct} punctuation marks — keep to 3 or fewer")
     excl = s.count("!")
     if excl >= 2:
         score -= 15
@@ -193,7 +207,7 @@ def _subject_score(subject: str, preheader: str) -> dict:
     if s.isupper() is False and s[:1].isupper() and sum(1 for w in ws if w[:1].isupper()) >= max(3, len(ws) - 1) and len(ws) >= 3:
         score -= 4
         flags.append("Title Case reads like an ad; sentence case reads like a person")
-    out = {"subject": s, "chars": L, "words": len(ws), "mobile_visible": s[:41], "score": max(0, min(100, score)), "flags": flags, "fixes": fixes}
+    out = {"subject": s, "chars": L, "words": len(ws), "mobile_visible": TOKEN_RE.sub("Jessica", s)[:41], "score": max(0, min(100, score)), "flags": flags, "fixes": fixes}
     if preheader:
         p = preheader.strip()
         pl = visible_len(p)

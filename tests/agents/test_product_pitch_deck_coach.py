@@ -79,3 +79,25 @@ def test_slide_density_flags_walls_and_labels():
 def test_slide_density_rejects_non_object():
     with pytest.raises(ToolError):
         call("slide_density", slides=["Title"])
+
+
+def test_check_deck_structure_claim_titles_need_slide_types():
+    titles = ["Acme", "Front desks lose 11 hours a week to phone scheduling", "Our AI books appointments 24/7", "Why now: voice AI got 90% cheaper", "Use of funds: 18 months"]
+    fallback = call("check_deck_structure", slide_titles=titles)
+    m = {x["slide"]: x["canonical"] for x in fallback["mapping"]}
+    assert m[2] == "problem" and m[4] == "why_now" and m[5] == "use_of_funds"
+    given = call("check_deck_structure", slide_titles=titles, slide_types=["title", "problem", "solution", "why_now", "use_of_funds"])
+    assert "solution" not in {x["slide"] for x in given["missing"]}
+    with pytest.raises(ToolError):
+        call("check_deck_structure", slide_titles=titles, slide_types=["title"])
+
+
+def test_raise_math_counts_existing_cash_and_growth():
+    out = call("raise_math", amount=2_500_000, valuation=12_000_000, option_pool_pct=10, monthly_burn=140_000, burn_growth_pct_per_month=3, start_date="2026-11-01", existing_cash=300_000)
+    assert out["runway"]["months"] == 15.9 and out["runway"]["end_date"] == "2028-02-01"
+    assert any("$3,278,021" in f for f in out["flags"])
+
+
+def test_slide_density_flags_one_percent_of_market_claim():
+    out = call("slide_density", slides=[{"title": "Acme", "body": "x"}, {"title": "A $12B market", "body": "We only need 1% of it."}])
+    assert any("1% of the market" in i for i in out["slides"][1]["issues"])

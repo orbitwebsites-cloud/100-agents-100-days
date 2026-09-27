@@ -107,3 +107,17 @@ def test_trade_ranker_bad_input():
         call("trade_ranker", trades=[{"item": "x", "side": "give"}])
     with pytest.raises(ToolError):
         call("trade_ranker", trades=[{"item": "x", "side": "give", "cost_to_us": 9}, {"item": "y", "side": "get"}])
+
+
+def test_anchor_capped_at_price_already_on_the_table():
+    out = call("zopa_batna", our_walkaway=96000, our_target=110000, their_walkaway_estimate=115000, current_offer=120000)
+    assert out["recommended_anchor"] == 120000 and out["anchor_is_current_offer"] is True
+    free = call("zopa_batna", our_walkaway=96000, our_target=110000, their_walkaway_estimate=115000)
+    assert free["recommended_anchor"] == 123200 and free["anchor_is_current_offer"] is False
+
+
+def test_cash_in_first_year_counts_all_instalments():
+    out = call("compare_packages", packages=[{"name": "m", "annual_price": 120000, "term_years": 2, "discount_pct": 10, "payment": "monthly"}, {"name": "q", "annual_price": 120000, "term_years": 2, "payment": "quarterly"}, {"name": "arr", "annual_price": 120000, "payment": "annual_arrears"}])
+    by = {p["name"]: p for p in out["packages"]}
+    assert by["m"]["cash_in_first_12_months"] == 108000 and by["q"]["cash_in_first_12_months"] == 120000
+    assert by["arr"]["cash_in_first_12_months"] == 0

@@ -7,7 +7,7 @@ from datetime import date
 
 from ...core import Agent, ToolError
 from ...lib import dates, text
-from ._common import as_float, as_str, md_table, pct_change, require_list
+from ._common import as_float, as_str, as_str_list, md_table, pct_change, require_list
 
 AGENT = Agent(
     slug="status-reporter",
@@ -58,7 +58,8 @@ AGENT = Agent(
        `status_reporter__week_over_week`. It returns completed, added, removed, slipped
        (with days), pulled-in and stale items. "Shipped" means done, not "almost".
     3. **Check the dates.** For milestones call `status_reporter__milestone_health` with
-       baseline vs forecast (and actual when done). Slip 0 = green, 1-5 working days =
+       baseline vs forecast (and actual when done) and the team's holidays, so slip is in
+       real working days. Slip 0 = green, 1-5 working days =
        amber, > 5 or overdue = red. Report slip in working days and the new date.
     4. **Write the update** in the Output format. Order: status line → TL;DR (3 bullets max)
        → asks/decisions needed → progress → risks with mitigation and owner → next week.
@@ -220,14 +221,16 @@ def _norm_items(items: list, label: str) -> dict[str, dict]:
 
 
 @AGENT.tool
-def week_over_week(previous: list[dict], current: list[dict]) -> dict:
+def week_over_week(previous: list[dict], current: list[dict], holidays: list[str] = []) -> dict:
     """Diff last week's item list against this week's: completed, added, removed, slipped (days), pulled in, stale.
 
     Args:
         previous: Last week's items: {"item": str, "status": str, "due": "YYYY-MM-DD", "owner": str}.
         current: This week's items in the same shape.
+        holidays: Non-working dates (YYYY-MM-DD) excluded from working-day slip counts.
     """
     prev, cur = _norm_items(previous, "previous"), _norm_items(current, "current")
+    hol = {dates.parse_date(h) for h in as_str_list(holidays, "holidays", 400)}
     if not prev and not cur:
         raise ToolError("Both lists are empty.")
     completed, added, removed, slipped, pulled_in, stale, regressed, status_changes = [], [], [], [], [], [], [], []
@@ -247,7 +250,7 @@ def week_over_week(previous: list[dict], current: list[dict]) -> dict:
         elif not c_done and c["due"] == p["due"]:
             stale.append({"item": c["item"], "status": c["status"], "owner": c["owner"]})
         if p["due"] and c["due"] and c["due"] != p["due"]:
-            days = dates.business_days_between(p["due"], c["due"])
+            days = dates.business_days_between(p["due"], c["due"], hol)
             rec = {"item": c["item"], "from": p["due"].isoformat(), "to": c["due"].isoformat(), "working_days": days, "owner": c["owner"]}
             (slipped if days > 0 else pulled_in).append(rec)
     for key, p in prev.items():
@@ -275,14 +278,16 @@ def week_over_week(previous: list[dict], current: list[dict]) -> dict:
 
 
 @AGENT.tool
-def milestone_health(milestones: list[dict], as_of: str = "", amber_max_days: int = 5) -> dict:
+def milestone_health(milestones: list[dict], as_of: str = "", amber_max_days: int = 5, holidays: list[str] = []) -> dict:
     """RAG per milestone from baseline vs forecast/actual dates: slip in working days, overdue, days to go, overall colour.
 
     Args:
         milestones: List of {"name": str, "baseline": "YYYY-MM-DD", "forecast": "YYYY-MM-DD", "actual": "YYYY-MM-DD" or "", "percent_complete": 0-100 optional}.
         as_of: Today's date (YYYY-MM-DD); defaults to today.
         amber_max_days: Slip in working days up to which a milestone is AMBER rather than RED (default 5).
+        holidays: Non-working dates (YYYY-MM-DD) excluded from working-day slip counts (use the project's calendar).
     """
+    hol = {dates.parse_date(h) for h in as_str_list(holidays, "holidays", 400)}
     milestones = require_list(milestones, "milestones", 200)
     today = dates.parse_date(as_of) if as_of else date.today()
     if not (1 <= amber_max_days <= 30):
@@ -300,7 +305,7 @@ def milestone_health(milestones: list[dict], as_of: str = "", amber_max_days: in
         pct = m.get("percent_complete")
         pct = as_float(pct, f"{name}.percent_complete", lo=0, hi=100) if pct not in (None, "") else None
         eff = actual or forecast
-        slip = dates.business_days_between(base, eff)
+        slip = dates.business_days_between(base, eff, hol)
         days_to_go = (eff - today).days
         reasons = []
         if actual:
@@ -385,14 +390,20 @@ def lint_report(report: str, audience: str = "exec") -> dict:
             if not re.search(r"\d", window):  # a number nearby makes the phrase acceptable
                 vague.append(ph)
     vague_counts = {p: vague.count(p) for p in dict.fromkeys(vague)}
-    passive = text.passive_sentences(report)
-    long_sents = [s for s in sents if len(text.words(s)) > 30]
+    prose = "\n".join(ln for ln in report.splitlines() if not ln.lstrip().startswith("|"))  # tables are not sentences
+    passive = text.passive_sentences(prose)
+    long_sents = [s for s in text.sentences(prose) if len(text.words(s)) > 30]
     numbers = len(re.findall(r"\d+(?:[.,]\d+)?%?", report))
     deltas = len(re.findall(r"\(\s*(vs|from|was|last week)[^)]*\d[^)]*\)|[+-]\d+(?:\.\d+)?%?|↑|↓", report))
     asks_before_progress = True
     if sections["asks"] and sections["progress"]:
-        a_pos = _SECTIONS["asks"].search(report).start()
-        p_pos = _SECTIONS["progress"].search(report).start()
+        # compare section HEADINGS when the draft has them ("**Asks**", "## Progress", "Asks:"), else first mentions
+        heads = [(m.start(), m.group(0)) for m in re.finditer(r"(?m)^[ \t]*(?:#{1,6}[ \t]+|\*\*|__)?[^\n|]{1,50}?(?:\*\*|__)?[ \t]*:?[ \t]*$", report)
+                 if len(text.words(m.group(0))) <= 6]
+        a_head = next((pos for pos, h in heads if _SECTIONS["asks"].search(h)), None)
+        p_head = next((pos for pos, h in heads if _SECTIONS["progress"].search(h)), None)
+        a_pos = a_head if a_head is not None else _SECTIONS["asks"].search(report).start()
+        p_pos = p_head if p_head is not None else _SECTIONS["progress"].search(report).start()
         asks_before_progress = a_pos < p_pos
     score = 100
     fixes = []

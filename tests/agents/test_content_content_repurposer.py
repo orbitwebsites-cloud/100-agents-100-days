@@ -85,3 +85,15 @@ def test_repurpose_plan_rejects_bad_input():
         call("repurpose_plan", source_type="article", source_words=50, platforms=["x"])
     with pytest.raises(ToolError):
         call("repurpose_plan", source_type="article", source_words=1000, platforms=["x"], start_date="next monday")
+
+
+def test_plan_puts_big_pieces_midweek_and_leads_on_different_days():
+    out = call("repurpose_plan", source_type="article", source_words=1400, platforms=["x", "linkedin", "instagram"], start_date="2026-10-05", weeks=2)
+    leads = [s for s in out["calendar"] if s["atom_hint"] == "strongest atom"]
+    assert len({s["date"] for s in leads}) == len(leads) == 3
+    assert all(s["weekday"] in ("Tue", "Wed", "Thu") for s in leads if s["piece"].endswith("(lead)"))
+
+
+def test_fit_check_instagram_catches_bare_domain():
+    out = call("fit_check", piece="Our full pricing breakdown is at pricingnotes.io/raise — 40% up, 11 customers lost.", platform="instagram")
+    assert any("link in bio" in f for f in out["flags"])

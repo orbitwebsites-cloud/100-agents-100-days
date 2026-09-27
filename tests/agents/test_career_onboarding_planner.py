@@ -102,3 +102,9 @@ def test_intro_meeting_schedule_respects_windows_and_daily_cap():
 def test_intro_meeting_schedule_rejects_bad_priority():
     with pytest.raises(ToolError):
         call("intro_meeting_schedule", start_date="2026-10-12", stakeholders=[{"name": "A", "priority": 9}])
+
+
+def test_build_30_60_90_warns_on_short_holiday_week():
+    out = call("build_30_60_90", start_date="2026-11-23", role="PM", holidays=["2026-11-26", "2026-11-27"])
+    assert out["week_1_end"]["date"] == "2026-11-25" and out["day_5"]["date"] == "2026-12-01"
+    assert any("only 3 working day" in w for w in out["warnings"])

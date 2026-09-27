@@ -106,3 +106,27 @@ def test_grade_questions_bad_input():
         call("grade_questions", questions=[])
     with pytest.raises(ToolError):
         call("grade_questions", questions=["   "])
+
+
+def test_topics_catch_everyday_wording_and_ignore_time_spend():
+    t = ("Rep: How are reminders handled?\n"
+         "Buyer: Honestly it's a mess, reminders drop when we're short-staffed and the managers spend hours on the phone. "
+         "We want it live before the January reset. We had a demo from Weave in the spring.\n")
+    out = call("analyze_transcript", transcript=t, rep_name="Rep")
+    assert {"pain", "timeline", "competition"} <= set(out["topics_covered"])
+    assert "budget" in out["topics_missed"]  # "spend hours" is not a budget conversation
+
+
+def test_double_barrelled_joined_by_comma_and():
+    out = call("grade_questions", questions=["Who else is involved, and what's your timeline?", "What's driving the timeline?"])
+    assert [q["type"] for q in out["questions"]] == ["multi", "open"]
+
+
+def test_minutes_from_timestamps_and_partial_transcript_warning():
+    t = "[00:00] Rep: Hi, what prompted the call?\n[04:30] Buyer: We keep missing renewals and it costs us."
+    out = call("analyze_transcript", transcript=t, rep_name="Rep")
+    assert out["estimated_minutes"] == 4.5 and out["minutes_source"] == "timestamps"
+    partial = call("analyze_transcript", transcript=t, rep_name="Rep", call_minutes=30)
+    assert any("partial transcript" in f for f in partial["flags"])
+    fill = call("analyze_transcript", transcript="Rep: I think you'll like the dashboard. It was, like, huge.\nBuyer: ok", rep_name="Rep")
+    assert fill["rep_fillers"] == {"like": 1}

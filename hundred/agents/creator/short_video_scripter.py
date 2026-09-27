@@ -63,8 +63,9 @@ AGENT = Agent(
        The first spoken line is the hook verbatim. Deliver the payoff before the last 20% of
        the runtime; the CTA is one line, never a paragraph.
     4. **Time it.** Call `short_video_scripter__time_script` with the script, pace and
-       platform. It counts only spoken words, gives cumulative timestamps per line, the hook
-       length in seconds, and checks the platform limit. If the hook exceeds 3 s or the
+       platform. It counts only spoken words — numbers as they are said aloud ("$250,000" is
+       five words, "0.01%" is five) — gives cumulative timestamps per line, the hook length in
+       seconds, and checks the platform limit. If the hook exceeds 3 s or the
        total is more than 10% over target, cut — never speed the delivery to fix a script.
     5. **Lint it.** Call `short_video_scripter__lint_script`. It flags fillers, warm-up
        intros ("hey guys", "in this video"), sentences too long to say in one breath, a
@@ -129,6 +130,47 @@ INTRO_RE = re.compile(r"^\s*(hey|hi|hello|what's up|welcome|so today|today i|in 
 CTA_RE = re.compile(r"\b(follow|subscribe|comment|like this|share this|save this|link in (my )?bio|dm me|sign up|download|part (2|two)|tag someone)\b", re.I)
 
 
+# Numbers are read aloud as several words ("$250,000" = "two hundred fifty thousand dollars"),
+# so a script full of figures runs longer than its written word count suggests.
+NUM_RE = re.compile(r"([$£€])?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s?(?:%|percent\b)|(?:k|K|m|M|bn|x)\b)?")
+
+
+def _int_words(n: int) -> int:
+    """How many words it takes to say a whole number in English (twenty-one = 2)."""
+    if n < 21:
+        return 1
+    if n < 100:
+        return 1 if n % 10 == 0 else 2
+    if n < 1000:
+        return 2 + (_int_words(n % 100) if n % 100 else 0)
+    for scale in (10**12, 10**9, 10**6, 10**3):
+        if n >= scale:
+            return _int_words(n // scale) + 1 + (_int_words(n % scale) if n % scale else 0)
+    return 1
+
+
+def _number_words(m: re.Match) -> int:
+    cur, whole, dec, suffix = m.group(1), m.group(2), m.group(3), (m.group(4) or "").strip()
+    n = int(whole.replace(",", ""))
+    if not cur and not dec and not suffix and "," not in whole and 1100 <= n <= 2099 and len(whole) == 4:
+        count = 3 if 2000 <= n <= 2009 else _int_words(n // 100) + (_int_words(n % 100) if n % 100 else 1)  # years
+    else:
+        count = _int_words(n)
+    if dec:
+        count += 1 + len(dec) - 1  # "point" + one word per digit
+    if suffix and suffix.lower() != "percent":
+        count += 1  # percent / thousand / million / billion / times
+    if cur:
+        count += 1  # dollars / pounds / euros
+    return count
+
+
+def spoken_word_count(line: str) -> int:
+    """Words as they will be spoken: numbers, currency and % expanded; everything else as written."""
+    extra = sum(_number_words(m) for m in NUM_RE.finditer(line))
+    return len(text.words(NUM_RE.sub(" ", line))) + extra
+
+
 def _spoken_lines(script: str) -> tuple[list[str], list[str]]:
     spoken, directions = [], []
     for raw in script.splitlines():
@@ -155,8 +197,9 @@ def time_script(
 ) -> dict:
     """Time a short-video script line by line at a realistic speaking pace and check platform limits.
 
-    Counts only spoken words (ignores [TEXT: …] and [B-ROLL: …] directions), returns cumulative
-    timestamps, hook duration, and whether the runtime fits the target and the platform maximum.
+    Counts only spoken words (ignores [TEXT: …] and [B-ROLL: …] directions) and counts numbers as
+    they are said aloud ("$250,000" = 5 words, "4%" = 2), returns cumulative timestamps, hook
+    duration, and whether the runtime fits the target and the platform maximum.
 
     Args:
         script: The script, one spoken line per line; directions in [brackets] are not timed.
@@ -178,8 +221,10 @@ def time_script(
     if not spoken:
         raise ToolError("No spoken lines found — only directions in brackets.")
     rows, t = [], 0.0
+    written_total = 0
     for i, line in enumerate(spoken, 1):
-        n = len(text.words(line))
+        n = spoken_word_count(line)
+        written_total += len(text.words(line))
         secs = n / wps
         rows.append({"n": i, "starts_at": fmt_timestamp(t), "start_s": round(t, 1), "words": n, "seconds": round(secs, 1), "line": line[:300]})
         t += secs
@@ -206,6 +251,7 @@ def time_script(
     return {
         "pace_words_per_second": wps,
         "spoken_words": total_words,
+        "written_words": written_total,
         "spoken_lines": len(rows),
         "total_seconds": round(total, 1),
         "total_timestamp": fmt_timestamp(total),
@@ -227,7 +273,7 @@ HOOK_PATTERNS = [
     (re.compile(r"\b\d+([.,]\d+)?\s*(%|k|x|\$|£|€|days?|hours?|minutes?|seconds?|weeks?|months?|years?|mistakes?|ways?|things?|reasons?|steps?|rules?|signs?)\b|^\s*\d+\b|[\$£€]\d", re.I), "specific number", 18),
     (re.compile(r"\?\s*$"), "direct question", 12),
     (re.compile(r"\b(you|your|you're|you've)\b", re.I), "second person", 14),
-    (re.compile(r"\b(nobody|no one|everyone|most people|wrong|backwards|myth|lie|secret|actually|truth|mistake|worst|instead)\b", re.I), "contrarian / tension word", 16),
+    (re.compile(r"\b(nobody|no one|everyone|most people|wrong|backwards|myth|lie|secret|actually|truth|mistakes?|worst|instead|losing|lose|losses|costing|wasting|broke|never)\b", re.I), "contrarian / tension word", 16),
     (re.compile(r"\b(i|we) (did|tried|tested|spent|lost|made|doubled|quit|built|failed)\b", re.I), "outcome-first / proof", 14),
     (re.compile(r"\b(how|why|what)\b", re.I), "curiosity frame", 8),
 ]
@@ -249,8 +295,7 @@ def score_hook(hook: str) -> dict:
         raise ToolError("Hook is empty.")
     if len(hook) > 500:
         raise ToolError("A hook is one line; this is over 500 chars.")
-    ws = text.words(hook)
-    n = len(ws)
+    n = spoken_word_count(hook)
     score = 30
     reasons, fixes = [], []
     if n <= 8:

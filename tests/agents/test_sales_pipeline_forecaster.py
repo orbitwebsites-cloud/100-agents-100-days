@@ -103,3 +103,44 @@ def test_forecast_accuracy_mape_and_bias():
     assert out["calibration_multiplier"] == 0.923
     with pytest.raises(ToolError):
         call("forecast_accuracy", forecasts=[{"forecast": 1, "actual": 0}, {"forecast": 1, "actual": 1}])
+
+
+def test_commit_needs_next_step_and_concentration_uses_forecast_deals():
+    deals = [
+        {"name": "Big slipped", "stage": "proposal", "amount": 500000, "close_date": "2026-08-01", "next_step": "x"},
+        {"name": "A", "stage": "negotiation", "amount": 100000, "close_date": "2026-09-20", "next_step": "sign", "owner": "Dana"},
+        {"name": "B", "stage": "negotiation", "amount": 60000, "close_date": "2026-09-25", "owner": "Luis"},
+        {"name": "C", "stage": "discovery", "amount": 40000, "close_date": "2026-11-01", "next_step": "demo", "owner": "Luis"},
+    ]
+    out = call("weighted_pipeline", deals=deals, today="2026-09-01", period_end="2026-09-30")
+    cat = {d["name"]: d["category"] for d in out["deals"]}
+    assert cat == {"Big slipped": "slipped", "A": "commit", "B": "best_case", "C": "pipeline"}
+    assert out["commit"] == 100000 and out["best_case"] == 60000 and out["forecast"] == 130000
+    assert out["concentration"] == {"deal": "A", "share_of_forecast_pct": 76.9}  # not the slipped $500k deal
+    assert out["open_in_period"] == 160000 and out["weighted_in_period"] == 112000
+    assert out["by_owner"]["Luis"]["best_case"] == 60000 and out["by_owner"]["Dana"]["forecast"] == 100000
+
+
+def test_pipeline_changes_classifies_moves():
+    prev = [
+        {"name": "A", "stage": "proposal", "amount": 100, "close_date": "2026-09-10"},
+        {"name": "B", "stage": "negotiation", "amount": 50, "close_date": "2026-09-20"},
+        {"name": "C", "stage": "negotiation", "amount": 30, "close_date": "2026-09-25"},
+        {"name": "D", "stage": "demo", "amount": 20, "close_date": "2026-10-15"},
+        {"name": "E", "stage": "discovery", "amount": 10, "close_date": "2026-09-30"},
+    ]
+    cur = [
+        {"name": "A", "stage": "negotiation", "amount": 120, "close_date": "2026-10-05"},
+        {"name": "B", "stage": "closed won", "amount": 50, "close_date": "2026-09-02"},
+        {"name": "C", "stage": "closed lost", "amount": 30, "close_date": "2026-09-02"},
+        {"name": "D", "stage": "demo", "amount": 20, "close_date": "2026-09-28"},
+        {"name": "F", "stage": "discovery", "amount": 5, "close_date": "2026-09-29"},
+    ]
+    out = call("pipeline_changes", previous=prev, current=cur, period_end="2026-09-30")
+    s = out["summary"]
+    assert s["won"] == 50 and s["lost"] == 30 and s["new"] == 5 and s["removed_without_outcome"] == 10
+    assert s["pushed_out_of_period"] == 120 and s["pulled_into_period"] == 20
+    assert s["open_in_period_before"] == 190 and s["open_in_period_now"] == 25 and s["net_in_period_change"] == -165
+    assert out["stage_advanced"] == [{"name": "A", "from": "proposal", "to": "negotiation"}]
+    with pytest.raises(ToolError):
+        call("pipeline_changes", previous=[{"stage": "demo"}], current=cur, period_end="2026-09-30")

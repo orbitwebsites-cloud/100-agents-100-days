@@ -58,7 +58,9 @@ AGENT = Agent(
     1. **Triage first.** For any batch (or a single ticket you are unsure about) call
        `support_desk__triage_tickets`. It assigns issue category, priority P1-P4, the SLA
        hours for that priority, sentiment and escalation flags (chargeback, legal, safety,
-       press, repeat contact). Handle P1s before drafting anything else.
+       press, repeat contact). Handle P1s before drafting anything else. Skim every P3/P4
+       yourself for injury language the rules missed — a missed safety ticket is the one
+       mistake that cannot be fixed with a good reply.
     2. **Compute the clock.** Call `support_desk__sla_deadline` with the ticket's created
        time, the SLA and your business hours/holidays. It returns the due time, whether it
        is breached and the remaining time. Never estimate business hours by hand — Friday
@@ -89,7 +91,9 @@ AGENT = Agent(
       → Resolve (what you are doing, already done where possible) → Expect (what happens
       next, by when, and how to reach you).
     - **Priority & SLA (business hours unless stated):** P1 safety/legal/chargeback/press
-      or VIP outage: 1h first response, 4h resolution. P2 damaged/wrong/missing item,
+      or VIP outage: 1h first response, 4h resolution — on the calendar clock
+      (`calendar_hours: true`): an injury report on Friday evening cannot wait for Monday.
+      Within P1: injury/safety first, then legal/press, then chargebacks. P2 damaged/wrong/missing item,
       repeat contact, order > $200: 4h / 24h. P3 WISMO, returns, sizing: 8h / 48h.
       P4 feedback, product questions, pre-sales: 24h / 5 days.
     - **Resolution ladder for damage/defect:** reship immediately (no photo demand under
@@ -255,46 +259,83 @@ def sla_deadline(
                 "business_hours_remaining": round(remaining, 2),
                 "breached": ref > due,
                 "status": "BREACHED" if ref > due else ("at risk (< 25% left)" if remaining < 0.25 * hours else "on track"),
-                "verdict": f"Due {due.strftime('%a %Y-%m-%d %H:%M')}; {abs(remaining):.1f} business hours {'overdue' if remaining < 0 else 'remaining'}.",
+                "verdict": f"Due {due.strftime('%a %Y-%m-%d %H:%M')}; {abs(remaining):.1f} {'calendar' if calendar_hours else 'business'} hours {'overdue' if remaining < 0 else 'remaining'}.",
             }
         )
     return out
 
 
-CATEGORY_RULES: list[tuple[str, str, str]] = [  # (category, regex, suggested macro)
-    ("safety", r"\b(injur|hurt|burn|fire|allerg|rash|hospital|choking|toxic|recall)\w*", "escalate_safety"),
-    ("chargeback_fraud", r"\b(chargeback|dispute(d)? (the|my) (charge|payment)|unauthori[sz]ed|fraud|scam)\b", "escalate_finance"),
-    ("legal_press", r"\b(lawyer|attorney|legal action|sue|lawsuit|bbb|better business|journalist|press|consumer protection)\b", "escalate_lead"),
-    ("damaged_defective", r"\b(broken|damaged|defective|cracked|leak(ing|ed)?|doesn'?t work|not working|stopped working|faulty|torn|dented)\b", "damage_reship"),
-    ("wrong_or_missing_item", r"\b(wrong (item|size|colou?r|product|order)|missing (item|part|piece)|received (the )?wrong|not what i ordered|incomplete)\b", "wrong_item_fix"),
+# Injury language: matched only when not negated ("it wouldn't hurt to…", "no injuries") — see _safety_hit.
+SAFETY_RE = re.compile(
+    r"\b(injur\w*|hurt|hurts|burn(ed|t|s)?|caught fire|on fire|fire hazard|smok(e|ed|ing)|explod\w*|allerg\w*|rash|hives|hospital\w*|"
+    r"emergency room|\ber\b|urgent care|stitch(es)?|bleed\w*|blood|chok\w*|toxic|poison\w*|recall\w*|sharp edges?|"
+    r"cut (my|his|her|their|our|me|him|them)\b|cut (a |the )?(finger|hand|lip|mouth|thumb|face)|electric shock|shocked (me|him|her)|unsafe|dangerous)",
+    re.I,
+)
+SAFETY_NEGATION = re.compile(r"\b(wouldn'?t|would not|won'?t|will not|doesn'?t|does not|didn'?t|did not|never|no|not|without)\s+(\w+\s+){0,1}$", re.I)
+SAFETY_QUESTION_RE = re.compile(r"\b(is it safe|safe to (drink|use|eat)|is this (safe|normal)|bpa|lead (paint|content))\b", re.I)
+
+
+def _safety_hit(low: str) -> str | None:
+    for m in SAFETY_RE.finditer(low):
+        if SAFETY_NEGATION.search(low[max(0, m.start() - 25) : m.start()]):
+            continue
+        return m.group(0)
+    return None
+
+
+CATEGORY_RULES: list[tuple[str, str, str]] = [  # (category, regex, suggested macro) — safety is detected separately by _safety_hit
+    ("chargeback_fraud", r"\b(chargeback|dispute(d)? (the|my|this|a) (charge|payment)|opened a dispute|unauthori[sz]ed|fraud|scam|don'?t recogni[sz]e (this|the) charge)\b", "escalate_finance"),
+    ("legal_press", r"\b(lawyer|attorney|legal action|sue|suing|lawsuit|bbb|better business|journalist|reporter|press (inquiry|enquiry|request)|the press|media inquiry|consumer protection)\b", "escalate_lead"),
+    ("cancel_change", r"\b(cancel\w*|change (my|the) (order|address|size)|update (my|the) address|wrong address|change of address|just moved)\b", "cancel_or_change"),
+    ("damaged_defective", r"\b(broken|damaged|defective|cracked|leak(s|ing|ed)?|doesn'?t work|not working|stopped working|faulty|torn|dented|snapped|stuck|won'?t (open|close|seal))\b", "damage_reship"),
+    ("wrong_or_missing_item", r"\b(wrong (item|size|colou?r|product|order)|missing (item|part|piece|lid)|received (the )?wrong|not what i ordered|incomplete|came without|arrived without|(was|is) missing|not in the box|supposed to be in the box)\b", "wrong_item_fix"),
+    ("return_refund", r"(\brefund\b.{0,40}\b(hasn'?t|has not|not yet|still|never)\b|\b(where is|waiting (on|for)) my refund\b)", "refund_status"),
     ("wismo", r"\b(where is my|where'?s my|tracking|hasn'?t (arrived|shipped)|not (arrived|received|delivered)|still waiting|delivery (date|estimate)|when will (it|my order) (arrive|ship)|late)\b", "wismo_update"),
-    ("cancel_change", r"\b(cancel|change (my|the) (order|address|size)|update (my|the) address|wrong address)\b", "cancel_or_change"),
     ("return_refund", r"\b(refund|return|money back|send it back|exchange)\b", "return_process"),
     ("payment_account", r"\b(charged twice|double charged|payment (failed|declined)|card|login|password|account|subscription|invoice|receipt)\b", "account_help"),
     ("discount_promo", r"\b(discount|coupon|promo|code (didn'?t|doesn'?t|isn'?t) work|price match|sale price)\b", "promo_help"),
+    ("wholesale_b2b", r"\b(bulk|wholesale|corporate|with (our|my) logo|custom logo|reseller|\d{3,} (units|bottles|pieces))\b", "sales_handoff"),
     ("product_question", r"\b(does it|is it|will it|compatible|how (do|does|to)|what size|which size|fit|material|ingredients|instructions|dimensions)\b", "presales_answer"),
     ("feedback", r"\b(love|great|thank(s| you)|disappointed|terrible|worst|never again|feedback|suggestion)\b", "feedback_thanks"),
 ]
-P1_RE = re.compile(r"\b(injur|hurt|burn|fire|allerg|hospital|chargeback|unauthori[sz]ed|fraud|lawyer|attorney|legal action|lawsuit|sue you|journalist|press|bbb|consumer protection)\w*", re.I)
+P1_RE = re.compile(r"\b(chargeback|unauthori[sz]ed|fraud|lawyer|attorney|legal action|lawsuit|sue you|suing|journalist|reporter|the press|press (inquiry|enquiry)|bbb|consumer protection)\b", re.I)
+P1_ORDER = {"safety": 0, "legal_press": 1, "chargeback_fraud": 2}
 REPEAT_RE = re.compile(r"\b(second|third|3rd|2nd|fourth|again|still (no|waiting|haven'?t)|no (one|body) (has )?(replied|responded|answered)|(twice|three times|several times)|last time|previous(ly)? (email|message|ticket))\b", re.I)
 NEG_RE = re.compile(r"\b(angry|furious|unacceptable|ridiculous|disgusted|disappointed|terrible|worst|awful|horrible|never again|pathetic|useless|scam|joke)\b", re.I)
 POS_RE = re.compile(r"\b(love|great|amazing|thank(s| you)|awesome|perfect|happy|wonderful|appreciate)\b", re.I)
 
 
 @AGENT.tool
-def triage_tickets(tickets: list[dict], vip_order_value: float = 200.0, now: str = "") -> dict:
+def triage_tickets(
+    tickets: list[dict],
+    vip_order_value: float = 200.0,
+    now: str = "",
+    business_hours_start: float = 9.0,
+    business_hours_end: float = 18.0,
+    business_days: list[str] | None = None,
+) -> dict:
     """Classify tickets by issue category and priority (P1-P4) with SLA hours, sentiment, repeat-contact and escalation flags; returns a sorted queue.
 
     Args:
         tickets: List of {"id": str, "subject": str, "body": str, "order_value": float (optional), "created_at": ISO (optional), "customer_orders": int lifetime orders (optional)}.
         vip_order_value: Order value at or above which a ticket is bumped one priority level.
         now: Current time (ISO) to compute waiting hours from created_at; defaults to real now.
+        business_hours_start: Support opens (hour); waiting time vs SLA is measured on the business clock like sla_deadline.
+        business_hours_end: Support closes (hour).
+        business_days: Days support runs (default mon-fri); all seven for a 24/7 desk.
     """
     if not tickets:
         raise ToolError("tickets is empty.")
     if len(tickets) > 500:
         raise ToolError("Max 500 tickets per call.")
     ref = _parse_dt(now, "now") if now else datetime.now()
+    day_names = [d.lower()[:3] for d in (business_days or ["mon", "tue", "wed", "thu", "fri"])]
+    if any(d not in WEEKDAY_IDX for d in day_names):
+        raise ToolError("business_days must be names like mon, tue, wed, thu, fri, sat, sun.")
+    bdays = {WEEKDAY_IDX[d] for d in day_names}
+    if not 0 <= business_hours_start < business_hours_end <= 24:
+        raise ToolError("business hours must satisfy 0 <= start < end <= 24.")
     rows, cats = [], Counter()
     for t in tickets:
         tid = str(t.get("id", len(rows) + 1))
@@ -303,13 +344,24 @@ def triage_tickets(tickets: list[dict], vip_order_value: float = 200.0, now: str
             raise ToolError(f"ticket {tid}: text too long (20k chars max).")
         low = body.lower()
         category, macro = "other", "manual_reply"
-        for cat, rx, m in CATEGORY_RULES:
-            if re.search(rx, low):
-                category, macro = cat, m
-                break
+        safety_term = _safety_hit(low)
+        if safety_term:
+            category, macro = "safety", "escalate_safety"
+        else:
+            for cat, rx, m in CATEGORY_RULES:
+                if re.search(rx, low):
+                    category, macro = cat, m
+                    break
         flags = []
-        if P1_RE.search(low):
-            flags.append("escalate: safety/legal/finance keyword")
+        if safety_term:
+            flags.append(f"escalate: possible injury/safety (“{safety_term}”) — human owner today, preserve evidence, no liability language")
+        elif P1_RE.search(low):
+            flags.append("escalate: legal/finance/press keyword")
+        safety_question = bool(SAFETY_QUESTION_RE.search(low)) and not safety_term
+        if safety_question:
+            flags.append("safety question — answer with facts (materials, certifications) the same day")
+        if category == "wholesale_b2b":
+            flags.append("sales lead — route to wholesale owner")
         repeat = bool(REPEAT_RE.search(low))
         if repeat:
             flags.append("repeat contact")
@@ -323,9 +375,9 @@ def triage_tickets(tickets: list[dict], vip_order_value: float = 200.0, now: str
             raise ToolError(f"ticket {tid}: order_value must be numeric.") from None
         if category in ("safety", "chargeback_fraud", "legal_press"):
             pr = 1
-        elif category in ("damaged_defective", "wrong_or_missing_item"):
+        elif category in ("damaged_defective", "wrong_or_missing_item", "cancel_change") or safety_question:
             pr = 2
-        elif category in ("wismo", "cancel_change", "return_refund", "payment_account"):
+        elif category in ("wismo", "return_refund", "payment_account"):
             pr = 3
         else:
             pr = 4
@@ -337,12 +389,17 @@ def triage_tickets(tickets: list[dict], vip_order_value: float = 200.0, now: str
             flags.append("VIP / high value")
         if category == "cancel_change":
             flags.append("time-critical: act before fulfilment")
-        waiting_h = None
+        waiting_h = waiting_bh = None
         if t.get("created_at"):
             created = _parse_dt(str(t["created_at"]), f"ticket {tid} created_at")
             waiting_h = round((ref - created).total_seconds() / 3600, 1)
-            if waiting_h > PRIORITY_SLA[f"P{pr}"][0]:
-                flags.append(f"waiting {waiting_h:.0f}h > P{pr} first-response SLA")
+            # P1 runs on the calendar clock (safety/legal cannot wait for Monday); the rest on business hours
+            if pr == 1:
+                waiting_bh = waiting_h
+            else:
+                waiting_bh = round(_business_hours_between(created, ref, business_hours_start, business_hours_end, bdays, set()), 1)
+            if waiting_bh > PRIORITY_SLA[f"P{pr}"][0]:
+                flags.append(f"waiting {waiting_bh:g} {'calendar' if pr == 1 else 'business'} h > P{pr} first-response SLA ({PRIORITY_SLA[f'P{pr}'][0]}h)")
         cats[category] += 1
         rows.append(
             {
@@ -355,10 +412,11 @@ def triage_tickets(tickets: list[dict], vip_order_value: float = 200.0, now: str
                 "flags": flags,
                 "suggested_macro": macro,
                 "waiting_hours": waiting_h,
-                "needs_human": pr == 1 or "escalate: safety/legal/finance keyword" in flags,
+                "waiting_sla_hours": waiting_bh,
+                "needs_human": pr == 1 or any(f.startswith("escalate:") for f in flags),
             }
         )
-    rows.sort(key=lambda r: (r["priority"], -(r["waiting_hours"] or 0)))
+    rows.sort(key=lambda r: (r["priority"], P1_ORDER.get(r["category"], 9), -(r["waiting_sla_hours"] or 0)))
     n = len(rows)
     wismo_share = cats.get("wismo", 0) / n
     insights = []
@@ -386,7 +444,7 @@ POLICY_SPEAK = [
 EMPATHY = [
     "i understand", "i can see", "that's frustrating", "that is frustrating", "i'm sorry that", "i am sorry that", "i'm sorry about",
     "i'd be frustrated", "thank you for your patience", "you're right", "you are right", "i get it", "completely understand", "that shouldn't have happened",
-    "sorry this happened",
+    "sorry this happened", "i'm so sorry", "i am so sorry", "sorry to hear", "sorry your", "i hope", "that must have been",
 ]
 OWNERSHIP = re.compile(r"\b(i'?ve|i have|i'?ll|i will|i'?m|i am|we'?ve|we have|we'?ll|we will|i just|already|right now|today|tomorrow)\b", re.I)
 DATE_RE = re.compile(r"\b(today|tomorrow|within \d+ (hours?|days?|business days?)|by (mon|tues|wednes|thurs|fri|satur|sun)day|by \d{1,2}(:\d{2})?\s?(am|pm)?|\d{1,2}[-/]\d{1,2}|\d{4}-\d{2}-\d{2}|in \d+ (hours?|days?)|\d+-\d+ (business )?days)\b", re.I)
@@ -463,9 +521,11 @@ def tone_check(reply: str, customer_message: str = "") -> dict:
         raise ToolError("reply too long (20k chars max).")
     out = _tone(reply)
     if customer_message.strip():
-        key = [w.lower() for w, _ in text.top_terms(customer_message, 8)]
+        key = [re.sub(r"'s$", "", w.lower()) for w, _ in text.top_terms(customer_message, 8)]
+        stems = {w.lower()[:5] for w in text.words(reply)}
         rl = reply.lower()
-        addressed = [w for w in key if w in rl]
+        # stem match so "daughter's"/"daughter", "snapped"/"snap", "refunded"/"refund" count as mirrored
+        addressed = [w for w in key if w in rl or w[:5] in stems]
         out["customer_terms"] = key
         out["customer_terms_addressed"] = addressed
         if key and len(addressed) / len(key) < 0.3:

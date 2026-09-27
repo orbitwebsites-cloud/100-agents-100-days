@@ -267,6 +267,12 @@ def audit_email_body(body: str, step: int = 1) -> dict:
     ctas = CTA_RE.findall(body)
     n_cta = len(ctas)
     interest_cta = bool(INTEREST_CTA_RE.search(body))
+    if n_cta == 0:
+        # a closing question the phrase list doesn't know ("Should I?", "would the same pattern show up?")
+        # is still one low-friction ask — count it as an interest CTA rather than "no CTA"
+        lines = [ln.strip() for ln in body.strip().splitlines() if ln.strip()]
+        if any(ln.endswith("?") for ln in lines[-2:]):  # last line may be the sign-off
+            n_cta, interest_cta = 1, True
     links = LINK_RE.findall(body)
     spam = c.spam_hits(body)
     fluff = c.fluff_hits(body)

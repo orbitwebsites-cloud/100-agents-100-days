@@ -90,3 +90,24 @@ def test_prioritize_fixes_ranks_by_share_severity_reach():
 def test_prioritize_fixes_rejects_bad_total():
     with pytest.raises(ToolError):
         call("prioritize_fixes", fixes=[{"fix": "x", "responses": 1, "severity": 1, "reach": 1}], total_responses=0)
+
+
+def test_count_themes_matches_plurals_and_keeps_export_out_of_integrations():
+    out = call("count_themes", responses=[
+        {"text": "Costs more than Trello", "score": 7},
+        {"text": "Export to CSV crashes every time", "score": 2},
+        {"text": "Takes 10 seconds to load a project", "score": 5},
+        {"text": "No Salesforce integration", "score": 4},
+    ])
+    tagged = {r["i"]: set(r["themes"]) for r in out["tagged_rows"]}
+    assert "pricing" in tagged[0]
+    assert "integrations" not in tagged[1] and "bugs" in tagged[1]
+    assert "performance" in tagged[2]
+    assert "integrations" in tagged[3]
+    assert [r["score"] for r in out["tagged_rows"]] == [7.0, 2.0, 5.0, 4.0]
+
+
+def test_driver_analysis_accepts_count_themes_rows_and_skips_unscored():
+    rows = [{"themes": ["bugs"], "score": 2}, {"themes": ["bugs"], "score": 3}, {"themes": [], "score": 9}, {"themes": [], "score": 10}, {"themes": ["bugs"], "score": None}]
+    out = call("driver_analysis", tagged_rows=rows, min_n=2)
+    assert out["skipped_unscored"] == 1 and out["drivers"][0]["gap"] == -7.0

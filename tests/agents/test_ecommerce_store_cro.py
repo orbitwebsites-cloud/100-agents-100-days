@@ -121,3 +121,23 @@ def test_prioritize_tests_ice():
 def test_prioritize_tests_rejects_out_of_range():
     with pytest.raises(ToolError):
         call("prioritize_tests", ideas=[{"name": "x", "impact": 11, "confidence": 5, "ease": 5}])
+
+
+def test_ab_test_early_peek_is_not_a_win():
+    peek = call("ab_test", control_visitors=9850, control_conversions=402, variant_visitors=9910, variant_conversions=468, min_detectable_effect_pct=10, daily_visitors=2067, days_run=10)
+    assert peek["significant"] is True and peek["decision"].startswith("NOT YET")
+    done = call("ab_test", control_visitors=40000, control_conversions=1632, variant_visitors=40000, variant_conversions=1850, min_detectable_effect_pct=10, daily_visitors=2067, days_run=42)
+    assert done["significant"] and done["decision"].startswith("call it")
+    odd = call("ab_test", control_visitors=40000, control_conversions=1632, variant_visitors=40000, variant_conversions=1850, days_run=17)
+    assert "whole weeks" in odd["decision"]
+
+
+def test_funnel_without_leak_says_so():
+    out = call("funnel_analysis", sessions=22000, product_views=12300, add_to_carts=1650, checkouts=1020, orders=640)
+    assert "no leak" in out["verdict"]
+
+
+def test_free_shipping_threshold_warns_on_edge_optimum():
+    out = call("free_shipping_threshold", shipping_cost=8.4, gross_margin_pct=55, aov=86)
+    assert out["recommended_threshold"] == out["candidates"][-1]["threshold"] == 130.0
+    assert any("highest one tested" in w for w in out["warnings"]) and any("would qualify" in w for w in out["warnings"])

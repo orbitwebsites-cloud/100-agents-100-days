@@ -44,7 +44,7 @@ def test_detect_next_steps_resolves_dates_and_agreement():
     assert out["next_step_agreed"] is True
     first = out["agreed_next_steps"][0]
     assert first["speaker"] == "Sam" and first["resolved_date"] == "2026-09-24"
-    assert "2026-10-06" in first["all_resolved_dates"]  # next Tuesday (same convention as meeting-ops)
+    assert "2026-09-29" in first["all_resolved_dates"]  # "next Tuesday" said on Wed 23 Sep = Tuesday of next calendar week (meeting-ops convention)
     assert first["prospect_agreed"] is True
     none = call("detect_next_steps", transcript="Sam: Great chat.\nDana: Yes, thanks.", call_date="2026-09-23")
     assert none["next_step_agreed"] is False and "No next step agreed" in none["verdict"]
@@ -80,7 +80,9 @@ def test_map_crm_fields_hubspot_and_salesforce():
     )
     assert out["payload"]["dealstage"] == "decisionmakerboughtin"
     assert out["payload"]["amount"] == 48000.0 and out["payload"]["closedate"] == "2026-12-15"
-    assert out["payload"]["competitors"] == "Onfleet; spreadsheet"
+    assert "competitors" not in out["payload"]  # not a default HubSpot deal property
+    assert out["custom_properties"]["competitors"] == "Onfleet; spreadsheet"
+    assert any("custom properties" in n for n in out["notes"])
     assert out["ready"] is True and out["missing_required"] == []
     sf = call("map_crm_fields", fields={"stage": "negotiation", "close_date": "2026-01-01", "next_step": "follow up"}, crm="salesforce", call_date="2026-09-23")
     assert sf["payload"]["StageName"] == "Negotiation/Review"
@@ -94,3 +96,23 @@ def test_map_crm_fields_bad_input():
         call("map_crm_fields", fields={"stage": "demo"}, crm="zoho")
     with pytest.raises(ToolError):
         call("map_crm_fields", fields={}, crm="hubspot")
+
+
+def test_relative_dates_next_weekday_and_end_of_next_week():
+    t = "Rep: Could we get your CFO on a call next Tuesday?\nBuyer: Tuesday works.\nRep: And I'll send the proposal by end of next week."
+    out = call("detect_next_steps", transcript=t, call_date="2026-09-24", rep_name="Rep")  # Thursday
+    by_line = {c_["line"]: c_ for c_ in out["candidates"]}
+    assert by_line[1]["resolved_date"] == "2026-09-29" and by_line[1]["quality"] == "next step"
+    assert by_line[3]["resolved_date"] == "2026-10-02"  # Friday of next week, not Monday
+    fri = call("detect_next_steps", transcript="Rep: Can we meet next Thursday?\nBuyer: Sure.", call_date="2026-09-25")  # Friday
+    assert fri["candidates"][0]["resolved_date"] == "2026-10-01"
+
+
+def test_price_concern_blocks_hot_and_amount_suffixes():
+    t = "Rep: Pricing is 2,900 a month.\nBuyer: When we roll this out we need Netsuite. How long does implementation take? What does it cost per seat? That's a bit more than we budgeted."
+    out = call("buying_signals", transcript=t, rep_name="Rep")
+    assert "price concern" in out["negative_types"] and out["temperature"] == "warm"
+    crm = call("map_crm_fields", fields={"name": "X", "stage": "demo", "amount": "34.8k", "close_date": "2026-10-30"}, crm="salesforce", call_date="2026-09-24")
+    assert crm["payload"]["Amount"] == 34800.0
+    hs = call("map_crm_fields", fields={"name": "X", "stage": "demo", "amount": "1.2m", "close_date": "2026-10-30", "probability": 35}, crm="hubspot", call_date="2026-09-24")
+    assert hs["payload"]["amount"] == 1200000.0 and hs["payload"]["hs_forecast_probability"] == 0.35

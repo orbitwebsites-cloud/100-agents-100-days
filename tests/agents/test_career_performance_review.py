@@ -108,3 +108,9 @@ def test_calibrate_ratings_flags_lenient_and_harsh_managers():
 def test_calibrate_ratings_rejects_out_of_scale():
     with pytest.raises(ToolError):
         call("calibrate_ratings", ratings=[{"employee": "A", "manager": "M", "rating": 6}, {"employee": "B", "manager": "M", "rating": 3}])
+
+
+def test_check_review_language_stems_catch_inflected_protected_terms():
+    out = call("check_review_language", review="Since her pregnancy she shipped two releases. His religious holidays slowed the Q3 launch.")
+    terms = {h["term"] for h in out["personality_terms"]}
+    assert {"pregnan*", "religio*"} <= terms and any("protected" in i for i in out["issues"])

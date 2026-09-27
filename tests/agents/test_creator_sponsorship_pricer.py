@@ -109,3 +109,9 @@ def test_bundle_quote_caps_discount_and_schedules():
 def test_bundle_quote_bad_input():
     with pytest.raises(ToolError):
         call("bundle_quote", items=[{"deliverable": "x", "rate": -5}])
+
+
+def test_evaluate_offer_fallback_without_scope_terms_uses_the_card_low():
+    out = A.get_tool("evaluate_offer").call({"offer_amount": 500, "platform": "youtube", "median_views": 40000, "deliverable": "integration"})
+    assert out["counter"] == 1200.0 and out["fallback_with_reduced_scope"] == 800.0 and out["walk_away"] == 800.0
+    assert "organic-only" not in out["counter_script"]

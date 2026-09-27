@@ -58,7 +58,8 @@ AGENT = Agent(
        (when they are overdue) and sunset. Without histories, use the category default and
        say so (consumables 30-45 days, apparel 60-90, durables 180+).
     2. **Schedule every email** with `email_flows__flow_schedule`: pass the flow type, the
-       trigger time and the customer's timezone offset. It applies the proven delays,
+       trigger time (customer local time) and, for cycle-driven flows, purchase_cycle's
+       `flow_schedule_args` so win-back starts at the measured p75 gap, not a rule of thumb. It applies the proven delays,
        moves sends out of quiet hours, snaps non-urgent emails to the preferred send hour,
        and returns exact timestamps plus the goal of each email. Never hand-compute delays.
     3. **Write each email** to its goal (Frameworks). One idea per email, one CTA, plain-text
@@ -138,11 +139,11 @@ FLOWS: dict[str, dict] = {
 }
 
 
-def _resolve_hours(spec, cycle_days: float, delivery_days: float) -> float:
+def _resolve_hours(spec, cycle_days: float, delivery_days: float, winback_offset_days: float = 0.0, sunset_offset_days: float = 0.0) -> float:
     if isinstance(spec, (int, float)):
         return float(spec)
-    winback_offset = cycle_days * 1.5
-    sunset_offset = cycle_days * 3.0
+    winback_offset = winback_offset_days or cycle_days * 1.5
+    sunset_offset = sunset_offset_days or cycle_days * 3.0
     m = re.match(r"^(C|W|S)([*+])([\d.]+)$", spec)
     if m:
         base = {"C": cycle_days, "W": winback_offset, "S": sunset_offset}[m.group(1)] * 24
@@ -162,17 +163,21 @@ def flow_schedule(
     preferred_send_hour: int = 10,
     cycle_days: float = 60.0,
     delivery_days: float = 5.0,
+    winback_offset_days: float = 0.0,
+    sunset_offset_days: float = 0.0,
 ) -> dict:
     """Produce exact send timestamps for a lifecycle flow from its trigger time, respecting quiet hours and the store's purchase cycle.
 
     Args:
         flow: One of abandoned_checkout, abandoned_cart, browse_abandonment, welcome, post_purchase, win_back, replenishment, sunset.
-        trigger_at: When the trigger event happened, in the customer's local time, e.g. "2026-10-03T22:15".
+        trigger_at: When the trigger event happened, in the customer's local time, e.g. "2026-10-03T22:15". For win_back, replenishment and post_purchase this is the (last) order time; for sunset the last engagement.
         quiet_start_hour: Local hour after which nothing non-urgent is sent (21 = 9pm).
         quiet_end_hour: Local hour from which sending resumes (8 = 8am).
         preferred_send_hour: Hour to send day-scale emails at when the natural time falls in quiet hours (10 = 10am).
         cycle_days: Median days between orders (from purchase_cycle); drives win-back, replenishment and sunset offsets.
         delivery_days: Typical days from order to delivery; drives the review-request timing in post_purchase.
+        winback_offset_days: Days after the last order when win-back starts — pass purchase_cycle's offsets_days.winback_start (p75 gap). 0 = 1.5 × cycle_days.
+        sunset_offset_days: Days without engagement before sunset — pass purchase_cycle's offsets_days.sunset. 0 = 3 × cycle_days.
     """
     if flow not in FLOWS:
         raise ToolError(f"Unknown flow {flow!r}. Choose from: {', '.join(FLOWS)}.")
@@ -196,7 +201,7 @@ def flow_schedule(
 
     rows, prev = [], None
     for n, (spec, goal, incentive) in enumerate(FLOWS[flow]["steps"], 1):
-        hours = _resolve_hours(spec, cycle_days, delivery_days)
+        hours = _resolve_hours(spec, cycle_days, delivery_days, winback_offset_days, sunset_offset_days)
         raw = t0 + timedelta(hours=hours)
         send = raw
         adjust = "none"
@@ -290,6 +295,7 @@ def purchase_cycle(customers: list[dict], category_default_days: float = 60.0) -
             "sunset": round(med * 3),
         },
         "cycle_days_for_flow_schedule": round(med, 1),
+        "flow_schedule_args": {"cycle_days": round(med, 1), "winback_offset_days": round(p75, 1), "sunset_offset_days": round(med * 3, 1)},
         "verdict": (
             f"Median reorder gap {med:.0f} days (p25 {p25:.0f}, p75 {p75:.0f}); repeat rate {100 * repeat_rate:.0f}%. "
             f"Replenish at day {round(med * 0.8)}, win-back from day {round(p75)}, sunset at day {round(med * 3)}."
@@ -304,6 +310,7 @@ SPAM_TRIGGERS = [
     "once in a lifetime", "cheap", "clearance", "lowest price", "order now", "last chance", "exclusive deal", "prize",
 ]
 EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF☀-➿]")
+CLICHE_SUBJECTS = ["you left something behind", "you forgot something", "did you forget something", "we noticed you left", "still thinking about it", "we miss you", "come back", "don't miss out", "you left items in your cart"]
 
 
 @AGENT.tool
@@ -358,8 +365,12 @@ def subject_line_check(subjects: list[str], preview_texts: list[str] | None = No
         if tokens:
             issues.append(f"personalisation token {tokens[0]} — only if the data is reliable, set a fallback")
         if re.search(r"\bre:|\bfwd:", low):
-            issues.append("fake RE:/FWD: — deceptive, hurts trust and deliverability")
-            score -= 25
+            issues.append("fake RE:/FWD: — deceptive subject line (FTC CAN-SPAM prohibits misleading subjects); never use")
+            score -= 50
+        cliche = next((c for c in CLICHE_SUBJECTS if c in low), None)
+        if cliche:
+            issues.append(f"overused subject (“{cliche}”) — every store sends it; name the product or the objection instead")
+            score -= 10
         strengths = []
         if re.search(r"\d", s):
             strengths.append("contains a number")
@@ -433,19 +444,22 @@ def flow_diagnostics(flows: list[dict]) -> dict:
         rpr = revenue / delivered
         ur, sr = unsubs / delivered, spam / delivered
         lo, hi = BENCH[ftype]
+        # (step, message, severity): severity = how far past its threshold the metric is (1.0 = on the line);
+        # hard gates (bounces, spam above the Gmail/Yahoo 0.3% ceiling) always come first.
         problems = []
         if dr < 0.97:
-            problems.append(("deliverability", f"delivery {100 * dr:.1f}% < 97% — list hygiene / sender reputation"))
+            problems.append(("deliverability", f"delivery {100 * dr:.1f}% < 97% — list hygiene / sender reputation", 10 + 0.97 / max(dr, 1e-9)))
         if sr > 0.001:
-            problems.append(("list health", f"spam rate {100 * sr:.2f}% > 0.1% (Gmail/Yahoo limit 0.3%) — cut frequency, suppress unengaged"))
+            problems.append(("list health", f"spam rate {100 * sr:.2f}% > 0.1% (Gmail/Yahoo limit 0.3%) — cut frequency, suppress unengaged", (10 if sr > 0.003 else 0) + sr / 0.001))
         if ur > 0.005:
-            problems.append(("list health", f"unsub rate {100 * ur:.2f}% > 0.5% — expectation mismatch or frequency"))
+            problems.append(("list health", f"unsub rate {100 * ur:.2f}% > 0.5% — expectation mismatch or frequency", ur / 0.005))
         if orate < 0.35:
-            problems.append(("open", f"open {100 * orate:.1f}% < 35% — subject line / send time / sender name"))
+            problems.append(("open", f"open {100 * orate:.1f}% < 35% — subject line / send time / sender name", 0.35 / max(orate, 1e-9)))
         if ctor < 0.10:
-            problems.append(("click-through", f"CTOR {100 * ctor:.1f}% < 10% — content does not pay off the subject; one CTA, clearer offer"))
+            problems.append(("click-through", f"CTOR {100 * ctor:.1f}% < 10% — content does not pay off the subject; one CTA, clearer offer", 0.10 / max(ctor, 1e-9)))
         if por < lo:
-            problems.append(("conversion", f"placed-order {100 * por:.2f}% < {100 * lo:.1f}% band — landing page, offer, timing"))
+            problems.append(("conversion", f"placed-order {100 * por:.2f}% < {100 * lo:.1f}% band — landing page, offer, timing", lo / max(por, 1e-9)))
+        problems.sort(key=lambda p: -p[2])
         weakest = problems[0][0] if problems else None
         out.append(
             {
@@ -462,6 +476,7 @@ def flow_diagnostics(flows: list[dict]) -> dict:
                 "unsubscribe_rate_pct": pct(ur, 2),
                 "spam_rate_pct": pct(sr, 3),
                 "problems": [p[1] for p in problems],
+                "severity": {p[0]: round(p[2], 2) for p in reversed(problems)},
                 "fix_first": weakest,
                 "upside_if_at_benchmark_low": money(max(0.0, lo - por) * delivered * (revenue / orders if orders else 0)),
             }

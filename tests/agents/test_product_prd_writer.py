@@ -131,3 +131,22 @@ def test_check_success_metrics_computes_lift_and_flags():
 def test_check_success_metrics_rejects_bad_rows():
     with pytest.raises(ToolError):
         call("check_success_metrics", metrics=["nps"])
+
+
+def test_number_requirements_flags_two_behaviours_joined_by_and():
+    out = call("number_requirements", requirements=["The approver gets an email and can approve without logging in.", "Exports must include PDF and CSV formats."])
+    assert any("compound" in i for i in out["requirements"][0]["issues"])
+    assert not any("compound" in i for i in out["requirements"][1]["issues"])
+
+
+def test_check_success_metrics_accepts_quarter_and_month_deadlines():
+    out = call("check_success_metrics", metrics=[
+        {"name": "Median time to decision", "baseline": 3, "target": 1, "timeframe": "by Q4 2026", "source": "events", "type": "primary"},
+        {"name": "Tickets", "baseline": 14, "target": 14, "timeframe": "Dec 2026", "source": "Zendesk", "type": "guardrail"},
+    ])
+    assert not any("timeframe" in i for m in out["metrics"] for i in m["issues"])
+
+
+def test_lint_user_stories_catches_inflected_circular_so_that():
+    out = call("lint_user_stories", stories=[{"story": "As an account manager, I want to approve files, so that files are approved.", "criteria": ["Given x, when y, then z"]}])
+    assert any("restates" in i for i in out["stories"][0]["issues"])

@@ -93,3 +93,16 @@ def test_plan_prep_schedule_dates_and_light_day_before():
 def test_plan_prep_schedule_rejects_past_interview():
     with pytest.raises(ToolError):
         call("plan_prep_schedule", interview_date="2026-09-20", start_date="2026-09-27")
+
+
+def test_check_star_story_flags_we_heavy_action():
+    story = ("At Acme our churn was 8 percent. We needed to cut it. So we pulled the data and we interviewed ten customers. "
+             "We decided to rebuild onboarding and we launched it in May. As a result churn fell to 5 percent.")
+    out = call("check_star_story", story=story)
+    assert out["ownership"]["we_in_action"] > out["ownership"]["i_in_action"] == 0
+    assert any("'we'" in i for i in out["issues"])
+
+
+def test_lint_answer_flags_non_inclusive_wording():
+    out = call("lint_answer", answer="The guys on my team thought the plan was insane, so I ran a sanity check and cut scope 30 percent.")
+    assert {h["term"] for h in out["non_inclusive"]} == {"guys", "insane", "sanity check"}

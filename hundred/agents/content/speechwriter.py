@@ -132,6 +132,15 @@ AGENT = Agent(
     """,
 )
 
+ANTITHESIS_RE = re.compile(
+    r"\bnot\b[^.,;]{1,60},?\s+but\b|\bnot because\b[^.]{1,60}\bbut because\b|\bask not\b"
+    r"|\b(?:it'?s|it is|this is|that'?s|that is|we'?re|we are|you'?re|you are)\s+not\b[^.;!?]{1,80}[,;—–-]\s*(?:it'?s|it is|this is|that'?s|that is|we'?re|we are|you'?re|you are)\b"
+    r"|\bless\b[^.]{1,40}\bmore\b|\b(never|nothing)\b[^.]{1,40}\b(always|everything)\b",
+    re.I,
+)
+# "It is not X. It is Y." — the antithesis split over two sentences for the pause
+_SUBJ = r"(?:it'?s|it is|this is|that'?s|that is|we'?re|we are|you'?re|you are)"
+ANTITHESIS_PAIR_RE = re.compile(r"\b" + _SUBJ + r"\s+not\b[^.;!?]{1,80}[.;!]\s+" + _SUBJ + r"\b", re.I)
 PAUSE_MARKS = [
     (re.compile(r"\[(long pause|silence)\]", re.I), 4.0),
     (re.compile(r"\[(pause|beat|breath)\]", re.I), 2.0),
@@ -206,10 +215,12 @@ def timing(script: str, wpm: int = 130, slot_minutes: float = 0.0, pace: Literal
     total_s = speech_s + pause_s
     rows = []
     t = 0.0
-    for s in secs:
+    for i, s in enumerate(secs):
         dur = s["words"] / wpm * 60
         for rx, secs_each in PAUSE_MARKS:
             dur += len(rx.findall(s["body"])) * secs_each
+        # the same 0.5 s per paragraph break the total uses: breaks inside the section plus the one after it
+        dur += 0.5 * (max(0, len(c.paragraphs(s["body"])) - 1) + (1 if i < len(secs) - 1 else 0))
         rows.append({"section": s["title"][:50], "start": c.mmss(t), "duration": c.mmss(dur), "words": s["words"], "share_pct": c.pct(s["words"], len(words))})
         t += dur
     sents = text.sentences(_spoken_text(script))
@@ -282,11 +293,15 @@ def rhetoric_check(script: str) -> dict:
         return "opening" if frac < 0.15 else "close" if frac >= 0.85 else "body"
 
     for i, s in enumerate(units):
-        if re.search(r"\b\w[\w' -]{0,40}, \w[\w' -]{0,40},? (and|or|but) \w[\w' -]{0,60}", s) and s.count(",") in (1, 2):
+        items = [x.strip() for x in re.split(r",\s*(?:and\s+|or\s+|but\s+)?|\s+(?:and|or)\s+(?=to\b|with\b|for\b|the\b)", s) if x.strip()]
+        openers = [" ".join(_norm_words(x)[:1]) for x in items]
+        parallel_run = any(openers[k] and openers[k] == openers[k + 1] == openers[k + 2] for k in range(len(openers) - 2))
+        if (re.search(r"\b\w[\w' -]{0,40}, \w[\w' -]{0,40},? (and|or|but) \w[\w' -]{0,60}", s) and s.count(",") in (1, 2)) or parallel_run:
             found["tricolon"].append({"sentence": i + 1, "part": part(i), "text": s[:160]})
         if s.rstrip().endswith("?"):
             found["rhetorical_question"].append({"sentence": i + 1, "part": part(i), "text": s[:160]})
-        if re.search(r"\bnot\b[^.,;]{1,60},?\s+but\b|\bnot because\b[^.]{1,60}\bbut because\b|\bask not\b|\bit'?s not about\b[^.]{1,60}\b(it'?s about|but)\b|\bless\b[^.]{1,40}\bmore\b|\b(never|nothing)\b[^.]{1,40}\b(always|everything)\b", s, re.I):
+        pair = s + " " + units[i + 1] if i + 1 < n else s
+        if ANTITHESIS_RE.search(s) or ANTITHESIS_PAIR_RE.search(pair):
             found["antithesis"].append({"sentence": i + 1, "part": part(i), "text": s[:160]})
         ws = [w for w in text.words(s) if w.lower() not in text.STOPWORDS and len(w) > 2]
         run = 1
@@ -297,13 +312,14 @@ def rhetoric_check(script: str) -> dict:
                     found["alliteration"].append({"sentence": i + 1, "part": part(i), "text": s[:160]})
             else:
                 run = 1
-    starts = [" ".join(_norm_words(u)[:2]) for u in units]
+    # a leading conjunction doesn't break the parallel ("To the man… To the woman… And to the…")
+    starts = [" ".join([w for w in _norm_words(u)][1:3] if _norm_words(u)[:1] in (["and"], ["but"], ["or"], ["so"]) else _norm_words(u)[:2]) for u in units]
     ends = [" ".join(_norm_words(u)[-2:]) for u in units]
     # sentence-level tricolon: three consecutive short, distinct units with parallel shape (same opener or same ending)
     i = 0
     while i + 2 < n:
         trio = units[i:i + 3]
-        short = all(len(text.words(u)) <= 8 for u in trio) and len({" ".join(_norm_words(u)) for u in trio}) == 3
+        short = all(len(text.words(u)) <= 14 for u in trio) and len({" ".join(_norm_words(u)) for u in trio}) == 3
         parallel = (starts[i] == starts[i + 1] == starts[i + 2] and starts[i]) or (ends[i] == ends[i + 1] == ends[i + 2] and ends[i])
         if short and parallel:
             found["tricolon"].append({"sentence": i + 1, "part": part(i), "text": " ".join(trio)[:160]})
@@ -385,7 +401,7 @@ HOOK_TYPES = [
     ("bold claim", re.compile(r"\b(everything you|is wrong|is dead|is a lie|nobody|never|always)\b", re.I)),
 ]
 CLOSE_TYPES = [
-    ("toast", re.compile(r"\b(raise (your|a) glass|to the (bride|groom|couple|happy)|cheers|here's to)\b", re.I)),
+    ("toast", re.compile(r"\b(raise (your|a|our) glass(es)?|to the (bride|groom|couple|happy|newlyweds)|cheers|here's to)\b|^\s*to [A-Z][\w'-]+(?: and [A-Z][\w'-]+)?\s*[!.]", re.I | re.M)),
     ("charge", re.compile(r"^\s*(go|let's|let us|build|make|choose|be|start|stop|remember|take|join|don't|never|ask)\b", re.I | re.M)),
     ("vision", re.compile(r"\b(imagine|one day|a world where|the future|will be|we will)\b", re.I)),
     ("thanks", re.compile(r"\b(thank you|thanks)\b\s*[.!]?\s*$", re.I)),
@@ -505,7 +521,9 @@ def _spoken_number(raw: str) -> str:
             return "about a quarter"
         if abs(v - 75) <= 3:
             return "about three quarters"
-        if v >= 90:
+        if v >= 97:
+            return "almost all"
+        if v >= 88:
             return "nine in ten"
         return f"about {int(round(v / 5.0) * 5)} percent"
     if v >= 1_000_000_000:
@@ -536,10 +554,12 @@ def speakability(script: str) -> dict:
         raise ToolError("Fewer than 10 spoken words.")
     sents = text.sentences(plain)
     long_s =[{"words": len(text.words(s)), "sentence": s[:160]} for s in sents if len(text.words(s)) > 20]
-    hard_words = sorted({w.lower() for w in ws if text.syllables(w) >= 4 and not w.isupper()})
+    hard_words = sorted({w.lower() for w in ws if not any(ch.isdigit() for ch in w) and text.syllables(w) >= 4 and not w.isupper()})
     numbers = []
     for m in re.finditer(r"(?<![\w.])\d[\d,]*(?:\.\d+)?%?(?![\w])", plain):
         raw = m.group(0)
+        if re.fullmatch(r"(1[5-9]|20)\d\d", raw):
+            continue  # a year is said as a year ("twenty oh-nine"), not rounded
         digits = re.sub(r"\D", "", raw)
         if len(digits) >= 4 or "." in raw or (raw.endswith("%") and not re.fullmatch(r"(10|20|25|50|75|90|100)%", raw)):
             spoken = _spoken_number(raw)

@@ -203,7 +203,7 @@ def cluster_observations(observations: list[dict], threshold: float = 0.34) -> d
     """Group observations into affinity clusters by keyword overlap, with distinct-interview counts.
 
     Single-link clustering on Jaccard similarity of *linking* content words: stemmed words that appear
-    in at least two observations and in at most half of them. One-off words can never link two
+    in at least two observations and in at most ~60% of them. One-off words can never link two
     sticky notes, so leaving them out stops short notes from looking dissimilar just because they are
     worded differently; ubiquitous words ("client") are dropped so they cannot chain every note together.
     Returns clusters (largest first) with member texts, interviews backing each, and shared keywords.
@@ -223,7 +223,7 @@ def cluster_observations(observations: list[dict], threshold: float = 0.34) -> d
     n = len(items)
     parent = list(range(n))
     df = Counter(w for it in items for w in it["terms"])
-    max_df = max(2, n // 2)
+    max_df = max(3, (n * 3) // 5)  # a word in more than ~60% of notes is too common to link on
     for it in items:
         it["link"] = frozenset(w for w in it["terms"] if 2 <= df[w] <= max_df)
 

@@ -90,3 +90,10 @@ def test_bad_arguments_raise_clean_error():
 def test_grade_on_last_day_still_needs_a_rate():
     out = call("grade_progress", key_results=[{"name": "A", "start": 0, "target": 10, "current": 9}], period_start="2026-10-01", period_end="2026-12-31", as_of="2026-12-31")
     assert out["period"]["days"] == 92 and out["key_results"][0]["needed_per_week"] == 7.0  # 1 unit in the 1 day left
+
+
+def test_guardrail_kr_stay_above_and_calendar_skips_holidays():
+    out = call("grade_progress", key_results=[{"name": "GM", "target_type": "stay_above", "threshold": 75, "current": 73.5, "type": "committed"}], period_start="2026-10-01", period_end="2026-12-31", as_of="2026-11-13")
+    assert out["key_results"][0]["status"] == "off track" and out["committed_at_risk"] == ["GM"]
+    cal = call("okr_calendar", period_start="2026-10-01", period_end="2026-12-31", holidays=["2027-01-01"], as_of="2026-11-13")
+    assert cal["scoring_day"] == "2027-01-04"  # not New Year's Day

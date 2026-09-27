@@ -235,7 +235,7 @@ def grade_progress(key_results: list[dict], period_start: str, period_end: str, 
     """Grade each KR against time elapsed: progress %, pace, on/at-risk/off-track status, 0.0-1.0 score, run-rate needed.
 
     Args:
-        key_results: List of {"name": str, "start": number, "target": number, "current": number, "type": "committed"|"aspirational"}.
+        key_results: List of {"name": str, "start": number, "target": number, "current": number, "type": "committed"|"aspirational"}. Guardrail KRs use {"name", "target_type": "stay_above"|"stay_below", "threshold": number, "current": number} and are on track while the threshold holds.
         period_start: First day of the OKR period (YYYY-MM-DD).
         period_end: Last day of the period (YYYY-MM-DD).
         as_of: Grading date (YYYY-MM-DD); defaults to today.
@@ -255,6 +255,19 @@ def grade_progress(key_results: list[dict], period_start: str, period_end: str, 
         if not isinstance(kr, dict):
             raise ToolError(f"key_results[{i}] must be {{'name','start','target','current'}}.")
         name = as_str(kr.get("name"), f"key_results[{i}].name", max_len=200)
+        ttype = str(kr.get("target_type") or "").lower().replace(" ", "_").replace("-", "_")
+        if ttype in ("stay_above", "stay_at_or_above", "stay_below", "stay_at_or_below"):
+            thr = as_float(kr.get("threshold", kr.get("target")), f"{name}.threshold")
+            c = as_float(kr.get("current"), f"{name}.current")
+            ok = c >= thr if "above" in ttype else c <= thr
+            rows.append({
+                "name": name, "type": str(kr.get("type", "committed")).lower(), "target_type": "stay at or above" if "above" in ttype else "stay at or below",
+                "start": thr, "target": thr, "current": c, "direction": "hold", "progress_pct": 100.0 if ok else 0.0,
+                "time_elapsed_pct": elapsed_pct, "pace": None, "status": "on track" if ok else "off track", "score": 1.0 if ok else 0.0,
+                "band": "delivered" if ok else "no real progress", "remaining": 0.0 if ok else round(abs(thr - c), 2),
+                "needed_per_week": 0.0, "achieved_per_week": 0.0, "rate_multiplier_needed": None,
+            })
+            continue
         s = as_float(kr.get("start"), f"{name}.start")
         t = as_float(kr.get("target"), f"{name}.target")
         c = as_float(kr.get("current"), f"{name}.current")
@@ -310,7 +323,7 @@ def grade_progress(key_results: list[dict], period_start: str, period_end: str, 
         "worst": {"name": worst["name"], "gap_vs_time_pts": round(worst["progress_pct"] - worst["time_elapsed_pct"], 1)},
         "markdown_table": md_table(
             ["KR", "Baseline → Target", "Current", "Progress", "Time", "Status", "Score", "Need/wk vs actual/wk"],
-            [[r["name"], f"{r['start']:g} → {r['target']:g}", f"{r['current']:g}", f"{r['progress_pct']}%", f"{r['time_elapsed_pct']}%", r["status"], r["score"], f"{r['needed_per_week']:g} vs {r['achieved_per_week']:g}"] for r in rows],
+            [[r["name"], (f"{'≥' if 'above' in r.get('target_type', '') else '≤'} {r['target']:g} (hold)" if r["direction"] == "hold" else f"{r['start']:g} → {r['target']:g}"), f"{r['current']:g}", f"{r['progress_pct']}%", f"{r['time_elapsed_pct']}%", r["status"], r["score"], ("—" if r["direction"] == "hold" else f"{r['needed_per_week']:g} vs {r['achieved_per_week']:g}")] for r in rows],
         ),
         "verdict": f"{elapsed_pct}% of the period gone: {counts['done']} done, {counts['on track']} on track, {counts['at risk']} at risk, {counts['off track']} off track (avg score {avg_score}). "
         + (f"Committed KRs in trouble: {', '.join(committed_missing)}. " if committed_missing else "")

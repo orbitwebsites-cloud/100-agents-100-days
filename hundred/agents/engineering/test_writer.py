@@ -62,7 +62,9 @@ AGENT = Agent(
        test names. Branch count + raise count is your minimum test count per function.
     2. **Find the gaps.** If tests exist, call `test_writer__coverage_gaps` with the source and
        the test module. Prioritise: (a) public functions with zero tests, (b) raise paths never
-       asserted with `pytest.raises`, (c) tests without assertions. Don't rewrite tests that
+       asserted with `pytest.raises`, (c) raise *sites* no test pins with `match=` (a
+       function with four `ValueError`s is not covered by one `pytest.raises(ValueError)`),
+       (d) tests without assertions. Don't rewrite tests that
        already cover behaviour; add the missing ones.
     3. **Build the case matrix.** For each function's parameters, call
        `test_writer__edge_case_matrix` with name + type (+ min/max/choices/nullable if known).
@@ -387,6 +389,7 @@ def _test_functions(tree: ast.Module) -> list[dict]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
             names: set[str] = set()
+            strings: set[str] = set()
             has_assert = False
             uses_raises = False
             raised_types: set[str] = set()
@@ -397,6 +400,7 @@ def _test_functions(tree: ast.Module) -> list[dict]:
                     names.add(sub.attr)
                 elif isinstance(sub, ast.Constant) and isinstance(sub.value, str):
                     names.add(sub.value)
+                    strings.add(sub.value)
                 if isinstance(sub, ast.Assert):
                     has_assert = True
                 if isinstance(sub, ast.Call):
@@ -408,7 +412,17 @@ def _test_functions(tree: ast.Module) -> list[dict]:
                             if sub.args:
                                 raised_types.add(_dotted(sub.args[0]).rsplit(".", 1)[-1])
             params = any(_dotted(d).endswith("parametrize") for d in node.decorator_list)
-            out.append({"name": node.name, "line": node.lineno, "names": names, "has_assert": has_assert, "uses_raises": uses_raises, "raised_types": raised_types, "parametrized": params})
+            argnames = {a.arg for a in node.args.args}
+            if params and raised_types & argnames:
+                # pytest.raises(exc) with exc supplied by @parametrize: the real classes live in the decorator
+                raised_types -= argnames
+                for dec in node.decorator_list:
+                    for sub in ast.walk(dec):
+                        if isinstance(sub, (ast.Name, ast.Attribute)):
+                            nm = _dotted(sub).rsplit(".", 1)[-1]
+                            if re.search(r"(Error|Exception|Warning|Exit|Interrupt)$", nm):
+                                raised_types.add(nm)
+            out.append({"name": node.name, "line": node.lineno, "names": names, "has_assert": has_assert, "uses_raises": uses_raises, "raised_types": raised_types, "parametrized": params, "strings": strings})
     return out
 
 
@@ -454,6 +468,28 @@ def coverage_gaps(source: str, tests: str) -> dict:
         covering = [t for t in tfuncs if key in t["names"] or (cls and cls in t["names"] and node.name in t["names"])]
         branches = _branches(node)
         tested_raises = sorted({r for t in covering if t["uses_raises"] for r in t["raised_types"]})
+        # per raise *site*: a site is pinned when a covering pytest.raises test of that type mentions a word of its message
+        sites = []
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Raise) and sub.exc is not None and _dotted(sub.exc):
+                etype = _dotted(sub.exc).rsplit(".", 1)[-1]
+                msg = ""
+                if isinstance(sub.exc, ast.Call) and sub.exc.args:
+                    arg = sub.exc.args[0]
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        msg = arg.value
+                    elif isinstance(arg, ast.JoinedStr):
+                        msg = "".join(v.value for v in arg.values if isinstance(v, ast.Constant) and isinstance(v.value, str))
+                sites.append({"line": sub.lineno, "type": etype, "message": msg[:80]})
+        per_type = Counter(x["type"] for x in sites)
+        unpinned = []
+        for site in sites:
+            if per_type[site["type"]] < 2 or site["type"] not in tested_raises:
+                continue  # single site: the type-level check above is enough; untested type: already reported
+            words = {w for w in re.findall(r"[a-z]{4,}", site["message"].lower())}
+            tstrings = {w for t in covering if t["uses_raises"] and site["type"] in t["raised_types"] for n in t["strings"] for w in re.findall(r"[a-z]{4,}", n.lower())}
+            if not words or not (words & tstrings):
+                unpinned.append(site)
         untested_raises = [r for r in raises if r not in tested_raises and not (tested_raises == [] and any(t["uses_raises"] for t in covering) and len(raises) == 1)]
         need = 1 + branches + len(raises)
         have = sum(3 if t["parametrized"] else 1 for t in covering)
@@ -461,6 +497,8 @@ def coverage_gaps(source: str, tests: str) -> dict:
             "function": qual, "line": node.lineno, "branches": branches, "raises": raises, "tests": [t["name"] for t in covering],
             "test_count": len(covering), "estimated_cases": have, "min_cases_needed": need, "gap": max(0, need - have),
             "untested_raises": untested_raises,
+            "raise_sites": len(sites),
+            "unpinned_raise_sites": unpinned,
         })
     untested = [r["function"] for r in rows if r["test_count"] == 0]
     no_assert = [t["name"] for t in tfuncs if not t["has_assert"]]
@@ -473,6 +511,9 @@ def coverage_gaps(source: str, tests: str) -> dict:
     for r in rows:
         for x in r["untested_raises"]:
             priorities.append(f"{r['function']}: raise {x} never asserted with pytest.raises")
+    for r in rows:
+        for x in r["unpinned_raise_sites"]:
+            priorities.append(f"{r['function']}: {x['type']} at line {x['line']} ('{x['message'][:40]}') — no pytest.raises(match=…) pins this path; another {x['type']} can satisfy the test")
     for name in no_assert:
         priorities.append(f"{name}: no assertion — passes even if the code is deleted")
     return {
@@ -484,7 +525,7 @@ def coverage_gaps(source: str, tests: str) -> dict:
         "priorities": priorities[:40],
         "estimated_missing_cases": total_gap,
         "verdict": (f"{len(untested)}/{len(rows)} public functions untested; ~{total_gap} cases missing; "
-                    f"{sum(len(r['untested_raises']) for r in rows)} raise path(s) unasserted; {len(no_assert)} test(s) without assertions."),
+                    f"{sum(len(r['untested_raises']) for r in rows)} raise type(s) unasserted, {sum(len(r['unpinned_raise_sites']) for r in rows)} raise site(s) not pinned by message; {len(no_assert)} test(s) without assertions."),
     }
 
 

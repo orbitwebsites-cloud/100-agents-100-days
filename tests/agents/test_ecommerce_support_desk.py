@@ -131,3 +131,24 @@ def test_support_metrics_maths():
 def test_support_metrics_rejects_bad_input():
     with pytest.raises(ToolError):
         call("support_metrics", tickets=10, orders=100, period_days=0)
+
+
+def test_triage_injury_without_keyword_and_no_false_alarms():
+    out = call("triage_tickets", now="2026-10-02T16:30", tickets=[
+        {"id": "wismo", "body": "It wouldn't hurt to send tracking emails, where is my order?", "created_at": "2026-10-02T10:00"},
+        {"id": "hurt", "body": "The lid snapped and cut my daughter's finger, she needed stitches.", "created_at": "2026-10-02T16:00"},
+        {"id": "button", "body": "I pressed the button and the lid won't open.", "created_at": "2026-10-02T12:00"},
+        {"id": "press", "body": "I'm a journalist writing about bottle safety.", "created_at": "2026-10-02T11:00"},
+    ])
+    ids = [r["id"] for r in out["queue"]]
+    by = {r["id"]: r for r in out["queue"]}
+    assert ids[:2] == ["hurt", "press"] and by["hurt"]["category"] == "safety"
+    assert by["wismo"]["category"] == "wismo" and not by["wismo"]["needs_human"]
+    assert not by["button"]["needs_human"]
+
+
+def test_triage_waiting_uses_business_clock():
+    out = call("triage_tickets", now="2026-10-05T10:00", tickets=[{"id": "x", "body": "Where is my order? tracking stuck", "created_at": "2026-10-02T17:00"}])
+    row = out["queue"][0]
+    assert row["waiting_hours"] == 65.0 and row["waiting_sla_hours"] == 2.0  # Fri 17-18 + Mon 9-10
+    assert not any("SLA" in f for f in row["flags"])  # P3 = 8 business hours

@@ -93,3 +93,9 @@ def test_check_letter_scores_good_and_bad_drafts():
 def test_check_letter_rejects_empty():
     with pytest.raises(ToolError):
         call("check_letter", letter="  ")
+
+
+def test_requirement_coverage_marks_title_mentions_partial():
+    out = call("requirement_coverage", letter="I am applying for the Customer Success Manager role. I have used Salesforce.", requirements=["Experience with Salesforce and Gainsight"])
+    row = out["requirements"][0]
+    assert row["status"] == "partial" and row["skills_missing"] == ["gainsight"] and out["partial"] == [1]

@@ -13,15 +13,15 @@ def call(tool, **kwargs):
 
 
 def test_cadence_dates_business_days_and_channels():
-    out = call("cadence_dates", last_contact="2026-09-18", stage="proposal")  # Friday
+    out = call("cadence_dates", last_contact="2026-09-18", stage="proposal", today="2026-09-18")  # Friday
     dates_ = [t["date"] for t in out["touches"]]
     assert dates_[:4] == ["2026-09-22", "2026-09-28", "2026-10-07", "2026-10-23"]
     assert [t["business_days_after_previous"] for t in out["touches"]] == [2, 4, 7, 12, 12]
     assert out["touches"][-1]["channel"] == "breakup email"
     assert all(t["weekday"] not in ("Sat", "Sun") for t in out["touches"])
-    promised = call("cadence_dates", last_contact="2026-09-18", stage="proposal", promised_date="2026-10-14")
+    promised = call("cadence_dates", last_contact="2026-09-18", stage="proposal", promised_date="2026-10-14", today="2026-09-18")
     assert promised["touches"][0]["date"] == "2026-10-15"
-    hol = call("cadence_dates", last_contact="2026-11-24", stage="negotiation", touches=1, holidays=["2026-11-25"])
+    hol = call("cadence_dates", last_contact="2026-11-24", stage="negotiation", touches=1, holidays=["2026-11-25"], today="2026-11-24")
     assert hol["touches"][0]["date"] == "2026-11-26"
 
 
@@ -31,7 +31,9 @@ def test_cadence_dates_bad_input():
     with pytest.raises(ToolError):
         call("cadence_dates", last_contact="2026-09-18", touches=9)
     with pytest.raises(ToolError):
-        call("cadence_dates", last_contact="2026-09-18", promised_date="2026-09-01")
+        call("cadence_dates", last_contact="2026-09-18", promised_date="2026-09-01", today="2026-09-18")
+    with pytest.raises(ToolError):
+        call("cadence_dates", last_contact="2026-09-18", today="2026-09-10")  # last contact after today
 
 
 def test_next_touch_decision_branches():
@@ -60,7 +62,7 @@ def test_score_follow_up_bad_and_good():
     assert "just checking" in bad["cliches"] and "haven't heard back" in bad["guilt_phrases"]
     assert any("no new value" in f for f in bad["fixes"])
     good = call("score_follow_up", email="Hi Tom, you asked on the call how long onboarding takes — Northwind went live in 11 days. Is a 2-week pilot still worth exploring?")
-    assert good["score"] == 100 and good["words"] == 25 and good["questions"] == 1
+    assert good["score"] == 100 and good["words"] == 24 and good["questions"] == 1  # "2-week" is one word
     breakup = call("score_follow_up", email="Tom — I'll close the file on this for now. Door's open whenever the timing changes. Anything I should pass along to whoever picks this up?", kind="breakup")
     assert breakup["score"] >= 80
     no_out = call("score_follow_up", email="Tom, is this still a priority?", kind="breakup")
@@ -99,3 +101,18 @@ def test_stale_deals_bad_input():
         call("stale_deals", deals=[{"name": "A", "stage": "demo", "amount": 1}])
     with pytest.raises(ToolError):
         call("stale_deals", deals=[{"name": "A", "stage": "demo", "amount": 1, "last_activity": "2027-01-01"}], today="2026-09-27")
+
+
+def test_cadence_continues_from_touches_done_and_never_dates_the_past():
+    out = call("cadence_dates", last_contact="2026-09-21", stage="proposal", touches=3, promised_date="2026-09-24", today="2026-09-28", touches_done=1)
+    t = out["touches"]
+    assert [x["touch"] for x in t] == [2, 3, 4]
+    assert [x["date"] for x in t] == ["2026-09-28", "2026-10-07", "2026-10-23"]
+    assert [x["channel"] for x in t] == ["phone", "linkedin", "breakup email"]
+    assert out["overdue"] and "2026-09-25" in out["overdue"]
+
+
+def test_score_follow_up_counts_every_ask_not_just_question_marks():
+    out = call("score_follow_up", email="Tom, here's the 19-day rollout plan you asked for. Let me know if you have any questions. Happy to hop on a call. Does Tuesday work?")
+    assert out["asks"] == 3 and out["questions"] == 1
+    assert any("3 asks" in f for f in out["fixes"])

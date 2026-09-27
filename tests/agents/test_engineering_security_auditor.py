@@ -119,3 +119,12 @@ def test_check_security_headers_grades():
 def test_check_security_headers_rejects_empty():
     with pytest.raises(ToolError):
         call("check_security_headers", headers={})
+
+
+def test_scan_secrets_redacts_every_secret_on_a_shared_line():
+    kid, sec = "AKIA" + "FAKEEXAMPLE00001", "fAkE0SynthEtic/TESTonly" + "+NotARealKey12345"
+    line = f'boto3.client("s3", aws_access_key_id="{kid}", aws_secret_access_key="{sec}")'
+    out = call("scan_secrets", text=line)
+    assert out["count"] == 2
+    for f in out["findings"]:  # each context used to leak the *other* secret
+        assert kid not in f["context"] and sec not in f["context"]

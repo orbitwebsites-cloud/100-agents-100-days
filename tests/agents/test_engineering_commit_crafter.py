@@ -140,3 +140,17 @@ def test_split_changes_groups_and_order():
 def test_split_changes_rejects_non_diff():
     with pytest.raises(ToolError):
         call("split_changes", diff="nothing")
+
+
+def test_lint_requires_space_after_colon():
+    out = call("lint_commit", message="feat:add login")
+    assert out["valid"] is False and any("no space after the colon" in e for e in out["errors"])
+    assert out["fixed_header"] == "feat: add login"
+
+
+def test_changelog_drops_commits_reverted_in_the_same_range():
+    out = call("changelog", current_version="1.2.0", release_date="2026-09-27", commits=[
+        "aaaaaaa feat: add dark mode", "bbbbbbb fix: correct rounding",
+        "ccccccc revert: feat: add dark mode\n\nThis reverts commit aaaaaaa."])
+    assert out["bump"] == "patch" and out["next_version"] == "1.2.1"
+    assert "dark mode" not in out["markdown"] and out["notes"][0].startswith("aaaaaaa was reverted")

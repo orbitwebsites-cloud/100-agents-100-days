@@ -116,3 +116,8 @@ def test_build_salary_band_rejects_missing_inputs():
         call("build_salary_band")
     with pytest.raises(ToolError):
         call("build_salary_band", band_min=100000, band_max=90000)
+
+
+def test_inclusive_language_skips_benefit_and_product_uses():
+    out = call("check_inclusive_language", job_description="You get paid family leave and work on a mature product line. We value core competencies.")
+    assert out["exclusionary"] == [] and out["masculine_coded"] == []

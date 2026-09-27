@@ -93,3 +93,11 @@ def test_keyword_audit_density_and_placement():
 def test_keyword_audit_rejects_missing_keyword():
     with pytest.raises(ToolError):
         call("keyword_audit", markdown=MD, primary_keyword="  ")
+
+
+def test_keyword_in_h1_does_not_count_as_first_100_words():
+    md = "# Remote onboarding checklist for managers\nStarting a job from home is hard. " + "Plan the first week well. " * 30 + "\n\n## Next steps\nUse the remote onboarding checklist today."
+    out = call("keyword_audit", markdown=md, primary_keyword="remote onboarding checklist")
+    assert out["placements"]["first_100_words"] is False and out["placements"]["last_paragraph"] is True
+    rr = call("readability_report", markdown=md)
+    assert rr["words"] == 7 + 5 * 30 + 6  # body prose only, headings excluded

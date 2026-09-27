@@ -87,3 +87,11 @@ def test_objection_log_stats_bad_input():
         call("objection_log_stats", objections=[{"category": "price", "outcome": "maybe"}])
     with pytest.raises(ToolError):
         call("objection_log_stats", objections=[{"stage": "x"}])
+
+
+def test_price_subtypes_detected():
+    out = call("classify_objection", objection="Honestly the price is almost double what we pay for Tipalti today, and I can't justify $38k a year to our CFO.", stage="proposal")
+    assert out["primary"] == "price"
+    assert out["price_subtypes"] == ["competitor_cheaper", "value_gap"]
+    assert "total cost of ownership" in out["price_responses"]["competitor_cheaper"]
+    assert call("classify_objection", objection="We just don't have budget until next fiscal year.", stage="proposal")["price_subtypes"] == ["budget"]

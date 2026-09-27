@@ -91,3 +91,33 @@ def test_capacity_check_applies_moscow_rules():
 def test_capacity_check_rejects_bad_category():
     with pytest.raises(ToolError):
         call("capacity_check", items=[{"name": "A", "moscow": "maybe", "effort": 1}], capacity_weeks=10)
+
+
+def test_rice_score_groups_fragile_ranks_into_tiers():
+    out = call("rice_score", items=[
+        {"name": "A", "reach": 7000, "impact": 0.5, "confidence": 100, "effort": 1, "evidence": "tickets"},
+        {"name": "B", "reach": 6000, "impact": 1, "confidence": 80, "effort": 2},
+        {"name": "C", "reach": 5000, "impact": 2, "confidence": 80, "effort": 4},
+        {"name": "D", "reach": 400, "impact": 2, "confidence": 80, "effort": 3},
+    ])
+    assert out["tiers"] == [["A"], ["B", "C"], ["D"]]
+
+
+def test_wsjf_and_ice_scores():
+    w = call("wsjf_ice_score", items=[{"name": "SSO", "business_value": 13, "time_criticality": 13, "risk_reduction": 5, "job_size": 8},
+                                      {"name": "Audit log", "business_value": 5, "time_criticality": 8, "risk_reduction": 8, "job_size": 3}])
+    assert [r["name"] for r in w["ranked"]] == ["Audit log", "SSO"] and w["ranked"][1]["score"] == 3.88
+    i = call("wsjf_ice_score", method="ice", items=[{"name": "x", "impact": 8, "confidence": 5, "ease": 6}])
+    assert i["ranked"][0]["score"] == 240.0
+    with pytest.raises(ToolError):
+        call("wsjf_ice_score", method="rice", items=[{"name": "x"}])
+
+
+def test_kano_worse_is_never_negative_zero():
+    out = call("kano_classify", features=[{"name": "f", "responses": [{"functional": "like", "dysfunctional": "neutral"}]}])
+    assert str(out["features"][0]["worse"]) == "0.0"
+
+
+def test_capacity_check_overflowing_coulds_are_the_contingency():
+    out = call("capacity_check", capacity_weeks=10, items=[{"name": "a", "moscow": "must", "effort": 5}, {"name": "b", "moscow": "should", "effort": 3}, {"name": "c", "moscow": "could", "effort": 2}])
+    assert out["problems"] == [] and out["below_the_line"] == ["c"] and "contingency" in out["notes"][0]

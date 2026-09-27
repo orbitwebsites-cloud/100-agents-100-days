@@ -93,3 +93,27 @@ def test_route_lead_bad_input():
         call("route_lead", fit_score=120, intent="high")
     with pytest.raises(ToolError):
         call("route_lead", fit_score=50, intent="hot")
+
+
+def test_country_matching_is_whole_word_with_aliases():
+    icp = {"country": {"values": ["us", "uk"], "weight": 1}}
+    leads = [{"name": "au", "country": "Australia"}, {"name": "ua", "country": "Ukraine"}, {"name": "usa", "country": "United States"}, {"name": "gb", "country": "England"}, {"name": "ru", "country": "Russia"}]
+    by = {r["name"]: r["score"] for r in call("icp_fit_score", icp=icp, leads=leads)["ranked"]}
+    assert by == {"au": 0, "ua": 0, "usa": 100, "gb": 100, "ru": 0}
+
+
+def test_function_criterion_derived_from_title():
+    icp = {"seniority": {"values": ["vp"], "weight": 1}, "function": {"values": ["sales", "ops"], "weight": 1}}
+    leads = [{"name": "se", "title": "VP Sales Engineering"}, {"name": "revops", "title": "VP Revenue Operations"}, {"name": "ceo", "title": "CEO"}]
+    by = {r["name"]: r for r in call("icp_fit_score", icp=icp, leads=leads)["ranked"]}
+    assert by["se"]["score"] == 50 and by["revops"]["score"] == 100
+    assert any(m["criterion"] == "function" and m["points"] == 1 for m in by["ceo"]["matched"])  # exec counts as buyer
+    assert call("parse_titles", titles=["VP Revenue Operations"])["titles"][0]["function"] == "ops"
+
+
+def test_company_size_far_outside_band_caps_at_tier_c():
+    icp = {"industry": {"values": ["saas"], "weight": 4}, "employees": {"values": ["51-500"], "weight": 1}}
+    out = call("icp_fit_score", icp=icp, leads=[{"name": "tiny", "industry": "SaaS", "employees": "8"}, {"name": "near", "industry": "SaaS", "employees": "620"}])
+    by = {r["name"]: r for r in out["ranked"]}
+    assert by["tiny"]["score"] == 54 and by["tiny"]["tier"] == "C" and "capped at tier C" in by["tiny"]["caps"][0]
+    assert by["near"]["score"] == 90 and by["near"]["caps"] == []

@@ -61,8 +61,8 @@ AGENT = Agent(
        contract's fee terms (monthly %, annual %, or flat) and grace period. Quote the fee only if the
        terms allow it; otherwise report it as leverage you do not have and recommend adding
        a late-fee clause to future contracts (1.5%/month is the common commercial term).
-    3. **Schedule the touches.** Call `invoice_chaser__dunning_schedule` with the due date and
-       amount. It returns dated touches (business-day adjusted) with channel, tone and subject line,
+    3. **Schedule the touches.** Call `invoice_chaser__dunning_schedule` with the due date,
+       amount and `touches_sent` (how many reminders actually went out; 0 if none). It returns dated touches (business-day adjusted) with channel, tone and subject line,
        and tells you which touch is due *now*. Do not skip ahead: a "final notice" as the first
        message destroys goodwill and rarely accelerates payment.
     4. **Write the message for the current touch.** Rules: subject carries the invoice number and
@@ -285,7 +285,7 @@ def late_fee(
 TOUCHES = [
     (-7, "pre-due reminder", "email", "helpful", "Invoice {id} ({amount}) due {due}"),
     (1, "due-date notice", "email", "factual", "Invoice {id} ({amount}) was due {due}"),
-    (7, "second notice", "email", "firm", "Overdue: invoice {id} ({amount}) — 7 days past due"),
+    (7, "second notice", "email", "firm", "Overdue: invoice {id} ({amount}) — {days_late} days past due"),
     (14, "call + email", "phone", "firm", "Follow-up on invoice {id} ({amount}) — payment date?"),
     (30, "final notice", "email", "formal", "Final notice: invoice {id} ({amount}) — late fee applies"),
     (45, "escalation", "email", "consequence", "Invoice {id} ({amount}) — referral to collections on {escalation_date}"),
@@ -293,7 +293,7 @@ TOUCHES = [
 
 
 @AGENT.tool
-def dunning_schedule(due_date: str, amount: float, invoice_id: str = "", as_of: str = "", offsets_days: list[int] | None = None) -> dict:
+def dunning_schedule(due_date: str, amount: float, invoice_id: str = "", as_of: str = "", offsets_days: list[int] | None = None, touches_sent: int = -1) -> dict:
     """Generate the dated dunning sequence for one invoice and say which touch is due now.
 
     Default cadence: T-7, T+1, T+7, T+14 (call), T+30 (final notice, fee), T+45 (escalation).
@@ -305,6 +305,7 @@ def dunning_schedule(due_date: str, amount: float, invoice_id: str = "", as_of: 
         invoice_id: Invoice number for subject lines.
         as_of: Today's date YYYY-MM-DD; defaults to today. Determines the current touch.
         offsets_days: Optional custom offsets from the due date, e.g. [-3, 1, 10, 20, 35].
+        touches_sent: How many touches of this sequence have actually gone out (0 = none). Pass it whenever you know: if the calendar is ahead of what was sent, the tool does NOT jump to the calendar's touch — it sends the next unsent step now and compresses the rest a week apart. -1 = unknown (calendar only).
     """
     due = parse_iso(due_date, "due_date")
     amt = require_positive(D(amount, "amount"), "amount")
@@ -332,13 +333,52 @@ def dunning_schedule(due_date: str, amount: float, invoice_id: str = "", as_of: 
                 "offset_days": offset,
                 "channel": channel,
                 "tone": tone,
-                "subject": subject.format(id=inv, amount=amount_s, due=due.isoformat(), escalation_date=escalation_date.isoformat()),
+                "subject": subject.format(id=inv, amount=amount_s, due=due.isoformat(), escalation_date=max(escalation_date, d + timedelta(days=15)).isoformat(), days_late=max((d - due).days, 0)),
+                "_template": subject,
                 "status": "sent/past" if d < today else "due today" if d == today else "upcoming",
             }
         )
     days_late = (today - due).days
     current = next((t for t in reversed(touches) if dates.parse_date(t["date"]) <= today), None)
     nxt = next((t for t in touches if dates.parse_date(t["date"]) > today), None)
+    catch_up = None
+    if touches_sent >= 0:
+        if touches_sent > len(touches):
+            raise ToolError(f"touches_sent must be between 0 and {len(touches)}")
+        calendar_idx = current["touch"] if current else 0  # touches the calendar says should be out by today
+        if touches_sent < calendar_idx:
+            # Behind: never open with the calendar's harsher touch. Send the next unsent step today and
+            # re-space what is left one week apart (business days). A pre-due reminder is moot once overdue.
+            pending = [t for t in touches[touches_sent:] if not (t["offset_days"] < 0 and days_late > 0)]
+            d = today
+            while d.weekday() >= 5:
+                d += timedelta(days=1)
+            for k, t in enumerate(pending):
+                if k:
+                    d += timedelta(days=7)
+                    while d.weekday() >= 5:
+                        d += timedelta(days=1)
+                t.update({"date": d.isoformat(), "weekday": d.strftime("%a"), "status": "due today" if d == today else "upcoming", "rescheduled": True,
+                          "subject": t["_template"].format(id=inv, amount=amount_s, due=due.isoformat(), escalation_date=(d + timedelta(days=15)).isoformat(), days_late=max((d - due).days, 0))})
+            for t in touches[:touches_sent]:
+                t["status"] = "sent"
+            current, nxt = (pending[0] if pending else None), (pending[1] if len(pending) > 1 else None)
+            catch_up = f"Calendar says touch {calendar_idx} but only {touches_sent} sent — send touch {current['touch']} ({current['name']}) now and compress the rest a week apart." if current else None
+        else:
+            for t in touches[:touches_sent]:
+                t["status"] = "sent"
+            if current and current["touch"] <= touches_sent:
+                current = None  # already sent; wait for the next date
+    for t in touches:
+        t.pop("_template", None)
+    verdict = (
+        f"{max(days_late, 0)} days past due — " + (catch_up[: catch_up.index(' — send')] + " — " if catch_up else "") + f"send touch {current['touch']} ({current['name']}, {current['tone']}) now"
+        + (f"; next is {nxt['name']} on {nxt['date']}." if nxt else "; it is the last touch — after it, hand to collections or legal.")
+        if current
+        else (f"Up to date ({touches_sent} sent) — next is touch {nxt['touch']} ({nxt['name']}) on {nxt['date']}." if nxt and touches_sent > 0
+              else f"Not yet due — first touch ({touches[0]['name']}) goes on {touches[0]['date']}." if nxt
+              else "All touches sent — hand to collections or legal.")
+    )
     return {
         "invoice": inv,
         "due": due.isoformat(),
@@ -347,13 +387,8 @@ def dunning_schedule(due_date: str, amount: float, invoice_id: str = "", as_of: 
         "touches": touches,
         "current_touch": current,
         "next_touch": nxt,
-        "verdict": (
-            f"{max(days_late, 0)} days past due — send touch {current['touch']} ({current['name']}, {current['tone']}) now; next is {nxt['name']} on {nxt['date']}."
-            if current and nxt
-            else f"Not yet due — first touch ({touches[0]['name']}) goes on {touches[0]['date']}."
-            if not current
-            else f"All touches exhausted ({current['name']} on {current['date']}) — hand to collections or legal."
-        ),
+        "catch_up": catch_up,
+        "verdict": verdict,
     }
 
 

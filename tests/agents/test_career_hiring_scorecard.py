@@ -87,3 +87,22 @@ def test_check_feedback_bias_flags_proxies_and_rewards_evidence():
 def test_check_feedback_bias_rejects_empty():
     with pytest.raises(ToolError):
         call("check_feedback_bias", feedback="")
+
+
+def test_build_scorecard_refuses_protected_criteria_but_keeps_job_related_ones():
+    comps = [
+        {"name": "SQL", "weight": 40, "must_have": True},
+        {"name": "Communication", "weight": 30},
+        {"name": "Ownership", "weight": 30},
+        {"name": "Under 30", "weight": 10},
+        {"name": "Female team balance", "weight": 10},
+        {"name": "Muslim holidays flexibility", "weight": 10},
+    ]
+    out = call("build_scorecard", role="Analyst", competencies=comps, interviewers=["A", "B"])
+    assert [r["name"] for r in out["rejected"]] == ["Under 30", "Female team balance", "Muslim holidays flexibility"]
+    assert [c["name"] for c in out["competencies"]] == ["SQL", "Communication", "Ownership"]
+
+
+def test_feedback_bias_skips_race_condition():
+    out = call("check_feedback_bias", feedback="She said the outage was a race condition in the queue consumer and walked me through the fix, cutting retries 40%.")
+    assert out["protected_or_proxy_terms"] == []

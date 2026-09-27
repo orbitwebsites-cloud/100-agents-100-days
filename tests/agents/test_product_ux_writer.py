@@ -72,9 +72,43 @@ def test_localization_expansion_flags_overflow():
     assert rows["ja"]["estimated_chars"] == 17 and rows["ja"]["fits"] is True
     assert rows["fr"]["estimated_chars"] == 24 and rows["fr"]["fits"] is True
     assert out["overflow"] == ["de"]
-    assert out["safe_source_length"] == 16
+    # W3C/IBM budget for 11-20 chars (180-200%): de 1.93x → 37 chars; fr fits typically but not the budget
+    assert rows["de"]["budget_chars"] == 37 and rows["fr"]["budget_chars"] == 29 and out["at_risk"] == ["fr"]
+    assert out["safe_source_length"] == 12
 
 
 def test_localization_expansion_rejects_unknown_locale():
     with pytest.raises(ToolError):
         call("localization_expansion", text_value="Save", container_chars=10, locales=["xx"])
+
+
+def test_check_microcopy_eval_regressions():
+    out = call("check_microcopy", strings=[
+        {"key": "a", "component": "button", "text": "Log In"},
+        {"key": "b", "component": "button", "text": "Logout"},
+        {"key": "c", "component": "dialog_title", "text": "Are you sure?"},
+        {"key": "d", "component": "link", "text": "New here? Create an account"},
+    ])
+    r = {x["key"]: x for x in out["strings"]}
+    assert r["a"]["case"] == "Title Case"
+    assert any("noun used as a verb" in i for i in r["b"]["issues"])
+    assert any("vague confirmation" in i for i in r["c"]["issues"])
+    assert r["d"]["issues"] == []
+
+
+def test_lint_error_message_no_false_code_or_blame():
+    ok = call("lint_error_message", message="Your card has expired. Update your card details to keep your plan.")
+    assert ok["score"] == 100
+    locked = call("lint_error_message", message="Your account has been locked.")
+    assert locked["parts"]["what"] is True and locked["parts"]["how"] is False
+    oops = call("lint_error_message", message="Oops! Something went wrong.")
+    assert not any("blame" in i for i in oops["issues"])
+
+
+def test_check_consistency_inflections_hyphens_and_sign_pair():
+    out = call("check_consistency", strings=["Sign in to Acme", "E-mail address", "Enter your email address", "Remove account", "Deleting your account is permanent.", "Logout", "Update your card"])
+    c = {x["concept"]: x for x in out["terminology_conflicts"]}
+    assert c["email"]["variants"] == {"e-mail": 1, "email": 1}
+    assert set(c["delete"]["variants"]) == {"delete", "remove"}
+    assert c["sign in / sign out pair"]["standardise_on"] == "sign in / sign out"
+    assert "save" not in c  # "Update your card" is not a synonym of save

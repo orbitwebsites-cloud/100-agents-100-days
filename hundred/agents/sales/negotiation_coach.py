@@ -52,7 +52,9 @@ AGENT = Agent(
     1. **Map the zone.** Call `negotiation_coach__zopa_batna` with your walk-away and
        target, your estimate of their walk-away and target, and the value of each side's
        best alternative. It returns whether a ZOPA exists, its width, the midpoint, your
-       recommended anchor (ambitious but inside their plausible range), and a power
+       recommended anchor (ambitious but inside their plausible range — or, if you pass
+       `current_offer`, the price you already sent, because you can't re-anchor above a
+       number that's on the table), and a power
        read (whose BATNA is stronger). No ZOPA → the job is to change the package, not
        to argue price.
     2. **Build the ladder.** Call `negotiation_coach__concession_ladder` with the anchor
@@ -97,6 +99,13 @@ AGENT = Agent(
     - **Present value:** compare multi-year deals at your cost of capital (10-20% for
       most SaaS/services businesses); a bigger discount for upfront cash is often
       rational — the tool shows when.
+    - **Counterpart style** (a labelled guess from how they write and talk — never a
+      personality claim): *direct/driver* → short, bottom-line offers, give them the choice
+      between two MESOs; *analytical* → justify each number with its basis, give time to
+      review, no pressure closes; *relational/steady* → emphasise continuity, low risk,
+      the ongoing relationship, avoid sudden deadlines; *expressive* → frame the package
+      around the outcome and recognition (case study, launch). Adjust tone and order, never
+      the numbers or the walk-away.
     - Not legal advice: liability, indemnity and termination terms go to a lawyer.
 
     ## Output format
@@ -116,6 +125,7 @@ AGENT = Agent(
     Cheap gives: … · Protect: … · Pairs: if <ask> → then <get>
 
     ## Script
+    _Style read (guess): <direct / analytical / relational / expressive> — <evidence>_
     **Open:** …
     **When they ask for <x>:** …
     **Ladder step 1/2/3:** …
@@ -143,6 +153,7 @@ def zopa_batna(
     our_batna_value: float = 0.0,
     their_batna_value: float = 0.0,
     we_are_seller: bool = True,
+    current_offer: float = 0.0,
 ) -> dict:
     """Compute the zone of possible agreement, midpoint, recommended anchor and a power read from both sides' walk-aways and BATNAs.
 
@@ -157,6 +168,7 @@ def zopa_batna(
         our_batna_value: Value to us of our best alternative if no deal (0 = unknown).
         their_batna_value: Estimated value to them of their best alternative (0 = unknown).
         we_are_seller: True if we're selling (default), False if buying.
+        current_offer: The price already on the table from us (e.g. the proposal they are pushing back on); 0 = none yet. Once a number is out, it is the anchor — you can't credibly re-anchor above it.
     """
     for name, v in (("our_walkaway", our_walkaway), ("our_target", our_target), ("their_walkaway_estimate", their_walkaway_estimate)):
         if v <= 0:
@@ -183,6 +195,10 @@ def zopa_batna(
         anchor = c.money(anchor)
     else:
         anchor = None
+    anchor_locked = False
+    if current_offer and current_offer > 0:
+        if (we_are_seller and (anchor is None or current_offer < anchor)) or (not we_are_seller and (anchor is None or current_offer > anchor)):
+            anchor, anchor_locked = c.money(current_offer), True
     target_in_zopa = exists and low <= our_target <= high
     target_pos = round((our_target - low) / (high - low), 2) if exists and high > low else None
     power = "balanced"
@@ -205,6 +221,8 @@ def zopa_batna(
     if not exists:
         gap = c.money(low - high)
         advice.append(f"No overlap: gap of ${gap:,.0f}. Change the package (scope, term, payment timing) or walk — don't discount into a loss.")
+    elif anchor_locked:
+        advice.append(f"Your ${current_offer:,.0f} offer is already the anchor — don't raise it (that reads as bad faith); defend it with the reason and concede from there. Unanchored deals land near ${mid:,.0f}.")
     else:
         advice.append(f"Anchor at ${anchor:,.0f} with a stated reason; expect to land near ${mid:,.0f} without anchoring.")
         if target_pos is not None and target_pos < 0.3:
@@ -221,6 +239,7 @@ def zopa_batna(
         "target_in_zopa": target_in_zopa,
         "target_position_in_zopa": target_pos,
         "recommended_anchor": anchor,
+        "anchor_is_current_offer": anchor_locked,
         "their_target_estimate": c.money(their_target_estimate) if their_target_estimate else None,
         "power": power,
         "power_reasons": reasons,
@@ -366,7 +385,9 @@ def compare_packages(packages: list[dict], cost_of_capital_pct: float = 12.0) ->
             "effective_discount_pct": eff_disc,
             "present_value": c.money(pv),
             "pv_per_year": c.money(pv / years),
-            "cash_in_first_12_months": c.money(fees + (yearly[0] if pay in ("annual_upfront", "upfront", "net30", "net60", "net90") else yearly[0] * (1 - offset) if pay in ("quarterly", "monthly") else 0.0)),
+            # year-1 instalments (upfront, net-N, monthly, quarterly) all arrive inside the first 12 months;
+            # only annual-in-arrears is paid at the 12-month mark
+            "cash_in_first_12_months": c.money(fees + (0.0 if pay == "annual_arrears" else yearly[0])),
         })
     best_pv = max(rows, key=lambda x: x["present_value"])
     best_pv_year = max(rows, key=lambda x: x["pv_per_year"])

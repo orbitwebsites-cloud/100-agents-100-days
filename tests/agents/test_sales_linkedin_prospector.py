@@ -92,3 +92,16 @@ def test_capacity_plan_bad_input():
         call("capacity_plan", target_meetings=0)
     with pytest.raises(ToolError):
         call("capacity_plan", target_meetings=5, acceptance_rate_pct=0)
+
+
+def test_connection_note_limit_depends_on_account_type():
+    note = "Rachel, " + "x" * 206  # 214 chars
+    prem = call("check_message", message=note, kind="connection_note")
+    free = call("check_message", message=note, kind="connection_note", premium=False)
+    assert prem["fits"] is True and prem["limit"] == 300
+    assert free["fits"] is False and free["limit"] == 200 and free["over_by"] == 14
+
+
+def test_headline_claim_found_below_the_name_line():
+    out = call("extract_hooks", profile_text="Rachel Okonkwo\nHelping mid-market SaaS teams build pipeline | VP Marketing", today="2026-09-28")
+    assert any(h["type"] == "headline_claim" for h in out["hooks"])

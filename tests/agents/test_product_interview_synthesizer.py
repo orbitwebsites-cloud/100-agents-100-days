@@ -102,3 +102,24 @@ def test_saturation_check_not_saturated():
 def test_saturation_check_rejects_bad_window():
     with pytest.raises(ToolError):
         call("saturation_check", tags_per_interview=[["a"]], window=1)
+
+
+def test_extract_signals_catches_plain_spoken_pain_and_weekday_frequency():
+    notes = "Interview 1\nOur biggest problem is approvals. Every Friday I spend three hours on the report.\n\nInterview 2\nApprovals are scattered and we lose track constantly. If there was a smarter search I might pay more."
+    out = call("extract_signals", notes=notes)
+    got = {q["quote"]: q["signals"] for q in out["quotes"]}
+    assert "pain" in got["Our biggest problem is approvals."]
+    assert "money_frequency" in got["Every Friday I spend three hours on the report."]
+    assert "pain" in got["Approvals are scattered and we lose track constantly."]
+    assert out["hypothetical_count"] == 1
+
+
+def test_cluster_observations_links_inflected_short_notes():
+    obs = [{"text": "Clients approve designs over email", "interview": "P2"},
+           {"text": "Legal approvals happen in email threads", "interview": "P3"},
+           {"text": "Approvals scattered across Slack and email threads", "interview": "P6"},
+           {"text": "Rebuilds the weekly report in Excel", "interview": "P1"},
+           {"text": "Rebuilds the weekly steering report by hand", "interview": "P4"}]
+    out = call("cluster_observations", observations=obs)
+    sizes = sorted((c["size"], tuple(c["interviews"])) for c in out["clusters"])
+    assert sizes == [(2, ("P1", "P4")), (3, ("P2", "P3", "P6"))]

@@ -53,7 +53,7 @@ def test_sensitivity_check_finds_weight_and_score_flips():
     out = call("sensitivity_check", options=OPTIONS, criteria=CRITERIA)
     assert out["winner"] == "BigCo"
     growth = next(f for f in out["weight_flips"] if f["criterion"] == "Growth")
-    assert growth["new_winner"] == "Startup" and growth["flip_at_weight_pct"] == 55  # break-even at 54.5%
+    assert growth["new_winner"] == "Startup" and growth["flip_at_weight_pct"] == 54.5  # exact break-even (was the integer step 55)
     assert "Growth" in out["fragile_criteria"]
     assert out["robustness"] in ("FRAGILE", "MODERATE")
     assert out["smallest_score_flip"]["change"] < 1.0
@@ -101,3 +101,24 @@ def test_pairwise_weights_ahp_consistency():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("weighted_score").call({"options": "a,b", "criteria": []})
+
+
+def test_pairwise_weights_combines_group_judgements_by_geometric_mean():
+    out = call("pairwise_weights", criteria=["A", "B"], comparisons=[{"a": "A", "b": "B", "ratio": 3}, {"a": "B", "b": "A", "ratio": 1 / 3}, {"a": "A", "b": "B", "ratio": 1 / 3}])
+    # judgements on A/B: 3, 3, 1/3 -> geometric mean 3^(1/3) = 1.442 -> weights 0.5905 / 0.4095
+    assert out["weights"]["A"] == 0.5905 and out["group_pairs"]["A vs B"]["combined"] == 1.442
+
+
+def test_sensitivity_flip_points_are_exact_and_score_flip_rounds_up():
+    out = call(
+        "sensitivity_check",
+        criteria=[{"name": "Talent", "weight": 0.4668}, {"name": "Cost", "weight": 0.1603, "direction": "lower", "normalise": True}, {"name": "TZ", "weight": 0.2776}, {"name": "QoL", "weight": 0.0953}],
+        options=[
+            {"name": "Lisbon", "scores": {"Talent": 3, "Cost": 95, "TZ": 2, "QoL": 5}},
+            {"name": "Austin", "scores": {"Talent": 5, "Cost": 175, "TZ": 5, "QoL": 3}},
+            {"name": "Toronto", "scores": {"Talent": 4, "Cost": 140, "TZ": 5, "QoL": 4}},
+        ],
+    )
+    flips = {f["criterion"]: f["flip_at_weight_pct"] for f in out["weight_flips"]}
+    assert flips["Talent"] == 45.5 and flips["Cost"] == 16.8 and flips["QoL"] == 11.4  # fine-sweep ground truth 45.54 / 16.83 / 11.38
+    assert out["smallest_score_flip"]["change"] == -0.05  # 0.045 needed; -0.04 would not flip it

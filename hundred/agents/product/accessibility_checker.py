@@ -59,12 +59,19 @@ AGENT = Agent(
        and the target ratio. It walks the foreground darker/lighter in small steps to find the
        nearest hue-preserving shade that passes and reports the delta, so the designer keeps the
        brand hue. Offer both the foreground fix and the background fix.
+    2b. **Check colour-only meaning.** Call `accessibility_checker__simulate_color_blindness` with
+       the palette's semantic colours (error/success/warning, chart series, link vs body text). It
+       simulates protanopia, deuteranopia, tritanopia and achromatopsia (Machado 2009) and lists
+       pairs that collapse; for each, require a non-colour cue (icon, text, pattern — WCAG 1.4.1).
     3. **Audit the markup.** Call `accessibility_checker__lint_html` with the HTML. It checks:
        heading order (no skipped levels, exactly one h1), images without alt / with filename alt /
        decorative images not marked alt="", form controls without labels (label[for], aria-label,
        aria-labelledby), empty links and buttons, links with "click here"/"read more" text,
-       missing <html lang>, positive tabindex, duplicate ids, missing page <title>, iframes without
-       title, tables without headers, and autoplay media. Each finding cites the WCAG criterion.
+       missing <html lang>, positive tabindex, duplicate ids (a blocker when a label[for] or
+       aria-labelledby points at one — the reference resolves to the first element only), broken
+       aria-labelledby/-describedby references, empty headings, invalid autocomplete tokens (1.3.5),
+       missing page <title>, iframes without title, tables without headers, and autoplay media.
+       An <img alt> inside a link or button counts as its name. Each finding cites the WCAG criterion.
     4. **Check targets.** Call `accessibility_checker__target_size` with the interactive elements'
        sizes and spacing. 2.5.8 (AA, WCAG 2.2) needs 24×24 CSS px or equivalent spacing; 2.5.5
        (AAA) 44×44. Icon-only buttons are the usual offenders.
@@ -311,6 +318,103 @@ def _autocomplete_ok(value: str) -> bool:
     if toks[-1] not in AUTOCOMPLETE_FIELDS:
         return False
     return all(t.startswith("section-") or t in _AC_MODIFIERS for t in toks[:-1])
+
+
+# Machado, Oliveira & Fernandes (2009), severity 1.0 (dichromacy); applied to linear RGB
+CVD_MATRICES: dict[str, tuple[tuple[float, float, float], ...]] = {
+    "protanopia": ((0.152286, 1.052583, -0.204868), (0.114503, 0.786281, 0.099216), (-0.003882, -0.048116, 1.051998)),
+    "deuteranopia": ((0.367322, 0.860646, -0.227968), (0.280085, 0.672501, 0.047413), (-0.011820, 0.042940, 0.968881)),
+    "tritanopia": ((1.255528, -0.076749, -0.178779), (-0.078411, 0.930809, 0.147602), (0.004733, 0.691367, 0.303900)),
+}
+
+
+def _encode(v: float) -> int:
+    v = min(1.0, max(0.0, v))
+    c = v * 12.92 if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055
+    return round(c * 255)
+
+
+def _simulate(rgb: tuple[int, int, int], kind: str) -> tuple[int, int, int]:
+    lin = [_lin(c) for c in rgb]
+    if kind == "achromatopsia":
+        y = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+        return (_encode(y),) * 3  # type: ignore[return-value]
+    m = CVD_MATRICES[kind]
+    return tuple(_encode(sum(m[r][k] * lin[k] for k in range(3))) for r in range(3))  # type: ignore[return-value]
+
+
+def _lab(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
+    r, g, b = (_lin(c) for c in rgb)
+    x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+    y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+
+    def f(t: float) -> float:
+        return t ** (1 / 3) if t > 216 / 24389 else (24389 / 27 * t + 16) / 116
+
+    fx, fy, fz = f(x), f(y), f(z)
+    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+
+def _delta_e(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    la, lb = _lab(a), _lab(b)
+    return sum((p - q) ** 2 for p, q in zip(la, lb)) ** 0.5
+
+
+@AGENT.tool
+def simulate_color_blindness(colors: list[str], pairs: list[list[str]] | None = None, min_delta_e: float = 10.0) -> dict:
+    """Simulate protanopia, deuteranopia, tritanopia and achromatopsia for a palette and flag colour pairs that collapse.
+
+    Uses the Machado et al. (2009) dichromacy matrices on linear RGB. A pair is flagged when it is
+    clearly distinct for typical vision but its simulated colours fall below `min_delta_e` (CIE76 ΔE)
+    for some deficiency — e.g. a red error and a green success state that only differ by hue. Such
+    pairs must not carry meaning by colour alone (WCAG 1.4.1): add text, an icon or a pattern.
+
+    Args:
+        colors: Palette colours to simulate (hex/rgb/names), up to 16.
+        pairs: Optional [[colour_a, colour_b], ...] that must stay distinguishable (e.g. error vs success).
+            Defaults to every pair of `colors`.
+        min_delta_e: CIE76 ΔE below which two colours count as hard to tell apart (default 10; heuristic,
+            ~2.3 is a just-noticeable difference).
+    """
+    cols = check_rows(colors, "colors", 16)
+    if not isinstance(min_delta_e, (int, float)) or not 1 <= min_delta_e <= 50:
+        raise ToolError("min_delta_e must be between 1 and 50.")
+    kinds = ("protanopia", "deuteranopia", "tritanopia", "achromatopsia")
+    parsed = {}
+    for c in cols:
+        r, g, b, _ = parse_color(c)
+        parsed[str(c)] = (r, g, b)
+    table = [{"color": hexstr(v), **{k: hexstr(_simulate(v, k)) for k in kinds}} for v in parsed.values()]
+    if pairs is None:
+        pair_list = [(a, b) for i, a in enumerate(parsed) for b in list(parsed)[i + 1:]]
+    else:
+        pair_list = []
+        for i, p in enumerate(pairs):
+            if not isinstance(p, list) or len(p) != 2:
+                raise ToolError(f"pairs[{i}] must be [colour_a, colour_b].")
+            for c in p:
+                if str(c) not in parsed:
+                    r, g, b, _ = parse_color(c)
+                    parsed[str(c)] = (r, g, b)
+            pair_list.append((str(p[0]), str(p[1])))
+    results, collapsed = [], []
+    for a, b in pair_list:
+        va, vb = parsed[a], parsed[b]
+        normal = _delta_e(va, vb)
+        per = {k: round(_delta_e(_simulate(va, k), _simulate(vb, k)), 1) for k in kinds}
+        lost = [k for k, d in per.items() if d < min_delta_e] if normal >= min_delta_e else []
+        row = {"pair": [hexstr(va), hexstr(vb)], "delta_e_normal": round(normal, 1), "delta_e": per, "contrast_between": trunc2(ratio(va, vb)), "collapses_for": lost}
+        results.append(row)
+        if lost:
+            collapsed.append(row)
+    return {
+        "simulated": table,
+        "pairs": results,
+        "collapsed": collapsed,
+        "verdict": (f"{len(collapsed)} pair(s) become hard to tell apart for colour-blind users — never use colour alone for them (WCAG 1.4.1)" if collapsed else "Every pair stays distinguishable in all four simulations"),
+        "method": "Machado et al. 2009 severity-1.0 matrices on linear RGB; ΔE = CIE76 in CIELAB (D65); threshold is a heuristic, not a WCAG number.",
+    }
 
 
 class _Auditor(HTMLParser):

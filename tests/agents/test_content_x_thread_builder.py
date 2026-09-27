@@ -86,3 +86,34 @@ def test_lint_thread_rejects_bad_input():
         call("lint_thread", posts=[])
     with pytest.raises(ToolError):
         A.get_tool("lint_thread").call({"posts": "not a list"})
+
+
+# twitter-text v3 conformance (WeightedTweetsWithDiscountedEmojiCounterTest in
+# https://github.com/twitter/twitter-text/blob/master/conformance/validate.yml)
+X_CONFORMANCE = [
+    ("Hi http://test.co", 26),
+    ("http://test.co", 23),
+    ("285 chars-" + "xxxxxxxxxx-" * 25, 285),
+    ("https://www.twitter.com/aloha " * 10, 240),
+    ("H🐱☺👨‍👩‍👧‍👦", 7),
+    ("😷👾😡🔥💩", 10),
+    ("🙋🏽👨‍🎤", 4),
+    ("1⃣", 2),
+    ("Unicode 10.0 emoji: 🤪; 🧕; 🧕🏾; 🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f", 34),
+    ("Unicode 9.0 emoji: 🤠; 💃; 💃🏾", 29),
+    ("randomurlrandomurlrandomurlrandomurlrandomurlrandomurlrandomurls.com", 68),  # 64-char label: not a URL
+    ("example.com", 23),  # urls_without_protocol: domain + gTLD
+    ("foo.co.jp", 23),
+    ("ÁB", 2),  # NFC: Á is one character
+]
+
+
+@pytest.mark.parametrize("post,expected", X_CONFORMANCE)
+def test_count_post_matches_twitter_text_conformance(post, expected):
+    assert call("count_post", post=post)["weighted_chars"] == expected
+
+
+def test_flag_is_one_emoji_and_bare_domain_is_a_link():
+    out = call("count_post", post="Made in the 🇺🇸 — details at acme.io/pricing.")
+    assert out["emoji"] == 1 and out["urls"] == 1
+    assert out["weighted_chars"] == len("Made in the ") + 2 + len(" — details at ") + 23 + 1

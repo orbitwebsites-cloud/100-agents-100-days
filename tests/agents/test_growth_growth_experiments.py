@@ -90,3 +90,9 @@ def test_plan_sprint_packs_by_score_and_surface():
     assert out["gantt"][0] == "slot 1: █████···"
     with pytest.raises(ToolError):
         call("plan_sprint", experiments=[{"name": "a", "weeks": 2}], parallel_slots=0)
+
+
+def test_relative_ci_uses_delta_method():
+    out = call("evaluate_result", control_visitors=10412, control_conversions=331, variant_visitors=10388, variant_conversions=372)
+    # delta method: var(p2/p1) ≈ var(p2)/p1² + p2²·var(p1)/p1⁴ → wider than abs CI / p1 (-2.8%, +28.1%)
+    assert out["ci_95_relative_pct"] == [-3.75, 29.05]

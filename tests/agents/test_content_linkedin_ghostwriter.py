@@ -91,3 +91,17 @@ def test_engagement_rate_math_and_grade():
 def test_engagement_rate_rejects_zero_impressions():
     with pytest.raises(ToolError):
         call("engagement_rate", impressions=0, reactions=1)
+
+
+def test_format_post_lifts_trailing_and_inline_hashtags_once():
+    out = call("format_post", draft="Growing the #sales team taught me a lot.\n\nWhat would you add? #hiring #leadership #b2b #startups")
+    assert out["formatted"] == "Growing the sales team taught me a lot.\n\nWhat would you add?\n\n#sales #hiring #leadership"
+    assert out["hashtags"] == ["sales", "hiring", "leadership"]
+    assert any("dropped #b2b, #startups" in ch for ch in out["changes"])
+
+
+def test_format_post_unicode_bold_and_weak_close_behind_tags():
+    out = call("format_post", draft="**Four months** later we parted ways.", unicode_bold=True)
+    assert out["formatted"].startswith("𝗙𝗼𝘂𝗿 𝗺𝗼𝗻𝘁𝗵𝘀 later")
+    chk = call("post_check", post="We cut hiring time from 60 days to 21. Here is the one change we made to our loop and why it worked for us.\n\nThoughts? #hiring #recruiting")
+    assert any("'Thoughts?'" in f for f in chk["flags"])

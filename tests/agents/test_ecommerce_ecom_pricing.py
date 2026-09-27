@@ -1,5 +1,7 @@
 """E-com Pricing tools — margin, fee-inclusive pricing, discount and elasticity math."""
 
+import math
+
 import pytest
 
 from hundred.agents.ecommerce.ecom_pricing import AGENT as A
@@ -109,3 +111,20 @@ def test_competitor_position_rejects_too_few():
         call("competitor_position", my_price=45, competitor_prices=[40])
     with pytest.raises(ToolError):
         A.get_tool("competitor_position").call({"my_price": "cheap", "competitor_prices": [1, 2]})
+
+
+def test_returns_sink_outbound_shipping_and_payment_fees():
+    # 10% returns, no extra return cost: each return loses CM1 + ship + pack + payment fee = price − COGS
+    out = call("unit_economics", price=50, cogs=20, shipping_cost=5, packaging_cost=1, payment_fee_pct=2.9, payment_fee_fixed=0.30, return_rate_pct=10)
+    fee = 50 * 0.029 + 0.30
+    cm1 = 50 - 20 - 5 - 1 - fee
+    assert out["return_loss_per_returned_order"] == round(50 - 20, 2)
+    assert out["contribution_margin"] == round(cm1 - 0.10 * (50 - 20), 2)
+
+
+def test_discount_impact_uses_cm2_at_both_prices():
+    out = call("discount_impact", price=48, unit_variable_cost=0, discount_pct=20, baseline_units=100, contribution_at_full_price=19.1, contribution_at_discount_price=10.93)
+    assert out["basis"].startswith("CM2")
+    assert out["breakeven_units"] == math.ceil(100 * 19.1 / 10.93)
+    with pytest.raises(ToolError):
+        call("discount_impact", price=48, unit_variable_cost=0, discount_pct=20, baseline_units=100, contribution_at_full_price=19.1)

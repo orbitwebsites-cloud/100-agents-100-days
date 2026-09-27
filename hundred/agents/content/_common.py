@@ -194,6 +194,20 @@ def strip_markdown(md: str) -> str:
     return s
 
 
+def drop_headings(md: str) -> str:
+    """Markdown with heading lines removed (code fences respected) — body prose only, so a title
+    can't count as 'the first 100 words' and 'How to X' can't glue itself onto the next sentence."""
+    out, in_code = [], False
+    for line in md.splitlines():
+        if line.strip().startswith("```"):
+            in_code = not in_code
+        if not in_code and HEADING_RE.match(line):
+            out.append("")
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def paragraphs(s: str) -> list[str]:
     return [p.strip() for p in re.split(r"\n\s*\n", s.strip()) if p.strip()]
 
@@ -266,7 +280,7 @@ def domain_of(url: str) -> str:
 
 
 def mmss(seconds: float) -> str:
-    seconds = int(round(seconds))
+    seconds = int(seconds + 0.5)  # half-up: 26.5 s reads as 0:27, not banker's 0:26
     h, rem = divmod(seconds, 3600)
     m, s = divmod(rem, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"

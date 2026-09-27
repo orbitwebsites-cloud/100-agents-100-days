@@ -112,3 +112,10 @@ def test_check_postmortem_findings():
 def test_check_postmortem_rejects_empty():
     with pytest.raises(ToolError):
         call("check_postmortem", text=" ")
+
+
+def test_status_page_posts_are_comms_not_detection_or_resolution():
+    out = call("build_timeline", events=["10:00 deploy v2 rolled out", "10:05 status page updated: investigating", "10:09 alert fired for 5xx",
+                                          "10:20 rolled back v2", "10:40 incident resolved", "10:45 status page updated: resolved"])
+    assert out["milestones"]["detected"] == "10:09"
+    assert out["metrics"]["time_to_detect_min"] == 9 and out["metrics"]["time_to_resolve_min"] == 40

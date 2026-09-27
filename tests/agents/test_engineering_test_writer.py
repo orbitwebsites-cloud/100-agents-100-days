@@ -125,3 +125,39 @@ def test_parametrize_block_generates_valid_code():
 def test_parametrize_block_rejects_missing_arg():
     with pytest.raises(ToolError):
         call("parametrize_block", function_name="f", arg_names=["a", "b"], cases=[{"a": 1, "expected": 2}])
+
+
+SRC_MULTI = """def f(x):
+    if x is None:
+        raise ValueError("missing value")
+    if x < 0:
+        raise ValueError("negative value")
+    return x
+"""
+
+
+def test_coverage_gaps_resolves_parametrized_exception_classes():
+    tests = """import pytest
+from m import f
+
+
+@pytest.mark.parametrize("x, exc, match", [pytest.param(None, ValueError, "missing"), pytest.param(-1, ValueError, "negative")])
+def test_f_raises(x, exc, match):
+    with pytest.raises(exc, match=match):
+        f(x)
+"""
+    row = call("coverage_gaps", source=SRC_MULTI, tests=tests)["rows"][0]
+    assert row["untested_raises"] == [] and row["unpinned_raise_sites"] == []
+
+
+def test_coverage_gaps_flags_raise_sites_no_message_pins():
+    tests = """import pytest
+from m import f
+
+
+def test_f_raises():
+    with pytest.raises(ValueError):
+        f(None)
+"""
+    row = call("coverage_gaps", source=SRC_MULTI, tests=tests)["rows"][0]
+    assert [s["line"] for s in row["unpinned_raise_sites"]] == [3, 5]

@@ -285,21 +285,36 @@ def sensitivity_check(options: list[dict], criteria: list[dict], scale_max: floa
     n = len(crit)
     weight_flips = []
     for j in range(n):
+        # totals are linear in this criterion's share s (others rescaled proportionally), so the
+        # winner can only change where two options' lines cross — solve for those points exactly
+        others_sum = sum(base_pct[k] for k in range(n) if k != j)
+
+        def w_at(share: float) -> list[float]:
+            return [share if k == j else (base_pct[k] * (100 - share) / others_sum if others_sum else 0.0) for k in range(n)]
+
+        def totals_at(share: float) -> list[float]:
+            w = w_at(share)
+            return _totals(crit, matrix, w, scale_max) if sum(w) > 0 else [0.0] * len(opts)
+
+        t0, t100 = totals_at(0.0), totals_at(100.0)
+        alpha = t0
+        beta = [(t100[i] - t0[i]) / 100 for i in range(len(opts))]
+        crossings = set()
+        for a, b in combinations(range(len(opts)), 2):
+            if abs(beta[a] - beta[b]) > 1e-12:
+                x = (alpha[b] - alpha[a]) / (beta[a] - beta[b])
+                if -1e-9 <= x <= 100 + 1e-9:
+                    crossings.add(min(100.0, max(0.0, x)))
         flip = None
-        # sweep this criterion's weight share from 0..100 %, others scaled proportionally
-        others = [base_pct[k] for k in range(n) if k != j]
-        others_sum = sum(others) or 1.0
-        best_delta = None
-        for share in range(0, 101):
-            w = [share if k == j else base_pct[k] * (100 - share) / others_sum for k in range(n)]
-            if sum(w) <= 0:
+        for x in sorted(crossings, key=lambda x: abs(x - base_pct[j])):
+            probe = x + (1e-6 if x >= base_pct[j] else -1e-6)
+            if not (0 <= probe <= 100):
                 continue
-            t = _totals(crit, matrix, w, scale_max)
+            t = totals_at(probe)
             new_winner = max(range(len(opts)), key=lambda i: t[i])
             if new_winner != winner:
-                delta = share - base_pct[j]
-                if best_delta is None or abs(delta) < abs(best_delta):
-                    best_delta, flip = delta, {"criterion": crit[j]["name"], "current_weight_pct": round(base_pct[j], 1), "flip_at_weight_pct": share, "delta_pct_points": round(delta, 1), "new_winner": opts[new_winner]["name"]}
+                flip = {"criterion": crit[j]["name"], "current_weight_pct": round(base_pct[j], 1), "flip_at_weight_pct": round(x, 1), "delta_pct_points": round(x - base_pct[j], 1), "new_winner": opts[new_winner]["name"]}
+                break
         weight_flips.append(flip or {"criterion": crit[j]["name"], "current_weight_pct": round(base_pct[j], 1), "flip_at_weight_pct": None, "delta_pct_points": None, "new_winner": None})
     fragile = [f for f in weight_flips if f["delta_pct_points"] is not None and abs(f["delta_pct_points"]) <= 10]
     # smallest single-cell score change that flips the winner
@@ -315,13 +330,13 @@ def sensitivity_check(options: list[dict], criteria: list[dict], scale_max: floa
                 runner = max((k for k in range(len(opts)) if k != winner), key=lambda k: totals[k])
                 needed = (totals[winner] - totals[runner]) / per_point
                 room = matrix[i][j]
-                if needed <= room:
-                    cell_flips.append({"option": opts[i]["name"], "criterion": crit[j]["name"], "change": round(-needed, 2) + 0.0, "becomes_winner": opts[runner]["name"]})
+                if needed <= room:  # round AWAY from zero so the quoted change really flips it
+                    cell_flips.append({"option": opts[i]["name"], "criterion": crit[j]["name"], "change": -math.ceil(needed * 100 - 1e-9) / 100 + 0.0, "becomes_winner": opts[runner]["name"]})
             else:
                 needed = (totals[winner] - totals[i]) / per_point
                 room = scale_max - matrix[i][j]
                 if needed <= room:
-                    cell_flips.append({"option": opts[i]["name"], "criterion": crit[j]["name"], "change": round(needed, 2), "becomes_winner": opts[i]["name"]})
+                    cell_flips.append({"option": opts[i]["name"], "criterion": crit[j]["name"], "change": math.ceil(needed * 100 - 1e-9) / 100, "becomes_winner": opts[i]["name"]})
     cell_flips.sort(key=lambda x: abs(x["change"]))
     eq = _totals(crit, matrix, [1.0] * n, scale_max)
     eq_winner = opts[max(range(len(opts)), key=lambda i: eq[i])]["name"]
@@ -421,7 +436,8 @@ def pairwise_weights(criteria: list[str], comparisons: list[dict]) -> dict:
     """Derive criteria weights from pairwise importance judgements (AHP) with a consistency ratio.
 
     Each comparison says how many times more important `a` is than `b` on Saaty's 1-9 scale
-    (use 1/3 or 0.33 when b matters more). Missing pairs are assumed equal and flagged.
+    (use 1/3 or 0.33 when b matters more). Missing pairs are assumed equal and flagged. For a
+    group decision, pass every person's judgement for a pair; they are combined by geometric mean.
 
     Args:
         criteria: Criterion names (2-12).
@@ -434,7 +450,8 @@ def pairwise_weights(criteria: list[str], comparisons: list[dict]) -> dict:
     n = len(criteria)
     A = [[1.0] * n for _ in range(n)]
     given: set[tuple[int, int]] = set()
-    for k, cmp in enumerate(require_list(comparisons, "comparisons", 200), 1):
+    judgements: dict[tuple[int, int], list[float]] = {}
+    for k, cmp in enumerate(require_list(comparisons, "comparisons", 500), 1):
         if not isinstance(cmp, dict):
             raise ToolError(f"comparisons[{k}] must be {{'a','b','ratio'}}.")
         a, b = str(cmp.get("a", "")).lower().strip(), str(cmp.get("b", "")).lower().strip()
@@ -446,8 +463,13 @@ def pairwise_weights(criteria: list[str], comparisons: list[dict]) -> dict:
         if not (1 / 9 - 1e-9 <= r <= 9 + 1e-9) or r <= 0:
             raise ToolError(f"comparisons[{k}].ratio must be between 1/9 and 9 (got {r}).")
         i, j = idx[a], idx[b]
-        A[i][j], A[j][i] = r, 1 / r
-        given.add((min(i, j), max(i, j)))
+        if i > j:
+            i, j, r = j, i, 1 / r
+        judgements.setdefault((i, j), []).append(r)
+        given.add((i, j))
+    for (i, j), rs in judgements.items():  # several judges on one pair → geometric mean (AIJ, Saaty/Aczél)
+        g = math.exp(sum(math.log(x) for x in rs) / len(rs))
+        A[i][j], A[j][i] = g, 1 / g
     missing = [f"{criteria[i]} vs {criteria[j]}" for i, j in combinations(range(n), 2) if (i, j) not in given]
     gm = [math.exp(sum(math.log(A[i][j]) for j in range(n)) / n) for i in range(n)]
     tot = sum(gm)
@@ -474,6 +496,7 @@ def pairwise_weights(criteria: list[str], comparisons: list[dict]) -> dict:
         "consistent": cr <= 0.10,
         "most_inconsistent_triad": worst_triad if worst_triad and worst_triad["deviation"] > 0.05 else None,
         "assumed_equal_pairs": missing,
+        "group_pairs": {f"{criteria[i]} vs {criteria[j]}": {"judgements": [round(x, 3) for x in rs], "combined": round(math.exp(sum(math.log(x) for x in rs) / len(rs)), 3)} for (i, j), rs in judgements.items() if len(rs) > 1},
         "verdict": f"Weights: {', '.join(f'{criteria[i]} {round(100 * w[i])}%' for i in ranked)}. CR = {cr:.2f} "
         + ("(consistent)." if cr <= 0.10 else "(> 0.10: judgements contradict; re-judge the flagged triad).")
         + (f" {len(missing)} pair(s) assumed equal — confirm them." if missing else ""),

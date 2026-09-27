@@ -540,16 +540,7 @@ def _charset(atom: dict):
             return ALL  # negated classes overlap with almost everything
         return s
     if t == "group":
-        s = set()
-        for br in atom["alternatives"]:
-            first = _first_atom(br)
-            if first is None:
-                return ALL
-            cs = _charset(first)
-            if cs is ALL:
-                return ALL
-            s |= cs
-        return s
+        return _group_first_set(atom)
     if t == "backref":
         return ALL
     return set()
@@ -586,13 +577,27 @@ def _contains_unbounded(atom: dict) -> bool:
     return False
 
 
+def _branch_first_set(branch: list[dict]):
+    """Characters a branch can start with — past optional leading atoms ((sep)?x starts with sep OR x)."""
+    s: set[str] = set()
+    for a in branch:
+        if a["type"] in ("anchor", "flags", "comment") or (a["type"] == "escape" and a["raw"][1] in "bBAZzG"):
+            continue
+        if a["type"] == "group" and "look" in a["kind"]:
+            continue
+        cs = _charset(a)
+        if cs is ALL:
+            return ALL
+        s |= cs
+        if not _can_be_empty(a):
+            return s
+    return ALL if not s else s
+
+
 def _group_first_set(group: dict):
     s: set[str] = set()
     for br in group["alternatives"]:
-        f = _first_atom(br)
-        if f is None:
-            return ALL
-        cs = _charset(f)
+        cs = _branch_first_set(br)
         if cs is ALL:
             return ALL
         s |= cs

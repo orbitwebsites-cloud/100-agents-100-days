@@ -77,3 +77,27 @@ def test_review_response_lint_passes_good_and_blocks_bad():
         call("review_response_lint", review="x", rating=9, response="y")
     with pytest.raises(ToolError):
         call("review_response_lint", review="x", rating=3, response="")
+
+
+def test_nap_state_names_stuffed_names_and_duplicates():
+    out = call("nap_consistency", listings=[
+        {"source": "gbp", "name": "Rivera Family Plumbing", "address": "4410 Burnet Rd Ste 200, Austin, TX 78756", "phone": "512-555-0142"},
+        {"source": "website", "name": "Rivera Family Plumbing", "address": "4410 Burnet Road Suite 200 Austin Texas 78756", "phone": "(512) 555-0142"},
+        {"source": "facebook", "name": "Rivera Plumbing Austin - Best Plumber", "address": "4410 Burnet Rd Ste 200, Austin, TX 78756", "phone": "512 555 0142"},
+        {"source": "Yelp", "name": "Rivera Family Plumbing", "address": "4410 Burnet Rd #200, Austin, TX 78756", "phone": "5125550142"},
+        {"source": "yelp", "name": "Rivera Family Plumbing", "address": "4410 Burnet Rd #200, Austin, TX 78756", "phone": "5125550142"},
+    ])
+    assert [(m["source"], m["field"]) for m in out["mismatches"]] == [("facebook", "name")]  # "Texas" == "TX"
+    assert "keyword-stuffed" in out["mismatches"][0]["note"]
+    assert out["duplicate_listings"][0]["source"] == "yelp"
+
+
+def test_review_stats_displayed_target_and_lint_regexes():
+    reviews = [{"rating": 5}] * 24 + [{"rating": 4}] * 8 + [{"rating": 3}] * 3 + [{"rating": 2}] * 2 + [{"rating": 1}] * 3
+    out = call("review_stats", reviews=reviews, target_rating=4.5)
+    assert out["five_star_reviews_needed_for_target"] == 24  # (168 + 120) / 64 = 4.5
+    assert out["five_star_reviews_needed_for_displayed_target"] == 19  # 263 / 59 = 4.458 → shows 4.5
+    bad = call("review_response_lint", review="They were late.", rating=2, response="Hi Sam, sorry. Actually, our technicians are always on time and we explained this. Call us at (512) 555-0100 to talk it through, we would like to hear more about the late arrival.", reviewer_name="Sam")
+    assert any("Defensive" in i for i in bad["issues"]) and bad["blocking"]
+    good = call("review_response_lint", review="They were late.", rating=2, response="Sam, I'm sorry. Arriving late without a call is on us, and it is not how we run things. I'm the owner and I'd like to make it right: please call me at (512) 555-0100 so I can hear what happened with the late arrival and fix it.", reviewer_name="Sam")
+    assert not any("ownership" in i for i in good["issues"])

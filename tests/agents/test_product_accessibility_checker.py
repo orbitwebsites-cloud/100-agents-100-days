@@ -22,8 +22,9 @@ def test_contrast_ratio_black_on_white_is_21():
     "fg,bg,ratio,aa_normal,aa_large",
     [
         ("#767676", "#ffffff", 4.54, True, True),
-        ("#777777", "#fff", 4.48, False, True),
-        ("#3b82f6", "white", 3.68, False, True),
+        ("#777777", "#fff", 4.47, False, True),  # WebAIM shows 4.47 (truncated), exact 4.478
+        ("#3b82f6", "white", 3.67, False, True),  # WebAIM 3.67
+        ("#5a7c87", "#ffffff", 4.49, False, True),  # exact 4.499 — must never display as a failing "4.5"
         ("rgb(255,255,255)", "rgb(255,255,255)", 1.0, False, False),
     ],
 )
@@ -118,3 +119,29 @@ def test_target_size_thresholds():
 def test_target_size_rejects_bad_dims():
     with pytest.raises(ToolError):
         call("target_size", targets=[{"name": "x", "width": "big", "height": 10}])
+
+
+def test_lint_html_accessible_names_from_img_alt_are_not_flagged():
+    out = call("lint_html", html='<a href="/"><img src="h.svg" alt="Acme home"></a><button><img src="a.svg" alt="Create account"></button>'
+               '<button><svg aria-label="Close dialog"></svg></button>')
+    assert not any("no accessible name" in f["problem"] for f in out["findings"])
+
+
+def test_lint_html_eval_regressions_empty_heading_idrefs_duplicate_label_autocomplete():
+    html = ('<h1>Sign up</h1><h2></h2>'
+            '<input type="email" id="email" autocomplete="nope">'
+            '<input type="checkbox" id="email"><label for="email">News</label>'
+            '<input type="tel" aria-labelledby="missing">'
+            '<input type="text" autocomplete="shipping street-address"><label>ok <input autocomplete="off"></label>')
+    f = call("lint_html", html=html)["findings"]
+    probs = [x["problem"] for x in f]
+    assert "empty heading (no text)" in probs
+    assert any("missing id 'missing'" in p for p in probs)
+    assert any("attaches to an earlier element" in p for p in probs)
+    assert any(x["severity"] == "blocker" and "duplicate id" in x["problem"] for x in f)
+    assert [x["criterion"] for x in f if "autocomplete" in x["problem"]] == ["1.3.5"]  # only "nope" is invalid
+
+
+def test_suggest_color_ratios_are_truncated_like_webaim():
+    out = call("suggest_color", foreground="#9ca3af", background="#ffffff", target_ratio=4.5)
+    assert out["suggestion"] == "#727780" and out["current_ratio"] == 2.53  # WebAIM: 2.53 and 4.50

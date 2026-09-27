@@ -323,7 +323,7 @@ BIG_PIECES = {"x": "thread", "instagram": "carousel", "linkedin": "long post", "
 
 @AGENT.tool
 def repurpose_plan(source_type: Literal["article", "podcast", "talk", "webinar", "report", "newsletter", "video"], source_words: int, platforms: list[str], start_date: str = "", weeks: int = 2, max_per_platform: int = 8) -> dict:
-    """Size the derivative set from the source length and lay it out on a dated weekday calendar: no platform twice in a day, ≥ 2 days between posts on the same platform, big pieces mid-week.
+    """Size the derivative set from the source length and lay it out on a dated weekday calendar: no platform twice in a day, ≥ 2 days between posts on the same platform, big pieces Tue-Thu, each platform's lead piece on a different day.
 
     Call after fit-checking. Map your pieces to the returned slots; strongest atom first
     per platform.
@@ -369,8 +369,10 @@ def repurpose_plan(source_type: Literal["article", "podcast", "talk", "webinar",
     slots = []
     piece_idx = {k: 0 for k in keys}
     order = sorted(keys, key=lambda k: -counts[k])
+    midweek_left = lambda d: any(x > d and x.weekday() in (1, 2, 3) for x in days)  # noqa: E731
     for d in days:
         used_today: set[str] = set()
+        lead_today = False
         for k in order:
             if remaining[k] <= 0 or k in used_today:
                 continue
@@ -378,15 +380,19 @@ def repurpose_plan(source_type: Literal["article", "podcast", "talk", "webinar",
                 continue
             if len(used_today) >= 3:
                 break
-            piece_idx[k] += 1
-            big = piece_idx[k] == 1 and k in BIG_PIECES
-            if big and d.weekday() in (0, 4) and remaining[k] > 1 and len(days) > 5:
-                # prefer Tue-Thu for the big piece: swap by deferring
-                piece_idx[k] -= 1
+            first = piece_idx[k] == 0
+            big = first and k in BIG_PIECES
+            # the big pieces (thread/carousel/long post) go Tue-Thu while a Tue-Thu day is still ahead
+            if big and d.weekday() not in (1, 2, 3) and midweek_left(d):
                 continue
+            # each platform's first piece carries the strongest atom: never two of those on one day
+            if first and lead_today and any(x > d for x in days):
+                continue
+            piece_idx[k] += 1
             label = f"{BIG_PIECES[k]} (lead)" if big else f"post {piece_idx[k]}"
             slots.append({"date": d.isoformat(), "weekday": d.strftime("%a"), "platform": k, "piece": label, "atom_hint": "strongest atom" if piece_idx[k] == 1 else f"atom #{piece_idx[k]}"})
             used_today.add(k)
+            lead_today = lead_today or first
             last_day[k] = d
             remaining[k] -= 1
     unscheduled = {k: v for k, v in remaining.items() if v > 0}

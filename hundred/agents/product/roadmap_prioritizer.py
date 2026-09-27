@@ -391,8 +391,14 @@ def capacity_check(items: list[dict], capacity_weeks: float, must_max_pct: float
         problems.append(f"Must = {pct(by_cat['must'], cap)}% of capacity (limit {int(must_max * 100)}%) — demote {round(by_cat['must'] - cap * must_max, 1)} weeks of Must to Should")
     if (by_cat["must"] + by_cat["should"]) / cap > 0.8:
         problems.append(f"Must+Should = {pct(by_cat['must'] + by_cat['should'], cap)}% — over the 80% guideline")
-    if planned > plannable:
+    notes = []
+    committed = by_cat["must"] + by_cat["should"]
+    if committed > plannable:
         problems.append(f"Planned {round(planned, 1)} weeks > plannable {round(plannable, 1)} (after {int(contingency * 100)}% contingency) — cut {round(planned - plannable, 1)} weeks")
+    elif planned > plannable:
+        # DSDM: Could items ARE the contingency — overflowing Coulds is expected, not a failed plan
+        coulds = [t["name"] for t in table if t["moscow"] == "could" and not t["fits"]]
+        notes.append(f"Must+Should fit; Could items {', '.join(coulds)} sit in the contingency — ship them only if the cycle runs clean")
     return {
         "capacity_weeks": cap,
         "plannable_weeks": round(plannable, 1),
@@ -402,5 +408,6 @@ def capacity_check(items: list[dict], capacity_weeks: float, must_max_pct: float
         "cut_line_after_rank": cut_line_after if cut_line_after is None else cut_line_after,
         "below_the_line": [t["name"] for t in table if not t["fits"] and t["moscow"] != "wont"],
         "problems": problems,
-        "verdict": "Plan fits with contingency" if not problems else "Plan does not fit — " + problems[0],
+        "notes": notes,
+        "verdict": ("Plan fits with contingency" + (" (Coulds are the buffer)" if notes else "")) if not problems else "Plan does not fit — " + problems[0],
     }

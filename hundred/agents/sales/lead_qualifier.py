@@ -268,7 +268,7 @@ def _term_match(target: str, lead_value: str) -> bool:
 
 def _score_lead(lead: dict, icp: dict) -> dict:
     total_w, got, matched, missed = 0.0, 0.0, [], []
-    caps = []
+    caps: list[str] = []
     for crit, spec in icp.items():
         if not isinstance(spec, dict):
             raise ToolError(f"ICP criterion {crit!r} must be a dict with 'values' and 'weight'.")
@@ -298,6 +298,8 @@ def _score_lead(lead: dict, icp: dict) -> dict:
                     # partial credit within 2× of the band edge
                     dist = (lo / mid) if mid < lo else (mid / hi)
                     pts = weight * 0.5 if dist <= 2 else 0.0
+                    if dist > 3:
+                        caps.append(f"{crit} {lead_val} is {dist:.1f}× outside the {lo}-{hi if hi < 10**9 else '∞'} band — capped at tier C")
                     reason = f"{lead_val} outside {lo}-{hi if hi < 10**9 else '∞'}" + (" (near)" if pts else "")
             else:
                 reason = "unparseable size"

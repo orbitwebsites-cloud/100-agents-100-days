@@ -107,3 +107,11 @@ def test_call_home_window_overlap():
     assert out["best_window"]["home"].startswith("Sun 16:00")
     with pytest.raises(ToolError):
         call("call_home_window", date="2026-10-12", here_tz="Asia/Tokyo", home_tz="America/Los_Angeles", awake_from="22:00", awake_until="08:00")
+
+
+def test_connection_check_separate_tickets_is_the_travellers_risk():
+    out = A.get_tool("connection_check").call({"arrival_time": "2026-10-29 12:35", "departure_time": "2026-10-29 14:10", "same_ticket": False, "international_departure": True, "checked_bags": True})
+    assert out["minimum_required_minutes"] == 120 + 60 + 30 and out["risk"] == "high"
+    assert "no protection" in out["verdict"]
+    same = A.get_tool("connection_check").call({"arrival_time": "2026-10-29 12:35", "departure_time": "2026-10-29 13:40", "same_ticket": True, "international_departure": True})
+    assert same["risk"] == "high" and "rebook" in same["verdict"]

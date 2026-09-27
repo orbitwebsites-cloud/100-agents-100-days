@@ -132,3 +132,28 @@ def require_text(value: str, label: str, max_chars: int = 200_000) -> str:
     if len(value) > max_chars:
         raise ToolError(f"{label} too long ({len(value):,} chars; max {max_chars:,}).")
     return value
+
+
+# ── US time zones (rule-based, no tz database needed) ──────────────────────
+
+
+def _nth_sunday(year: int, month: int, n: int):
+    from datetime import date, timedelta
+
+    first = date(year, month, 1)
+    return first + timedelta(days=(6 - first.weekday()) % 7 + 7 * (n - 1))
+
+
+def us_utc_offset(local_wall_time, standard_offset: int) -> int:
+    """UTC offset in hours for a US zone at a local wall-clock time (naive datetime).
+
+    US rule since 2007: daylight time from the second Sunday in March, 02:00 local, to the
+    first Sunday in November, 02:00 local. standard_offset is -5 for Eastern, -8 for Pacific.
+    """
+    from datetime import datetime
+
+    y = local_wall_time.year
+    start = datetime.combine(_nth_sunday(y, 3, 2), datetime.min.time()).replace(hour=2)
+    end = datetime.combine(_nth_sunday(y, 11, 1), datetime.min.time()).replace(hour=2)
+    naive = local_wall_time.replace(tzinfo=None)
+    return standard_offset + 1 if start <= naive < end else standard_offset

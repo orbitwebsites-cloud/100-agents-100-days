@@ -85,8 +85,8 @@ AGENT = Agent(
       high-value audiences (finance, B2B software, health professionals) 1.3-1.5×; broad
       entertainment 0.8-1×.
     - **Usage rights** (brand runs the content as its own ads): +30% for 30 days, +50% for
-      90 days, +75% for 6 months, +100% for 12 months; perpetual = 12-month price × 2 or
-      refuse. **Whitelisting / Spark Ads** (paid media from the creator's handle): +30-50%
+      90 days, +75% for 6 months, +100% for 12 months; perpetual = double the 12-month
+      uplift (+200%) or refuse. **Whitelisting / Spark Ads** (paid media from the creator's handle): +30-50%
       per 30 days. **Exclusivity** (no competitor deals): +15% per month of category
       lock-out, capped at 6 months; total exclusivity ("no other brands") is 2-3× that.
     - **Floors:** never below production hours × the creator's hourly value; never below the
@@ -435,7 +435,20 @@ def evaluate_offer(
         verdict_word = "At or above rate card"
     counter = max(card_mid, offer_amount * 1.15) if offer_amount < card_mid else offer_amount
     counter = money(round(counter / 25) * 25)
-    fallback = money(round(max(card_low, offer_amount) / 25) * 25)
+    # Reduced-scope fallback: organic posting only — no usage, exclusivity or whitelisting — priced on its own card.
+    organic = _price(p, d, median_views, engagement_rate_pct, niche, 0, False, 0, 0, False, production_hours / deliverables if production_hours else 0, hourly_floor)
+    organic_mid = organic["quote_mid"] * deliverables
+    organic_low = organic["quote_low"] * deliverables
+    scope_terms = bool(usage_days or perpetual_usage or exclusivity_months or whitelisting_days)
+    fallback = money(round(max(organic_mid if scope_terms else card_low, offer_amount) / 25) * 25)
+    walk_away = money(round(organic_low / 25) * 25)
+    if not scope_terms:
+        fallback_line = f"If budget is fixed, I can hold {fallback:,.0f} with one revision round."
+    elif offer_amount >= organic_low:
+        fallback_line = f"If {offer_amount:,.0f} is the budget, I can do it for {fallback:,.0f} as organic-only posting (no paid usage or exclusivity) with one revision round."
+    else:
+        fallback_line = (f"If budget is tighter, the organic-only version (no paid usage or exclusivity) is {fallback:,.0f}; "
+                         f"below {walk_away:,.0f} it isn't a fit for me right now.")
     return {
         "offer": money(offer_amount),
         "deliverables": deliverables,
@@ -450,11 +463,13 @@ def evaluate_offer(
         "amber_flags": amber,
         "counter": counter,
         "fallback_with_reduced_scope": fallback,
+        "organic_only_low_mid": [money(organic_low), money(organic_mid)],
+        "walk_away": walk_away if scope_terms else money(round(card_low / 25) * 25),
         "counter_script": (
             f"Thanks — for {deliverables} × {d} on {p} at a median {median_views:,.0f} views each, my rate is {counter:,.0f} "
             f"(≈ {counter / expected_views * 1000:.0f} CPM){', including ' + str(usage_days) + ' days usage' if usage_days else ''}"
             f"{', ' + str(exclusivity_months) + ' months exclusivity' if exclusivity_months else ''}. "
-            f"If budget is fixed at {offer_amount:,.0f}, I can do it at {fallback:,.0f} with organic-only posting and one revision round."
+            + fallback_line
         ),
         "rate_card_reasoning": card["reasoning"],
         "verdict": f"{verdict_word}: {offer_amount:,.0f} is {gap_pct:+.0f}% vs the {card_mid:,.0f} mid quote (implied CPM {implied_cpm:.0f}). {len(red)} red flag(s), {len(amber)} amber." + (" Counter at " + f"{counter:,.0f}." if counter > offer_amount else " Accept, fix the terms."),

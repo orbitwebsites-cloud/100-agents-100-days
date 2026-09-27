@@ -163,3 +163,54 @@ def test_inventory_health_rejects_bad_rows():
         call("inventory_health", skus=[{"sku": "x", "on_hand": "lots", "units_sold": 1, "unit_cost": 1}])
     with pytest.raises(ToolError):
         A.get_tool("inventory_health").call({"skus": "not a list"})
+
+
+def test_forecast_seasonal_trend_fitted_on_deseasonalised_series():
+    # 2 years, Q1 peak (index 0-2) and +20% growth: a raw straight-line fit is dragged down by the early peaks
+    y1 = [300, 280, 260, 100, 100, 100, 100, 100, 100, 100, 100, 100]
+    hist = y1 + [round(v * 1.2) for v in y1]
+    out = call("forecast_demand", history=hist, period="monthly", horizon_periods=3, lead_time_days=30)
+    assert out["trend_units_per_period"] > 0
+    assert out["forecast"][0] > hist[12]  # next Jan beats last Jan on a growing SKU
+    assert out["lead_time_demand_forecast"] == round(out["forecast"][0] * 30 / (365 / 12), 1)
+    assert out["use_for_reorder_point"].startswith("forecast_daily_demand_over_lead_time")
+
+
+def test_forecast_lead_time_demand_spans_periods_and_stable_sku_note():
+    out = call("forecast_demand", history=[100] * 12, period="monthly", horizon_periods=1, lead_time_days=45)
+    assert out["lead_time_demand_forecast"] == round(100 * 45 / (365 / 12), 1)
+    assert out["use_for_reorder_point"].startswith("daily_demand_mean")
+    with pytest.raises(ToolError):
+        call("forecast_demand", history=[1, 2, 3], lead_time_days=-1)
+
+
+def test_stock_cover_follows_forecast_profile():
+    # 30.42-day periods: 304.2 units in period 1 (10/day), then 20/day
+    out = call("stock_cover", on_hand=500, lead_time_days=10, today="2026-10-01", forecast_per_period=[304.1667, 608.3333], period="monthly")
+    assert out["demand_basis"] == "forecast profile"
+    # days 0-30 burn 310 (31 days × 10), remaining 190 at 20/day → 9.5 days → zero on day 41
+    assert out["stockout_date"] == "2026-11-11"
+    with pytest.raises(ToolError):
+        call("stock_cover", on_hand=10, lead_time_days=5, forecast_per_period=[-1])
+
+
+def test_inventory_health_uses_forecast_velocity_when_given():
+    out = call("inventory_health", skus=[{"sku": "s", "on_hand": 700, "units_sold": 90, "unit_cost": 2, "forecast_units_next_period": 900}], period_days=90, lead_time_days=30)
+    row = out["skus"][0]
+    assert row["velocity_basis"] == "forecast" and row["weeks_of_supply"] == 10.0 and row["trailing_weekly_velocity"] == 7.0
+    assert row["flags"] == []  # trailing velocity alone would call this 100 weeks = overstock
+
+
+def test_eoq_candidate_above_tier_uses_largest_in_tier_quantity():
+    out = call("economic_order_quantity", annual_demand=8730, order_cost=150, unit_cost=6.8, moq=500, pack_size=24, price_breaks=[{"min_qty": 1000, "unit_cost": 6.5}])
+    base = next(c for c in out["candidates"] if c["tier_min_qty"] == 0)
+    assert base["order_qty"] == 984 and base["eoq_feasible_in_tier"] is False
+
+
+def test_forecast_scales_up_stockout_periods():
+    days = 365 / 12
+    out = call("forecast_demand", history=[100, 100, 50, 100], period="monthly", stockout_days=[0, 0, days / 2, 0], horizon_periods=1)
+    assert out["stockout_adjusted_periods"] == [2]
+    assert out["baseline_per_period"] == 100.0  # 50 sold in half a month in stock = 100 demand
+    with pytest.raises(ToolError):
+        call("forecast_demand", history=[100, 100], stockout_days=[0])

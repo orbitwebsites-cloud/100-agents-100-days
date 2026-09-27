@@ -304,7 +304,8 @@ def readability_report(markdown: str, target_grade: float = 8.0) -> dict:
     """Readability lint for prose: grade level, sentence/paragraph length distribution, long sentences listed, passive %, transition-word share.
 
     Call after drafting; rewrite until it passes. Lists the exact sentences over 30 words
-    and paragraphs over 120 words so you can fix them one by one.
+    and paragraphs over 120 words so you can fix them one by one. Headings are excluded:
+    only body prose is measured.
 
     Args:
         markdown: The article (markdown is stripped before analysis).
@@ -313,7 +314,7 @@ def readability_report(markdown: str, target_grade: float = 8.0) -> dict:
     c.guard(markdown, "Markdown")
     if not 3 <= target_grade <= 16:
         raise ToolError("target_grade must be between 3 and 16.")
-    plain = c.strip_markdown(markdown)
+    plain = c.strip_markdown(c.drop_headings(markdown))  # prose only: headings aren't sentences
     ws = text.words(plain)
     if len(ws) < 20:
         raise ToolError("Need at least 20 words of prose to measure readability.")
@@ -382,7 +383,7 @@ def slugify(s: str) -> str:
 
 @AGENT.tool
 def keyword_audit(markdown: str, primary_keyword: str, secondary_keywords: list[str] | None = None, title: str = "", meta_description: str = "") -> dict:
-    """Keyword density and placement audit (title, H1, first 100 words, H2s, last paragraph, alt text) plus title/meta length checks and a URL slug.
+    """Keyword density and placement audit (title, H1, first 100 words of body text, H2s, last paragraph, alt text) plus title/meta length checks and a URL slug.
 
     Call once the draft is finished. Density target 0.5-2.0%; over 2.5% is stuffing. Also
     scores placement out of 5 and reports each secondary keyword's coverage.
@@ -409,8 +410,9 @@ def keyword_audit(markdown: str, primary_keyword: str, secondary_keywords: list[
     h1 = next((s["title"] for s in headings if s["level"] == 1), "")
     h2s = [s["title"] for s in headings if s["level"] == 2]
     kw_re = re.compile(r"(?<!\w)" + r"\W+".join(re.escape(w) for w in text.words(kw)) + r"(?!\w)", re.I)
-    first100 = " ".join(ws[:100])
-    paras = c.paragraphs(plain)
+    body_plain = c.strip_markdown(c.drop_headings(markdown))  # the title/H1 is not "the intro"
+    first100 = " ".join(text.words(body_plain)[:100])
+    paras = c.paragraphs(body_plain)
     last_para = paras[-1] if paras else ""
     alts = [alt for alt, _ in c.MD_IMAGE_RE.findall(markdown)]
     eff_title = title or h1

@@ -116,3 +116,14 @@ def test_compute_tenure_rejects_bad_dates():
         call("compute_tenure", roles=[{"title": "x", "start": "sometime", "end": "2020-01"}])
     with pytest.raises(ToolError):
         call("compute_tenure", roles=[{"title": "x", "start": "2021-01", "end": "2020-01"}])
+
+
+def test_match_keywords_or_alternatives_and_literal_hits():
+    jd = "Requirements:\n- Experience with Amplitude or Mixpanel for product analytics\n- 3+ years of product management, ideally in fintech\n"
+    res = "Product manager. Built funnels in Mixpanel and Google Analytics."
+    out = call("match_keywords", resume=res, job_description=jd)
+    amp = next(r for r in out["matched"] if r["term"] == "amplitude")
+    assert amp["satisfied_by"] == "mixpanel"
+    assert any(r["term"] == "analytics" for r in out["matched"])  # literal hit inside "Google Analytics"
+    assert next(r for r in out["missing"] if r["term"] == "fintech")["tier"] == "nice"
+    assert out["counts"]["must"][1] == 3  # amplitude|mixpanel counted once + analytics + product management

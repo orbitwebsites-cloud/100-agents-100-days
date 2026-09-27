@@ -187,9 +187,10 @@ def cadence_dates(last_contact: str, stage: str = "proposal", touches: int = 5, 
     promised_first = False
     if promised_date:
         pd = dates.parse_date(promised_date)
-        if pd >= last:
-            cursor = pd  # first touch = next business day after the promised date
-            promised_first = True
+        if pd < last:
+            raise ToolError("promised_date is before last_contact.")
+        cursor = pd  # first touch = next business day after the promised date
+        promised_first = True
     overdue_note = None
     for i in range(touches):
         n = touches_done + i  # 0-based position in the whole cadence

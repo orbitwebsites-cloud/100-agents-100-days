@@ -99,3 +99,29 @@ def test_keyword_gap_normalises_and_counts_competitors():
     assert out["overlap"]["a"]["shared"] == 1
     with pytest.raises(ToolError):
         call("keyword_gap", ours=["a"], competitors={})
+
+
+def test_intent_no_false_local_or_navigational():
+    out = call("classify_intent", keywords=["meal prep in bulk", "how long does meal prep last in the fridge", "best meal prep app", "best website builder", "plumber austin", "dentist in new york", "gmail login"])
+    got = {r["keyword"]: r["intent"] for r in out["rows"]}
+    assert got["meal prep in bulk"] != "local" and got["how long does meal prep last in the fridge"] == "informational"
+    assert got["best meal prep app"] == "commercial" and got["best website builder"] == "commercial"
+    assert got["plumber austin"] == "local" and got["dentist in new york"] == "local"
+    assert got["gmail login"] == "navigational"
+
+
+def test_cluster_uses_fixed_head_and_merges_duplicates():
+    kws = ["meal prep ideas", "meal prep containers", "Meal Prep Containers ", "healthy meal prep ideas", "glass meal prep containers", "best meal prep containers", "cheap meal prep containers"]
+    vols = [74000, 40500, 40500, 18100, 9900, 5400, 880]
+    out = call("cluster_keywords", keywords=kws, volumes=vols)
+    assert out["duplicates_merged"] == ["Meal Prep Containers"]
+    by_member = {m: cl for cl in out["clusters"] for m in cl["members"]}
+    assert by_member["meal prep ideas"] is not by_member["meal prep containers"]
+    assert by_member["best meal prep containers"]["intent"] == "commercial"
+    assert by_member["cheap meal prep containers"]["intent"] == "transactional"
+    assert sum(cl["total_volume"] for cl in out["clusters"]) == sum(vols) - 40500
+
+
+def test_navigational_is_never_a_quick_win():
+    out = call("score_opportunities", rows=[{"keyword": "acme login", "volume": 500, "difficulty": 0, "intent": "navigational"}])
+    assert out["quick_wins"] == []

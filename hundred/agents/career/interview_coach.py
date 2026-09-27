@@ -9,7 +9,7 @@ from typing import Literal
 
 from ...core import Agent, ToolError
 from ...lib import dates, text
-from ._common import pct, require_text
+from ._common import pct, require_text, scan_lexicon
 
 AGENT = Agent(
     slug="interview-coach",
@@ -140,6 +140,12 @@ R_CUES = re.compile(r"\b(result|as a result|outcome|in the end|ultimately|which 
 REFLECT_CUES = re.compile(r"\b(i learned|lesson|looking back|in hindsight|what i(?:'d| would) do differently|since then|now i (?:always|never)|takeaway)\b", re.I)
 NUM_RE = re.compile(r"(\d+(?:\.\d+)?\s?(?:%|percent|x\b|k\b|m\b|million|thousand|hours?|days?|weeks?|months?|people|engineers|customers|users|accounts|deals|tickets)|[$€£]\s?\d|\b\d{2,}\b|\b(?:doubled|tripled|halved)\b)", re.I)
 FILLERS = {"um": "delete", "uh": "delete", "like": "delete when not a comparison", "you know": "delete", "basically": "delete", "actually": "delete", "literally": "delete", "so yeah": "delete", "kind of": "delete or commit", "sort of": "delete or commit", "i guess": "delete — state it", "i think": "delete — state it", "i feel like": "delete — state it", "honestly": "delete", "to be honest": "delete", "obviously": "delete", "just": "delete", "really": "delete", "very": "delete", "stuff": "name it", "things": "name them", "etc": "name the last item instead", "whatever": "delete"}
+NON_INCLUSIVE = {
+    "guys": "'everyone' / 'the team'", "manpower": "'staffing' / 'people'", "man-hours": "'hours'", "chairman": "'chair'",
+    "crazy": "'unusual' / 'intense'", "insane": "'huge' / 'extreme'", "blind spot": "'gap'", "tone deaf": "'unaware'",
+    "sanity check": "'quick check'", "dummy": "'placeholder'", "whitelist": "'allowlist'", "blacklist": "'blocklist'",
+    "lame": "'weak'", "spaz": "remove", "ghetto": "remove", "retarded": "remove",
+}
 WE_RE = re.compile(r"\b(we|our|us|the team)\b", re.I)
 I_RE = re.compile(r"\b(I|I'd|I've|I'm|my|me)\b")
 WPM = 150
@@ -426,7 +432,7 @@ def question_bank(
 
 @AGENT.tool
 def lint_answer(answer: str, question: str = "", max_seconds: int = 120) -> dict:
-    """Lint a spoken or typed interview answer for fillers, hedges, run-on sentences, 'we'-heavy ownership and length.
+    """Lint a spoken or typed interview answer for fillers, hedges, run-on sentences, 'we'-heavy ownership, non-inclusive wording and length.
 
     Use on any answer (not only STAR stories): "tell me about yourself", "why us", follow-ups.
     Returns the offending words with positions and a tightened word budget.
@@ -461,6 +467,7 @@ def lint_answer(answer: str, question: str = "", max_seconds: int = 120) -> dict
     fillers.sort(key=lambda f: -f["count"])
     filler_total = sum(f["count"] for f in fillers)
     long_sents = [s[:160] for s in sents if len(text.words(s)) > 30]
+    non_inclusive = scan_lexicon(answer, NON_INCLUSIVE)
     i_n, we_n = len(I_RE.findall(answer)), len(WE_RE.findall(answer))
     number_present = bool(NUM_RE.search(answer))
     restates = None
@@ -486,6 +493,10 @@ def lint_answer(answer: str, question: str = "", max_seconds: int = 120) -> dict
     if we_n > i_n:
         issues.append(f"'we' {we_n}× vs 'I' {i_n}× — ownership unclear")
         score -= 10
+    if non_inclusive:
+        issues.append("non-inclusive wording: " + ", ".join(f"'{h['term']}'" for h in non_inclusive))
+        fixes.extend(f"'{h['term']}' → {h['suggestion']}" for h in non_inclusive)
+        score -= 5 * len(non_inclusive)
     if not number_present:
         issues.append("no number anywhere in the answer")
         score -= 10
@@ -502,6 +513,7 @@ def lint_answer(answer: str, question: str = "", max_seconds: int = 120) -> dict
         "fillers": fillers,
         "filler_pct": pct(filler_total, n),
         "run_on_sentences": long_sents,
+        "non_inclusive": non_inclusive,
         "ownership": {"i": i_n, "we": we_n},
         "number_present": number_present,
         "restates_question": restates,

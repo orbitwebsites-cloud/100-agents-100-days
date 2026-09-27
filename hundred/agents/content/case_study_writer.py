@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import math
 import re
+from decimal import ROUND_HALF_UP, Decimal
+
+from typing import Literal
 
 from ...core import Agent, ToolError
 from ...lib import text
@@ -58,7 +61,8 @@ AGENT = Agent(
        becomes the headline; the next 2-3 become the results box. Never compute these in your
        head — "12% to 31%" is 19 points and 2.6x, *not* a 158% increase in the headline.
     2. **If cost and benefit are known**, call `case_study_writer__roi_summary` for ROI %,
-       net gain and payback months. Present ROI only when the customer confirmed the inputs;
+       net gain and payback months (say `billing: "annual_upfront"` when the customer
+       prepaid the year — payback is then measured from that bigger upfront outlay). Present ROI only when the customer confirmed the inputs;
        otherwise show the operational metrics only.
     3. **Pick the quotes.** Call `case_study_writer__quote_check` with every candidate quote.
        Use the highest-scoring one as the pull quote (near the top, after the headline) and
@@ -82,10 +86,14 @@ AGENT = Agent(
     ## Frameworks
     - **Headline formula**: `<Customer> <verb> <metric> <by N% / to N / Nx> in <time frame> with <Product>`.
       Verbs: cut, doubled, tripled, grew, halved, recovered, eliminated. No "leverages".
-    - **Framing rules**: use x-fold when the ratio ≥ 2 ("2.6x more demos"); percent for
-      changes under 100%; percentage points when both numbers are rates ("from 12% to 31%,
-      +19 points"); absolute numbers when the base is small ("from 3 to 11 customers", never
-      "267% growth"); round to whole percents above 10, one decimal below.
+    - **Framing rules**: use x-fold when a good-direction ratio ≥ 2 ("2.5x more demos" —
+      folds are rounded *down* so a claim never overstates); for reductions use the percent
+      cut plus the fold ("cut response time 87%, 7.9x faster" — "cut 7.9x" confuses readers),
+      "halved" at ~2x; percent for changes under 100%; percentage points when both numbers
+      are rates ("from 12% to 31%, +19 points"); absolute numbers when a *count* base is
+      small ("from 3 to 11 customers", never "267% growth") — hours, money and other
+      continuous measures don't get that warning; round half up to whole percents above
+      10 (62.5% → 63%), one decimal below.
     - **Hero ratio**: the customer's name should appear at least 1.5x as often as the
       product's. "They" did it; the product "enabled" it.
     - **Quote quality**: specific (a number, a named thing, a before/after), first person,
@@ -141,8 +149,23 @@ def _fmt_num(v: float, unit: str) -> str:
     return f"{s} {u}".strip()
 
 
+def _round_half_up(x: float, nd: int = 0) -> float:
+    """Round half away from zero (62.5 → 63), the way readers and spreadsheets round — not Python's banker's rounding."""
+    q = Decimal(str(x)).quantize(Decimal(1).scaleb(-nd), rounding=ROUND_HALF_UP)
+    return float(q)
+
+
 def _fmt_pct(p: float) -> str:
-    return f"{round(p)}%" if abs(p) >= 10 else f"{round(p, 1)}%"
+    return f"{int(_round_half_up(p))}%" if abs(p) >= 10 else f"{_round_half_up(p, 1):g}%"
+
+
+# Continuous measures (time, money, weight…) have no "small base" problem: 9.5 hrs → 1.2 hrs is not a
+# 3-customers-to-11 situation. The small-base warning is for counts.
+CONTINUOUS_UNITS = {
+    "$", "€", "£", "usd", "eur", "gbp", "s", "sec", "secs", "second", "seconds", "min", "mins", "minute", "minutes",
+    "h", "hr", "hrs", "hour", "hours", "day", "days", "week", "weeks", "month", "months", "ms", "kg", "lb", "lbs",
+    "km", "miles", "gb", "mb", "tb", "x", "points", "nps",
+}
 
 
 @AGENT.tool
@@ -186,18 +209,23 @@ def format_metrics(metrics: list[dict]) -> dict:
         fold = None
         if before > 0 and after > 0:
             fold = after / before if hib else before / after
-        if not is_rate and unit not in ("$", "€", "£") and 0 < before < 20:
+        is_count = unit.lower() not in CONTINUOUS_UNITS
+        if not is_rate and is_count and 0 < before < 20:
             warnings.append(f"Small base ({_fmt_num(before, unit)}) — say 'from {_fmt_num(before, unit)} to {_fmt_num(after, unit)}', not a percent.")
         if is_rate:
             warnings.append(f"Both numbers are rates — say '{round(abs(delta), 1):g} points' ({before:g}% → {after:g}%), not '{_fmt_pct(abs(pct_change)) if pct_change is not None else '?'} {'increase' if delta > 0 else 'decrease'}'.")
         # choose framing
         framing = "absolute"
-        phrase = f"from {_fmt_num(before, unit)} to {_fmt_num(after, unit)}"
+        phrase = f"{name} from {_fmt_num(before, unit)} to {_fmt_num(after, unit)}"
         if is_rate:
             framing = "percentage points"
-            phrase = f"from {before:g}% to {after:g}% ({'+' if delta > 0 else ''}{round(delta, 1):g} points)"
-        elif before > 0 and 0 < before < 20 and unit not in ("$", "€", "£"):
+            phrase = f"{name} from {before:g}% to {after:g}% ({'+' if delta > 0 else ''}{_round_half_up(delta, 1):g} points)"
+        elif before > 0 and 0 < before < 20 and is_count:
             framing = "absolute"
+        elif not hib and pct_change is not None and delta < 0 and fold is not None and fold >= 2 and not (1.95 <= fold < 2.1):
+            # lower-is-better: a reduction reads as a percent ("cut response time 87%"); "cut 7.9x" confuses readers
+            framing = "percent"
+            phrase = f"cut {name} {_fmt_pct(abs(pct_change))} (from {_fmt_num(before, unit)} to {_fmt_num(after, unit)}; {math.floor(fold * 10) / 10:g}x {'faster' if unit.lower() in CONTINUOUS_UNITS - {'$', '€', '£', 'usd', 'eur', 'gbp'} else 'lower'})"
         elif fold is not None and fold >= 2:
             framing = "x-fold"
             fx = math.floor(fold * 10) / 10
@@ -227,7 +255,7 @@ def format_metrics(metrics: list[dict]) -> dict:
         impact = 0.0
         if improved:
             impact = (fold if fold else 1.0) if not is_rate else 1 + abs(delta) / 25
-            if before < 20 and not is_rate and unit not in ("$", "€", "£"):
+            if before < 20 and not is_rate and is_count:
                 impact *= 0.5
         rows.append({
             "name": name, "before": before, "after": after, "unit": unit, "timeframe": tf or None,
@@ -252,17 +280,20 @@ def format_metrics(metrics: list[dict]) -> dict:
 
 
 @AGENT.tool
-def roi_summary(annual_benefit: float, annual_cost: float, one_time_cost: float = 0.0, months: int = 12) -> dict:
+def roi_summary(annual_benefit: float, annual_cost: float, one_time_cost: float = 0.0, months: int = 12, billing: Literal["monthly", "annual_upfront"] = "monthly") -> dict:
     """ROI %, net gain, payback months and benefit-cost ratio for a customer story over a given period.
 
     Call only with customer-confirmed inputs. Benefit = savings + incremental gross profit
-    attributable to the product; cost = subscription + implementation.
+    attributable to the product; cost = subscription + implementation. Payback = money paid
+    before the benefit starts ÷ monthly benefit: with annual billing that is the one-time
+    cost plus the year's subscription; with monthly billing, the one-time cost ÷ monthly net.
 
     Args:
         annual_benefit: Annualised value the customer gained (savings + incremental profit).
         annual_cost: Annual recurring cost of the product/service.
         one_time_cost: Implementation, migration or training cost paid once.
         months: Period to evaluate over (1-60; default 12).
+        billing: "monthly" (default — subscription paid as you go; payback = one-time cost ÷ monthly net) or "annual_upfront" (a year of subscription paid in advance on top of the one-time cost).
     """
     if annual_benefit < 0 or annual_cost < 0 or one_time_cost < 0:
         raise ToolError("Amounts cannot be negative.")
@@ -275,16 +306,19 @@ def roi_summary(annual_benefit: float, annual_cost: float, one_time_cost: float 
     cost = one_time_cost + annual_cost * frac
     net = gain - cost
     roi = 100.0 * net / cost
+    monthly_benefit = annual_benefit / 12.0
     monthly_net = (annual_benefit - annual_cost) / 12.0
     payback = None
     if monthly_net > 0:
-        payback = one_time_cost / monthly_net if one_time_cost else 0.0
-        if payback == 0.0:
-            payback = round(annual_cost / annual_benefit * 12, 1) if annual_benefit else None
+        if billing == "annual_upfront":
+            payback = (one_time_cost + annual_cost) / monthly_benefit
+        else:
+            payback = one_time_cost / monthly_net
     ratio = gain / cost if cost else None
     phrasing = f"{round(roi):,}% ROI over {months} months" if roi >= 0 else f"negative ROI ({round(roi):,}%) over {months} months"
-    if payback is not None and payback > 0:
-        phrasing += f"; paid back in {round(payback, 1):g} months"
+    if payback is not None:
+        pb = _round_half_up(payback, 1)
+        phrasing += "; paid back in the first month" if pb <= 1 else f"; paid back in {pb:g} months"
     notes = []
     if roi > 1000:
         notes.append("ROI above 1,000% reads as implausible to finance — show the inputs or use the benefit-cost ratio.")
@@ -292,6 +326,7 @@ def roi_summary(annual_benefit: float, annual_cost: float, one_time_cost: float 
         notes.append("Benefit does not exceed cost annually — no payback; do not claim ROI.")
     return {
         "months": months,
+        "billing": billing,
         "total_benefit": round(gain, 2),
         "total_cost": round(cost, 2),
         "net_gain": round(net, 2),

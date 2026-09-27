@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from ...core import Agent, ToolError
 from ...lib import dates, text
-from ._common import require_text
+from ._common import require_text, us_utc_offset
 
 AGENT = Agent(
     slug="press-release",
@@ -494,7 +494,9 @@ def embargo_timing(embargo_lift: str, audience_utc_offsets: list[float] = [-5.0,
         local_times[key] = lt.strftime("%a %Y-%m-%d %H:%M")
         if lt.hour < 6 or lt.hour >= 18:
             warnings.append(f"Lift is {lt.strftime('%H:%M')} for {key} — outside newsroom hours; those outlets will run it later or not at all.")
-    et = lift.astimezone(timezone(timedelta(hours=-4 if 3 <= lift.month <= 10 else -5)))
+    lift_utc = lift.astimezone(timezone.utc).replace(tzinfo=None)
+    et_offset = us_utc_offset(lift_utc + timedelta(hours=-5), -5)  # EDT (UTC-4) 2nd Sun Mar → 1st Sun Nov
+    et = lift.astimezone(timezone(timedelta(hours=et_offset)))
     if not (6 <= et.hour <= 10):
         warnings.append(f"Lift is {et.strftime('%H:%M')} ET — U.S. tech/business media prefer 6-10 a.m. ET.")
     return {

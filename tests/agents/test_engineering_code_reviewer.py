@@ -143,3 +143,29 @@ def test_score_review_approve_on_nits_only():
 def test_score_review_rejects_bad_severity():
     with pytest.raises(ToolError):
         call("score_review", findings=[{"severity": "huge", "message": "x"}])
+
+
+def _new_file(path, lines):
+    return f"--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{len(lines)} @@\n" + "".join("+" + l + "\n" for l in lines)
+
+
+def test_scan_diff_smells_catches_sql_formatting_tls_off_and_cloud_keys_without_echoing_them():
+    key = "AKIA" + "FAKEEXAMPLE00001"
+    diff = _new_file("app/export.py", [
+        f'client = boto3.client("s3", aws_access_key_id="{key}")',
+        "cur.execute(f\"SELECT * FROM t WHERE id = '{uid}'\")",
+        'cur.execute("SELECT * FROM t WHERE id = " + uid)',
+        "requests.get(url, verify=False)",
+        'cur.execute("SELECT * FROM t WHERE id = %s", (uid,))',
+        "ctx.check_hostname = True",
+    ])
+    out = call("scan_diff_smells", diff=diff)
+    got = {(f["line"], f["smell"]) for f in out["findings"]}
+    assert got == {(1, "hardcoded credential"), (2, "sql built from string"), (3, "sql built from string"), (4, "tls verification off")}
+    assert key not in str(out)
+
+
+def test_scan_diff_smells_redacts_generic_password_literal():
+    out = call("scan_diff_smells", diff=_new_file("app/db.py", ['password = "Hunter2Hunter2x"']))
+    assert out["findings"][0]["smell"] == "hardcoded credential"
+    assert "Hunter2Hunter2x" not in str(out)

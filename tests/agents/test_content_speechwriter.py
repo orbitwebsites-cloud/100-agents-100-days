@@ -99,3 +99,16 @@ def test_speakability_flags_numbers_acronyms_long_sentences():
 def test_speakability_rejects_empty():
     with pytest.raises(ToolError):
         call("speakability", script="")
+
+
+def test_years_are_not_rounded_and_split_antithesis_found():
+    sp = A.get_tool("speakability").call({"script": "He has eaten the same sandwich since 2009. We served 12,480 meals last year. It was 99% of our budget."})
+    said = {n["number"]: n["say"] for n in sp["numbers"]}
+    assert "2009" not in said and said["12,480"] == "about 12,500" and said["99%"] == "almost all"
+    rc = A.get_tool("rhetoric_check").call({"script": "It is not the grand gestures. It is the small ones. We came. We saw. We stayed."})
+    assert rc["counts"]["antithesis"] == 1
+
+
+def test_toast_close_detected_with_glasses_and_names():
+    sm = A.get_tool("structure_map").call({"script": "What do you say about Dan, the man who drove four hours to return a ladder?\n\nHe is the friend who shows up, every single time, for every one of us, and he always will be, whatever the weather and whatever the hour.\n\nSo raise your glasses. To Dan and Priya!"})
+    assert sm["closing_move"] == "toast"

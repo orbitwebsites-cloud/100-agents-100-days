@@ -243,7 +243,7 @@ PERSONALITY = {**{k: v for k, v in TRAIT_WORDS.items()}, "personality": "describ
 OUTCOME_RE = re.compile(r"\b(shipped|delivered|launched|reduced|increased|cut|grew|saved|closed|hit|missed|exceeded|achieved|migrated|fixed|resolved|built|wrote|presented|led|onboarded|mentored|automated|improved|retained|won|lost|completed|%|\$|revenue|latency|uptime|churn|nps|velocity|bugs?|incidents?|tickets?|customers?|users?|deals?|\d+)\b", re.I)
 VAGUE_PRAISE = {"solid": "solid at what, evidenced by?", "seems": "observed or inferred? cite the behaviour", "seemed": "observed or inferred? cite the behaviour", "great job": "which job, what result?", "did well": "what and how measured?", "good work": "which work?", "solid contributor": "contributed what?", "valuable member": "what value, measured how?", "went above and beyond": "what specifically?", "excellent": "at what, evidenced by?", "outstanding": "at what, evidenced by?", "strong performer": "which goals, what attainment?", "has potential": "potential for what, based on what evidence?", "high potential": "based on what evidence?", "needs to improve": "what behaviour, to what standard, by when?", "could be better": "what behaviour, to what standard, by when?", "communication skills": "which communication behaviour?", "step up": "what specifically?"}
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
-DATE_MENTION_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s+\d{1,2})?(?:,?\s+(\d{4}))?\b|\b(\d{4})-(\d{2})(?:-\d{2})?\b|\b(q[1-4])\b", re.I)
+DATE_MENTION_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s+\d{1,2})?(?:,?\s+(\d{4}))?\b|\b(\d{4})-(\d{2})(?:-\d{2})?\b|\b(q[1-4])(?:\s+(\d{4}))?\b", re.I)
 
 
 @AGENT.tool
@@ -277,7 +277,7 @@ def check_review_language(review: str, cycle_start: str = "", cycle_end: str = "
         cutoff = ce.toordinal() - span * 0.25
         dated: list[date] = []
         for m in DATE_MENTION_RE.finditer(review):
-            mon, yr, y2, m2, q = m.groups()
+            mon, yr, y2, m2, q, qy = m.groups()
             try:
                 if mon:
                     y = int(yr) if yr else (ce.year if MONTHS[mon.lower()[:3]] <= ce.month else cs.year)
@@ -286,7 +286,8 @@ def check_review_language(review: str, cycle_start: str = "", cycle_end: str = "
                     dated.append(date(int(y2), int(m2), 15))
                 elif q:
                     qn = int(q[1])
-                    dated.append(date(ce.year if qn * 3 <= ce.month or ce.year == cs.year else cs.year, qn * 3 - 1, 15))
+                    qyear = int(qy) if qy else (ce.year if qn * 3 <= ce.month or ce.year == cs.year else cs.year)
+                    dated.append(date(qyear, qn * 3 - 1, 15))
             except ValueError:
                 continue
         in_cycle = [d for d in dated if cs <= d <= ce]

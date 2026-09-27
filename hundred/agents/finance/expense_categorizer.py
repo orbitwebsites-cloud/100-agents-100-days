@@ -72,7 +72,8 @@ AGENT = Agent(
        tests for regular cadence and stable amounts, and returns each subscription with its
        annualised cost and last charge date. Flag any subscription with no charge in the last 45 days
        as possibly cancelled, and any two subscriptions in the same category as a consolidation candidate.
-    5. **Flag anomalies.** Call `expense_categorizer__flag_anomalies`. It returns duplicates (same
+    5. **Flag anomalies.** Call `expense_categorizer__flag_anomalies` with the categorised rows (the
+       category lets it skip transfers and auto-billed charges). It returns duplicates (same
        merchant and amount within 3 days), outliers (more than 3× a merchant's median), large round
        amounts and weekend charges on business cards. Every flag needs a one-line disposition:
        "OK — explained", "refund requested", "ask cardholder".
@@ -89,7 +90,8 @@ AGENT = Agent(
       excluded from spend totals — the tools do this; keep it that way in the report.
     - **Confidence**: user rule 1.0, exact merchant match 0.9, keyword match 0.7, fuzzy 0.5.
     - **Anomaly thresholds**: duplicate = same merchant + same amount within 3 days; outlier = > 3×
-      merchant median and > $50; round = whole hundreds ≥ $500.
+      merchant median and > $50; round = whole hundreds ≥ $500 (not a repeating set amount);
+      weekend = a person-initiated category on Sat/Sun (auto-billed SaaS/utilities are not flagged).
 
     ## Output format
     ```
@@ -145,9 +147,33 @@ def _parse_date(s: str) -> date | None:
         return None
 
 
+# Payment processors that prefix the real merchant ("SQ *BLUE BOTTLE", "PAYPAL *ADOBE", "TST* JOES DINER").
+PROCESSOR_RE = re.compile(r"^\s*(sq|sqr|tst|pp|paypal|sp|pos|dd|py|in|ckr|bt|pmt|fs|google)\s*\*\s*", re.I)
+MERCHANT_ALIASES = [
+    (re.compile(r"^amzn\s*mktp|^amazon\.com\*|^amzn\.com|^amazon mktpl", re.I), "Amazon Marketplace"),
+    (re.compile(r"^google\s*\*\s*(gsuite|g suite|workspace)", re.I), "Google Workspace"),
+    (re.compile(r"^uber\s*\*?\s*eats", re.I), "Uber Eats"),
+    (re.compile(r"^uber\s*\*", re.I), "Uber"),
+    (re.compile(r"^lyft\s*\*", re.I), "Lyft"),
+    (re.compile(r"^apple\.com/bill|^itunes", re.I), "Apple Services"),
+    (re.compile(r"^payment thank you|^autopay payment|^online payment", re.I), "Card Payment"),
+]
+DOMAIN_RE = re.compile(r"\b([\w-]+)(?:\.[\w-]+)*\.(?:com|net|io|co|org)\b\S*", re.I)
+TAIL_NOISE_RE = re.compile(r"\b(pending|recurring|mobile|help|annual|monthly|prem)\b", re.I)
+
+
 def _merchant(desc: str) -> str:
-    cleaned = NOISE_RE.sub(" ", desc)
-    words = [w for w in SPACE_RE.sub(" ", cleaned).strip().split(" ") if re.search(r"[A-Za-z&]", w)]
+    raw = desc.strip()
+    for pat, name in MERCHANT_ALIASES:
+        if pat.search(raw):
+            return name
+    raw = PROCESSOR_RE.sub("", raw)  # keep the merchant behind the processor prefix
+    raw = DOMAIN_RE.sub(lambda m: f" {m.group(1)} ", raw)  # "NETFLIX.COM" -> "NETFLIX"
+    raw = re.sub(r"[*_#]", " ", raw)
+    cleaned = NOISE_RE.sub(" ", raw)
+    cleaned = TAIL_NOISE_RE.sub(" ", cleaned)
+    # drop reference tokens that mix letters and digits (T0231ABC, 2K4L81)
+    words = [w for w in SPACE_RE.sub(" ", cleaned).strip().split(" ") if re.search(r"[A-Za-z&]", w) and not (re.search(r"\d", w) and re.search(r"[A-Za-z]", w))]
     return " ".join(words[:3]).title() if words else desc.strip()[:40].title()
 
 
@@ -271,16 +297,17 @@ _LIB = [
     (r"\b(stripe|paypal|square|shopify payout|gumroad|paddle|lemon ?squeezy)\b.*(payout|transfer|deposit)|payout", "Revenue", 0.7),
     (r"\b(payroll|gusto|rippling|justworks|adp|paychex|deel|remote\.com)\b", "Payroll", 0.9),
     (r"\b(upwork|fiverr|toptal|contractor|freelance)\b", "Contractors", 0.8),
-    (r"\b(rent|lease|wework|regus|industrious|landlord|property mgmt)\b", "Rent", 0.8),
+    (r"\b(rent(?![- ]?a[- ]?car)|lease|wework|regus|industrious|landlord|property mgmt)\b", "Rent", 0.8),
     (r"\b(electric|pg&e|con ?ed|duke energy|water|gas co|utility|comcast|xfinity|verizon|at&t|t-mobile|spectrum|internet)\b", "Utilities", 0.8),
     (r"\b(aws|amazon web|google cloud|gcp|azure|vercel|netlify|heroku|digitalocean|cloudflare|github|gitlab|atlassian|jira|notion|slack|zoom|figma|adobe|microsoft 365|google workspace|gsuite|dropbox|1password|openai|anthropic|hubspot|salesforce|mailchimp|intercom|zendesk|twilio|sendgrid|datadog|linear|loom|calendly|canva|quickbooks|xero|docusign|zapier|airtable|webflow|squarespace|godaddy|namecheap)\b", "Software", 0.9),
+    (r"apple\.com/bill|\bitunes\b|\bapple services\b", "Software", 0.6),  # App Store / iCloud billing, not hardware
     (r"\b(google ads|adwords|facebook ads|meta ads|fb ads|linkedin ads|twitter ads|tiktok ads|bing ads|semrush|ahrefs|sponsor)\b", "Marketing", 0.9),
-    (r"\b(united|delta|american air|southwest|jetblue|alaska air|british airways|lufthansa|ryanair|easyjet|airbnb|marriott|hilton|hyatt|hotel|motel|expedia|booking\.com|hertz|avis|enterprise rent|amtrak|uber(?! eats)|lyft|taxi|parking|toll)\b", "Travel", 0.8),
-    (r"\b(doordash|uber eats|grubhub|postmates|deliveroo|restaurant|cafe|coffee|starbucks|chipotle|mcdonald|pizza|sushi|bistro|grill|diner|bar & grill|taco|burger|bakery|deli)\b", "Meals", 0.8),
+    (r"\b(united(?!\s?health)|delta(?! dental)|american air|southwest|jetblue|alaska air|british airways|lufthansa|ryanair|easyjet|airbnb|marriott|hilton|hyatt|hotel|motel|expedia|booking\.com|hertz|avis|enterprise rent|amtrak|uber(?!\s*\*?\s*eats)|lyft|taxi|parking|toll)\b", "Travel", 0.8),
+    (r"\b(doordash|uber\s*\*?\s*eats|grubhub|postmates|deliveroo|restaurant|cafe|coffee|starbucks|chipotle|mcdonald|pizza|sushi|bistro|grill|diner|bar & grill|taco|burger|bakery|deli)\b", "Meals", 0.8),
     (r"\b(staples|office depot|officemax|amazon|amzn|uline|fedex|ups store|usps|postage)\b", "Office", 0.6),
     (r"\b(apple store|apple\.com|best buy|dell|lenovo|b&h|micro center|newegg)\b", "Equipment", 0.7),
-    (r"\b(insurance|geico|state farm|allstate|progressive|hiscox|next insurance|blue cross|aetna|cigna|united ?health)\b", "Insurance", 0.9),
-    (r"\b(law|legal|attorney|llp|cpa|accountant|accounting|bookkeep|consulting|advisory)\b", "Professional services", 0.7),
+    (r"\b(insurance|geico|state farm|allstate|progressive|hiscox|next insurance|blue cross|aetna|cigna|united ?health\w*|delta dental)\b", "Insurance", 0.9),
+    (r"\b(law|legal|legalzoom|attorney|llp|cpa|accountant|accounting|bookkeep|consulting|advisory)\b", "Professional services", 0.7),
     (r"\b(fee|service charge|overdraft|wire fee|monthly maintenance|interest charge|late fee|foreign transaction)\b", "Bank fees", 0.8),
     (r"\b(irs|us treasury|tax|franchise tax|dept of revenue|department of revenue|hmrc|cra)\b", "Taxes", 0.9),
     (r"\b(transfer|xfer|zelle|venmo|cash app|online payment|autopay|card payment|payment thank you|payment received|to savings|from checking|capital one .*payment|chase .*payment|amex .*payment)\b", "Transfers", 0.8),
@@ -288,7 +315,7 @@ _LIB = [
     (r"\b(whole foods|trader joe|safeway|kroger|costco|walmart|target|aldi|publix|wegmans|heb|grocery|supermarket|tesco|sainsbury|lidl)\b", "Groceries", 0.8),
     (r"\b(netflix|spotify|hulu|disney\+|hbo|max\b|apple music|youtube premium|audible|kindle|prime video|peloton|nyt|new york times|wsj|substack|patreon)\b", "Subscriptions", 0.9),
     (r"\b(cvs|walgreens|pharmacy|rite aid|dental|dentist|clinic|hospital|medical|doctor|md\b|urgent care|gym|fitness|equinox|planet fitness)\b", "Health", 0.8),
-    (r"\b(shell|chevron|exxon|mobil|bp\b|arco|sunoco|gas station|fuel|76\b|wawa|sheetz|circle k|7-eleven|metro|transit|mta|bart|subway(?! sandwich))\b", "Transport", 0.7),
+    (r"\b(shell|chevron|exxon|mobil|bp\b|arco|sunoco|gas station|fuel|76\b|wawa|sheetz|circle k|7-eleven|kwik trip|quiktrip|speedway|valero|citgo|racetrac|casey'?s|marathon petro|metro|transit|mta|bart|subway(?! sandwich))\b", "Transport", 0.7),
     (r"\b(mortgage|hoa|home depot|lowe'?s|ikea|wayfair)\b", "Housing", 0.7),
     (r"\b(steam|playstation|xbox|nintendo|cinema|amc|regal|ticketmaster|stubhub|concert|theatre|theater)\b", "Entertainment", 0.8),
     (r"\b(nike|adidas|zara|h&m|uniqlo|nordstrom|macy|gap\b|old navy|etsy|ebay|sephora|ulta|lululemon)\b", "Shopping", 0.7),
@@ -296,17 +323,20 @@ _LIB = [
 ]
 LIB = [(re.compile(p, re.I), c, conf) for p, c, conf in _LIB]
 NON_SPEND = {"Transfers", "Revenue", "Income", "Owner draw"}
+# Categories that bill automatically (a weekend charge is normal; a usage-priced monthly bill still counts as recurring)
+AUTO_BILLED = {"Software", "Utilities", "Insurance", "Rent", "Subscriptions", "Payroll", "Housing", "Bank fees", "Taxes", "Marketing"}
 
 
 def _apply_rules(desc: str, merchant: str, amount: Decimal, user_rules: list[tuple[re.Pattern, str]]) -> tuple[str, str, float]:
     hay = f"{desc} {merchant}"
+    lib_hay = re.sub(r"[_*]", " ", hay)  # "GOOGLE *GSUITE_acme" -> "GOOGLE  GSUITE acme" so \b boundaries work
     for pat, cat in user_rules:
         if pat.search(hay):
             return cat, f"user rule /{pat.pattern}/", 1.0
     inbound = ("Income", "Revenue", "Transfers")
     order = ([x for x in LIB if x[1] in inbound] + [x for x in LIB if x[1] not in inbound]) if amount > 0 else LIB
     for pat, cat, conf in order:
-        m = pat.search(hay)
+        m = pat.search(lib_hay)
         if m:
             if cat in ("Income", "Revenue") and amount < 0:
                 continue
@@ -357,8 +387,8 @@ def categorize(transactions: list[dict], rules: list[dict] | None = None) -> dic
             uncategorised.append({"description": desc[:80], "merchant": merchant, "amount": money(amt), "date": t.get("date")})
         elif conf < 0.7:
             low_conf.append({"merchant": merchant, "amount": money(amt), "category": cat, "confidence": conf})
-        if cat not in NON_SPEND and amt < 0:
-            by_cat[cat] += -amt
+        if cat not in NON_SPEND:
+            by_cat[cat] -= amt  # spend adds; a credit in a spend category (return/refund) nets against it
     n = len(out)
     unc_pct = ratio_to_pct(Decimal(len(uncategorised)) / n)
     merchants_unc = defaultdict(int)
@@ -383,6 +413,7 @@ def totals_by_category_month(transactions: list[dict], include_income: bool = Fa
     """Pivot categorised transactions into category × month totals with shares and month-over-month movers.
 
     Transfers, revenue, income and owner draws are excluded from spend (income shown separately).
+    A positive amount in a spend category (a return or refund) is netted against that category.
 
     Args:
         transactions: Categorised rows: {"date": "YYYY-MM-DD", "amount": number (spend negative), "category": str}.
@@ -393,6 +424,7 @@ def totals_by_category_month(transactions: list[dict], include_income: bool = Fa
     income: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(lambda: ZERO))
     months = set()
     transfers = ZERO
+    refunds = ZERO
     for i, t in enumerate(rows, 1):
         if not isinstance(t, dict) or not t.get("date"):
             raise ToolError(f"transactions[{i}] needs a date")
@@ -412,7 +444,8 @@ def totals_by_category_month(transactions: list[dict], include_income: bool = Fa
         if amt < 0:
             pivot[cat][m] += -amt
         elif amt > 0:
-            income[cat][m] += amt
+            pivot[cat][m] -= amt  # a credit in a spend category is a return/refund: net it, do not call it income
+            refunds += amt
     if not pivot and not income:
         raise ToolError("No spend or income rows after excluding transfers")
     months_sorted = sorted(months)
@@ -437,6 +470,7 @@ def totals_by_category_month(transactions: list[dict], include_income: bool = Fa
         "total_spend": money(grand),
         "avg_monthly_spend": money(grand / len(months_sorted)),
         "transfers_excluded": money(transfers),
+        "refunds_netted": money(refunds),
         "categories": table,
         "top_movers": movers[:5],
         "verdict": f"${money(grand):,.2f} spend over {len(months_sorted)} month(s) (avg ${money(grand / len(months_sorted)):,.2f}); top category {table[0]['category']} at {table[0]['share_pct']}%." if table else "No spend rows.",
@@ -456,9 +490,11 @@ def detect_recurring(transactions: list[dict], min_occurrences: int = 3, amount_
 
     A merchant is recurring when it has >= min_occurrences charges at a stable interval (weekly,
     monthly, quarterly, annual within ±20% of the period) and amounts within the tolerance of the median.
+    Usage-priced bills (cloud, utilities) at a regular cadence are kept with variable_amount=true when
+    the rows carry an auto-billed category from categorize; annualised uses the median charge.
 
     Args:
-        transactions: Rows {"date": "YYYY-MM-DD", "merchant": str, "description": str, "amount": number (spend negative)}.
+        transactions: Rows {"date": "YYYY-MM-DD", "merchant": str, "description": str, "amount": number (spend negative), "category": str (optional, from categorize)}.
         min_occurrences: Minimum charges to count as recurring (default 3; annual renewals need 2).
         amount_tolerance_pct: Allowed variation from the median amount, e.g. 10.
     """
@@ -467,6 +503,7 @@ def detect_recurring(transactions: list[dict], min_occurrences: int = 3, amount_
         raise ToolError("min_occurrences must be 2-24")
     tol = D(amount_tolerance_pct, "amount_tolerance_pct") / 100
     groups: dict[str, list[tuple[date, Decimal]]] = defaultdict(list)
+    cats: dict[str, str] = {}
     latest = None
     for i, t in enumerate(rows, 1):
         if not isinstance(t, dict):
@@ -479,6 +516,8 @@ def detect_recurring(transactions: list[dict], min_occurrences: int = 3, amount_
             continue
         merchant = str(t.get("merchant") or _merchant(str(t.get("description", "")))).strip().lower()
         groups[merchant].append((d, -amt))
+        if t.get("category"):
+            cats[merchant] = str(t["category"])
         latest = d if latest is None or d > latest else latest
     found = []
     cadences = [("weekly", 7), ("biweekly", 14), ("monthly", 30), ("quarterly", 91), ("annual", 365)]
@@ -500,8 +539,9 @@ def detect_recurring(transactions: list[dict], min_occurrences: int = 3, amount_
         amounts = [c[1] for c in charges]
         med_amt = Decimal(str(median(amounts)))
         stable = sum(1 for a in amounts if abs(a - med_amt) <= med_amt * tol) / len(amounts)
-        if stable < 0.7:
-            continue
+        variable = stable < 0.7
+        if variable and cats.get(merchant) not in AUTO_BILLED:
+            continue  # irregular amounts at a regular cadence are only a bill for auto-billed categories (usage-priced cloud, utilities)
         per_year = {"weekly": 52, "biweekly": 26, "monthly": 12, "quarterly": 4, "annual": 1}[cadence]
         last = charges[-1][0]
         stale = latest is not None and (latest - last).days > {"weekly": 14, "biweekly": 28, "monthly": 45, "quarterly": 120, "annual": 400}[cadence]
@@ -515,6 +555,8 @@ def detect_recurring(transactions: list[dict], min_occurrences: int = 3, amount_
                 "first_charged": charges[0][0].isoformat(),
                 "last_charged": last.isoformat(),
                 "amount_stable_pct": ratio_to_pct(Decimal(str(stable))),
+                "variable_amount": variable,
+                "amount_range": [money(min(amounts)), money(max(amounts))],
                 "possibly_cancelled": stale,
             }
         )
@@ -537,8 +579,8 @@ def flag_anomalies(transactions: list[dict], duplicate_window_days: int = 3, out
         transactions: Rows {"date": "YYYY-MM-DD", "merchant": str, "description": str, "amount": number (spend negative)}.
         duplicate_window_days: Same merchant + same amount within this many days = duplicate.
         outlier_multiple: Flag a charge above this multiple of the merchant's median (needs >= 3 charges at that merchant).
-        round_threshold: Flag whole-hundred amounts at or above this value.
-        business: If true, also flag weekend charges for review.
+        round_threshold: Flag whole-hundred amounts at or above this value (skipped when the merchant bills that same amount repeatedly).
+        business: If true, also flag weekend charges for review (skipping auto-billed categories and repeat same-amount charges — pass the category from categorize).
     """
     rows = bound_rows(transactions, "transactions", limit=5000)
     if not 0 <= duplicate_window_days <= 30:
@@ -556,7 +598,7 @@ def flag_anomalies(transactions: list[dict], duplicate_window_days: int = 3, out
             raise ToolError(f"transactions[{i}]: bad or missing date")
         amt = D(t.get("amount", 0), f"transactions[{i}].amount")
         merchant = str(t.get("merchant") or _merchant(str(t.get("description", "")))).strip().lower()
-        items.append({"i": i, "date": d, "merchant": merchant, "amount": amt, "description": str(t.get("description", ""))[:80]})
+        items.append({"i": i, "date": d, "merchant": merchant, "amount": amt, "description": str(t.get("description", ""))[:80], "category": str(t.get("category") or "")})
     flags = []
     by_m: dict[str, list[dict]] = defaultdict(list)
     for it in items:
@@ -578,11 +620,19 @@ def flag_anomalies(transactions: list[dict], duplicate_window_days: int = 3, out
                 v = -x["amount"]
                 if x["amount"] < 0 and med > 0 and v > med * mult and v >= 50:
                     flags.append({"type": "outlier", "merchant": merchant.title(), "amount": money(v), "median": money(med), "multiple": float((v / med).quantize(Decimal("0.1"))), "date": x["date"].isoformat(), "rows": [x["i"]], "disposition": "explain: one-off purchase, annual renewal, or error?"})
+    # a merchant that bills the same amount repeatedly is a subscription/budget cap, not a suspicious one-off
+    repeats = defaultdict(int)
+    for x in items:
+        if x["amount"] < 0:
+            repeats[(x["merchant"], x["amount"])] += 1
     for x in items:
         v = -x["amount"]
-        if x["amount"] < 0 and v >= thr and v % 100 == 0:
+        repeated = repeats[(x["merchant"], x["amount"])] >= 2
+        if x["category"] in NON_SPEND:
+            continue
+        if x["amount"] < 0 and v >= thr and v % 100 == 0 and not repeated:
             flags.append({"type": "round_amount", "merchant": x["merchant"].title(), "amount": money(v), "date": x["date"].isoformat(), "rows": [x["i"]], "disposition": "verify invoice/receipt — round amounts are often deposits, retainers or transfers"})
-        if business and x["amount"] < 0 and x["date"].weekday() >= 5 and v >= 25:
+        if business and x["amount"] < 0 and x["date"].weekday() >= 5 and v >= 25 and x["category"] not in AUTO_BILLED and not repeated:
             flags.append({"type": "weekend", "merchant": x["merchant"].title(), "amount": money(v), "date": x["date"].isoformat(), "rows": [x["i"]], "disposition": "ask cardholder: business purpose?"})
     counts = defaultdict(int)
     for f in flags:

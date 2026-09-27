@@ -138,3 +138,41 @@ def test_diff_breaking_changes_additive_only():
 def test_diff_breaking_changes_rejects_bad_json():
     with pytest.raises(ToolError):
         call("diff_breaking_changes", old_spec="{", new_spec="{}")
+
+
+def _spec(path, extra_ops=None, schemas=None, security=None):
+    op = {"operationId": "getThing", "summary": "s", "tags": ["t"], "responses": {"200": {"description": "ok"}, "404": {"description": "nf"}}}
+    if security is not None:
+        op["security"] = security
+    name = path.split("{")[1].rstrip("}") if "{" in path else None
+    item = {"get": op}
+    if name:
+        item["parameters"] = [{"name": name, "in": "path", "required": True, "schema": {"type": "string"}, "description": "id"}]
+    doc = {"openapi": "3.0.3", "info": {"title": "T", "version": "1", "description": "d"}, "servers": [{"url": "https://x.test"}],
+           "security": [{"bearer": []}], "paths": {path: item, **(extra_ops or {})},
+           "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}, "schemas": schemas or {}}}
+    return doc
+
+
+def test_breaking_diff_ignores_path_parameter_rename():
+    out = call("diff_breaking_changes", old_spec=json.dumps(_spec("/things/{thingId}")), new_spec=json.dumps(_spec("/things/{id}")))
+    assert out["breaking"] == [] and out["additive"] == []
+    assert any("path parameter renamed" in n for n in out["notes"])
+
+
+def test_breaking_diff_parameter_enum_narrowed():
+    def spec(values):
+        d = _spec("/things")
+        d["paths"]["/things"]["get"]["parameters"] = [{"name": "sort", "in": "query", "schema": {"type": "string", "enum": values}, "description": "s"}]
+        return json.dumps(d)
+    out = call("diff_breaking_changes", old_spec=spec(["asc", "desc"]), new_spec=spec(["asc"]))
+    assert [b["kind"] for b in out["breaking"]] == ["parameter enum value removed"]
+
+
+def test_check_openapi_spectral_rules():
+    doc = _spec("/things/", security=[{"oauth2": []}], schemas={"S": {"type": "object", "properties": {
+        "e": {"type": "string", "enum": ["a", "a"]}, "n": {"type": "integer", "enum": [1, "2"]}, "l": {"type": "array"}}}})
+    doc["paths"]["/q?x=1"] = {"get": {"operationId": "q", "summary": "s", "tags": ["t"], "responses": {"200": {"description": "ok"}}}}
+    msgs = " | ".join(i["message"] for i in call("check_openapi", spec=json.dumps(doc))["issues"])
+    for needle in ("'oauth2' is not defined", "duplicated entries", "don't match type 'integer'", "without `items`", "ends with '/'", "query string in the path key"):
+        assert needle in msgs

@@ -133,6 +133,18 @@ CTA_RE = re.compile(r"\[([^\]]{2,40})\]|\b(get started|start (your |my )?free|bo
 WEAK_CTA = {"submit", "learn more", "click here", "continue", "go", "send", "next", "enter"}
 
 
+def _as_sentences(copy: str) -> str:
+    """Treat every line of page copy as its own sentence: headlines, bullets and buttons carry no period,
+    and gluing them into one 40-word 'sentence' would inflate the reading grade."""
+    out = []
+    for ln in copy.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        out.append(ln if ln[-1] in ".!?:\"”'" else ln + ".")
+    return "\n".join(out)
+
+
 @AGENT.tool
 def audit_page(
     page_text: str,
@@ -164,7 +176,7 @@ def audit_page(
     ws = text.words(body)
     n_words = len(ws)
     low = body.lower()
-    rd = text.readability(body)
+    rd = text.readability(_as_sentences(body))
     lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
     headline = lines[0] if lines else ""
     we, you = len(WE_RE.findall(body)), len(YOU_RE.findall(body))
@@ -177,7 +189,9 @@ def audit_page(
     cta_labels = sorted({c.strip().lower() for c in cta_matches})
     ctas = distinct_ctas or len(cta_labels)
     weak_ctas = [c for c in cta_labels if c in WEAK_CTA]
-    src_words = set(w.lower() for w in text.words(traffic_source) if w.lower() not in text.STOPWORDS)
+    # "google ads: restaurant scheduling app" → match on the promise after the channel label, not on "google ads".
+    source_promise = traffic_source.split(":", 1)[1] if ":" in traffic_source else traffic_source
+    src_words = set(w.lower() for w in text.words(source_promise) if w.lower() not in text.STOPWORDS)
     head_words = set(w.lower() for w in text.words(" ".join(lines[:3])))
     match_ratio = round(len(src_words & head_words) / len(src_words), 2) if src_words else None
 
@@ -317,7 +331,7 @@ def headline_clarity(headline: str, subheadline: str = "", cta_label: str = "") 
         if not cta_ok:
             fixes.append("CTA should be verb-first + what they get ('Start my free trial'), ≤ 5 words, never 'Submit'/'Learn more'.")
     checks["cta_ok"] = cta_ok
-    rd = text.readability(combined)
+    rd = text.readability(_as_sentences(f"{h}\n{subheadline}"))
     checks["readable"] = (rd["fk_grade"] or 0) <= 9
     if not checks["readable"]:
         fixes.append(f"Reading grade {rd['fk_grade']} — use shorter words.")

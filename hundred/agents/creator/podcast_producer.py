@@ -305,7 +305,7 @@ def plan_ad_breaks(
 
     Light = pre + 1 mid, standard = pre + mids every ~20 min, heavy = pre + mids every ~12 min + post.
     Mid-rolls never land inside the cold open/intro or the last 10% of the episode, and snap to
-    the nearest chapter boundary when chapter_starts are given. Revenue prices each slot by
+    the first chapter boundary at or after the ideal point when chapter_starts are given. Revenue prices each slot by
     placement: the CPM given is the 60-s mid-roll rate; a 30-s pre-roll earns 0.75× and a
     post-roll 0.5× of it (published benchmarks: pre $18-25, mid $25-40, post $10-15 CPM).
 
@@ -344,7 +344,8 @@ def plan_ad_breaks(
             ideal = pos
             options = [b for b in bounds if earliest <= b <= latest and b not in used]
             if options:
-                pos = min(options, key=lambda b: (abs(b - ideal), b))
+                after = [b for b in options if b >= ideal]  # finish the topic, then break
+                pos = min(after) if after else max(options)
                 used.add(pos)
                 note = f"Snapped from {fmt_timestamp(ideal)} to the chapter boundary at {fmt_timestamp(pos)}."
             else:

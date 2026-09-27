@@ -139,3 +139,42 @@ def test_compare_environments_ranks_major_version_first():
 def test_compare_environments_rejects_empty():
     with pytest.raises(ToolError):
         call("compare_environments", working={}, broken={})
+
+
+def test_parse_node_async_and_internal_frames():
+    trace = """TypeError: Cannot read properties of undefined (reading 'map')
+    at formatLineItems (/app/src/format.js:23:28)
+    at async InvoiceService.send (/app/src/service.js:112:21)
+    at async /app/src/routes.js:34:5
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+"""
+    out = call("parse_stack_trace", trace=trace)
+    assert [(f["file"], f["line"]) for f in out["frames"]] == [
+        ("/app/src/format.js", 23), ("/app/src/service.js", 112), ("/app/src/routes.js", 34), ("node:internal/process/task_queues", 95)]
+    assert out["frames"][-1]["in_user_code"] is False
+    assert "undefined/null" in out["hint"]
+
+
+def test_python_implicit_chain_final_exception_is_the_bug():
+    trace = """Traceback (most recent call last):
+  File "/srv/app/cache.py", line 10, in get
+    return self._d[k]
+KeyError: 'x'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/srv/app/cache.py", line 12, in get
+    return self.db.load(k).value
+AttributeError: 'NoneType' object has no attribute 'value'
+"""
+    out = call("parse_stack_trace", trace=trace)
+    assert out["chain_kind"] == "implicit"
+    assert out["root_cause_exception"]["type"] == "AttributeError"
+
+
+def test_cluster_logs_surfaces_the_deploy_before_the_first_error():
+    logs = "\n".join(["10:00:01 INFO request ok"] * 40 + ["10:00:05 INFO deployed api v42", "10:00:07 ERROR boom id=1", "10:00:08 ERROR boom id=2"])
+    out = call("cluster_logs", logs=logs)
+    assert out["changes_before_first_problem"][-1]["line"] == 41
+    assert "deployed api v42" in out["verdict"]

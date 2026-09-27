@@ -117,3 +117,19 @@ def test_cost_per_serving_budget_and_coverage():
 def test_cost_per_serving_bad_input():
     with pytest.raises(ToolError):
         call("cost_per_serving", recipes=[{"name": "x", "cost": 5, "servings": 0}])
+
+
+def test_grocery_list_count_units_do_not_cross_merge_and_pantry_is_exact():
+    out = call(
+        "grocery_list",
+        recipes=[
+            {"name": "A", "ingredients": [{"name": "garlic", "qty": 1, "unit": "head"}, {"name": "red bell pepper", "qty": 1, "unit": "each"}, {"name": "unsalted butter", "qty": 2, "unit": "tbsp"}]},
+            {"name": "B", "ingredients": [{"name": "garlic cloves", "qty": 3, "unit": ""}, {"name": "ground cumin", "qty": 1, "unit": "tsp"}]},
+        ],
+        pantry=["salt", "pepper"],
+    )
+    rows = [(r["item"], r["display"]) for v in out["by_aisle"].values() for r in v]
+    assert ("garlic", "1 head") in rows and ("garlic", "3 cloves") in rows  # a head is not a clove
+    assert any(i == "red bell pepper" for i, _ in rows) and any(i == "unsalted butter" for i, _ in rows)  # no substring pantry skips
+    assert out["skipped_from_pantry"] == [] and any("red bell pepper" in c for c in out["check_pantry"])
+    assert {r["item"] for r in out["by_aisle"]["pantry"]} == {"ground cumin"}

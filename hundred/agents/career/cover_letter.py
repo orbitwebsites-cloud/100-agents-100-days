@@ -226,8 +226,9 @@ def _coverage(letter: str, requirements: list[str]) -> list[dict]:
             status = "covered" if share > 0.5 and best_score >= 2 else "partial" if skills_hit else "missing"
         else:
             status = "covered" if best_score >= 2 else "missing"
-        # Evidence often spans two sentences ("I design the tests. One lifted conversion 23%.").
-        window = " ".join(s for s, _ in sent_terms[best_i : best_i + 2]) if best_i >= 0 else ""
+        # Evidence often spans adjacent sentences ("I design the tests. One lifted conversion 23%."),
+        # so the number may sit in the sentence before or after the best-matching one.
+        window = " ".join(s for s, _ in sent_terms[max(0, best_i - 1) : best_i + 2]) if best_i >= 0 else ""
         has_number = bool(re.search(r"\d", window))
         rows.append(
             {

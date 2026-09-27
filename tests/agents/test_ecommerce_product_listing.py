@@ -114,3 +114,27 @@ def test_bullet_lint_flags_feature_only_promo_and_duplicates():
 def test_bullet_lint_rejects_empty():
     with pytest.raises(ToolError):
         call("bullet_lint", bullets=["", "  "])
+
+
+def test_backend_brand_names_and_subjective_terms_fail():
+    out = call("check_marketplace_limits", marketplace="amazon", title=TITLE, backend_keywords="yeti tumbler best new hydra flask", brand="Hydra", competitor_brands=["Tumblr Co"])
+    fails = " ".join(out["fails"])
+    assert "third-party brand" in fails and "yeti" in fails
+    assert "subjective/temporary" in fails and "best, new" in fails
+    assert any("own brand" in w for w in out["warnings"])
+    clean = call("check_marketplace_limits", marketplace="amazon", title=TITLE, backend_keywords="tumbler canteen flask")
+    assert not any("brand" in f for f in clean["fails"])
+
+
+def test_description_promo_words_fail_on_amazon_only():
+    amz = call("check_marketplace_limits", marketplace="amazon", title=TITLE, description="The best bottle. Free shipping today.")
+    assert any("description promo" in f for f in amz["fails"])
+    shop = call("check_marketplace_limits", marketplace="shopify", title=TITLE, description="The best bottle. Free shipping today.")
+    assert any("description promo" in w for w in shop["warnings"]) and not any("description promo" in f for f in shop["fails"])
+
+
+def test_bullet_lint_reads_br_as_line_breaks():
+    desc = "<br>".join(["Short line one about the bottle size of 32 oz."] * 12)
+    out = call("bullet_lint", bullets=BULLETS, description=desc)
+    assert out["description"]["paragraphs"] == 12
+    assert not any("paragraph" in i for i in out["description"]["issues"])

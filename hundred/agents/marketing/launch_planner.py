@@ -7,6 +7,7 @@ from typing import Literal
 
 from ...core import Agent, ToolError
 from ...lib import dates
+from ._common import us_utc_offset
 
 AGENT = Agent(
     slug="launch-planner",
@@ -454,9 +455,9 @@ def launch_day_schedule(launch_datetime: str, audience_utc_offsets: list[float] 
         raise ToolError("UTC offsets must be between -12 and +14.")
     steps = list(LAUNCH_DAY)
     if product_hunt:
-        # 12:01 AM Pacific on launch date; Pacific is UTC-7 (PDT) Mar-Nov else UTC-8.
-        pacific = _tz(-7 if 3 <= go.month <= 10 else -8)
-        ph_dt = datetime(go.year, go.month, go.day, 0, 1, tzinfo=pacific)
+        # 12:01 AM Pacific on launch date; PDT (UTC-7) from the 2nd Sunday of March to the 1st Sunday of November.
+        ph_wall = datetime(go.year, go.month, go.day, 0, 1)
+        ph_dt = ph_wall.replace(tzinfo=_tz(us_utc_offset(ph_wall, -8)))
         ph_minutes = round((ph_dt - go).total_seconds() / 60)
         steps = [(ph_minutes, "Product Hunt goes live (12:01 AM PT); post maker comment within 5 min; notify hunter", "founder"), (ph_minutes + 30, "First 20 supporters comment (no upvote asks); reply to each", "team")] + steps
     steps.sort(key=lambda s: s[0])

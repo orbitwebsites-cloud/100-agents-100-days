@@ -121,3 +121,19 @@ def test_estimate_outreach_bad_input():
         call("estimate_outreach", target_meetings=0)
     with pytest.raises(ToolError):
         call("estimate_outreach", target_meetings=5, reply_rate_pct=150)
+
+
+def test_audit_counts_urls_and_hyphenated_words_as_one():
+    body = "Saw Acme's 30-minute onboarding video. Worth a look? https://example.com/a-b-c/d"
+    out = call("audit_email_body", body=body, step=2)
+    assert out["words"] == 9  # Saw, Acme's, 30-minute, onboarding, video, Worth, a, look, URL
+
+
+def test_estimate_outreach_sizes_mailboxes_to_finish_inside_window():
+    out = call("estimate_outreach", target_meetings=15, steps=4, days_available=20, sequence_span_days=14)
+    w = out["finish_inside_window"]
+    assert w["sequence_span_business_days"] == 10 and w["enrol_all_prospects_within_business_days"] == 10
+    assert w["new_prospects_per_day"] == 250 and w["peak_sends_per_day"] == 1000 and w["mailboxes_needed"] == 20
+    assert out["mailboxes_needed"] == 10  # steady-state figure kept for comparison
+    assert any("20 mailboxes" in x for x in out["warnings"])
+    assert call("estimate_outreach", target_meetings=15)["finish_inside_window"] is None

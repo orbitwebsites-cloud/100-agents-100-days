@@ -91,3 +91,17 @@ def test_story_lint_flags_hero_and_baselines():
 def test_story_lint_requires_customer():
     with pytest.raises(ToolError):
         call("story_lint", draft="word " * 60, customer_name="")
+
+
+def test_round_half_up_and_continuous_units():
+    out = call("format_metrics", metrics=[{"name": "resolutions", "before": 400, "after": 650}, {"name": "response time", "before": 9.5, "after": 1.2, "unit": "hrs", "higher_is_better": False}])
+    m = {r["name"]: r for r in out["metrics"]}
+    assert "63%" in m["resolutions"]["phrase"]
+    assert m["response time"]["warnings"] == [] and m["response time"]["phrase"].startswith("cut response time 87%")
+
+
+def test_payback_never_shortens_when_cost_rises():
+    base = call("roi_summary", annual_benefit=186000, annual_cost=36000, billing="annual_upfront")
+    more = call("roi_summary", annual_benefit=186000, annual_cost=36000, one_time_cost=12000, billing="annual_upfront")
+    assert (base["payback_months"], more["payback_months"]) == (2.3, 3.1)
+    assert "1 months" not in call("roi_summary", annual_benefit=186000, annual_cost=36000, one_time_cost=12000)["phrasing"]

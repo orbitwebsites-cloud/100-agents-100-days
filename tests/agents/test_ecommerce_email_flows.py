@@ -86,8 +86,10 @@ def test_flow_diagnostics_rates_and_weakest_step():
     assert f["placed_order_rate_pct"] == 1.49
     assert f["revenue_per_recipient"] == round(3900 / 4100, 2)
     assert f["unsubscribe_rate_pct"] == 0.54
-    assert f["fix_first"] == "list health"
-    assert any("placed-order" in p for p in f["problems"])
+    # placed-order 1.49% is half the 3% floor (severity 2.0); unsubs 0.54% barely cross 0.5% (1.08) → fix conversion first
+    assert f["fix_first"] == "conversion"
+    assert f["severity"]["conversion"] > f["severity"]["list health"]
+    assert any("placed-order" in p for p in f["problems"]) and any("unsub" in p for p in f["problems"])
     assert f["upside_if_at_benchmark_low"] == round((0.03 - 61 / 4100) * 4100 * (3900 / 61), 2)
 
 
@@ -105,3 +107,18 @@ def test_flow_revenue_model_gap():
     assert sum(e["share_pct"] for e in out["per_email_revenue_split_at_low"]) == 100
     with pytest.raises(ToolError):
         call("flow_revenue_model", flow="sunset", monthly_triggers=10, aov=5)
+
+
+def test_flow_schedule_uses_measured_winback_offset():
+    out = call("flow_schedule", flow="win_back", trigger_at="2026-08-20T14:05", cycle_days=37, winback_offset_days=49)
+    assert out["emails"][0]["delay_hours"] == 49 * 24
+    default = call("flow_schedule", flow="win_back", trigger_at="2026-08-20T14:05", cycle_days=37)
+    assert default["emails"][0]["delay_hours"] == round(37 * 1.5 * 24, 1)
+
+
+def test_subject_fake_reply_and_cliche_penalised():
+    out = call("subject_line_check", subjects=["Re: your order", "You left something behind", "Your serum is waiting"])
+    s = {r["subject"]: r for r in out["results"]}
+    assert s["Re: your order"]["score"] == 50
+    assert any("overused" in i for i in s["You left something behind"]["issues"])
+    assert out["best"] == "Your serum is waiting"

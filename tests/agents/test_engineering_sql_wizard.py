@@ -106,3 +106,27 @@ def test_suggest_indexes_esr_order():
 def test_suggest_indexes_rejects_multi_statement():
     with pytest.raises(ToolError):
         call("suggest_indexes", sql="select 1 from a; select 2 from b")
+
+
+@pytest.mark.parametrize("sql,fn", [
+    ("select id from users u where lower(u.email) = 'a@b.co'", "LOWER"),
+    ("SELECT id FROM orders o WHERE DATE_TRUNC('month', o.created_at) = '2026-09-01'", "DATE_TRUNC"),
+    ("SELECT id FROM orders o WHERE EXTRACT(YEAR FROM o.created_at) = 2026", "EXTRACT"),
+])
+def test_non_sargable_any_case_and_leading_args(sql, fn):
+    f = [x for x in call("lint_sql", sql=sql)["findings"] if x["rule"] == "non-sargable"]
+    assert len(f) == 1 and f[0]["message"].startswith(fn + "(")
+
+
+def test_every_non_sargable_predicate_reported():
+    sql = "SELECT id FROM t WHERE LOWER(t.a) = 'x' AND YEAR(t.b) = 2026"
+    assert sum(f["rule"] == "non-sargable" for f in call("lint_sql", sql=sql)["findings"]) == 2
+
+
+def test_index_advice_not_in_is_not_an_equality_prefix_and_anti_join_gets_an_index():
+    sql = ("SELECT o.id FROM orders o LEFT JOIN customers c ON c.id = o.customer_id WHERE o.status = 'paid' "
+           "AND o.customer_id NOT IN (SELECT r.customer_id FROM refunds r) ORDER BY o.created_at DESC LIMIT 50")
+    out = call("suggest_indexes", sql=sql)
+    stmts = {i["statement"] for i in out["indexes"]}
+    assert "CREATE INDEX CONCURRENTLY idx_orders_status_created_at ON orders (status, created_at);" in stmts
+    assert "CREATE INDEX CONCURRENTLY idx_refunds_customer_id ON refunds (customer_id);" in stmts
