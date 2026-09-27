@@ -238,7 +238,7 @@ def test_http_mcp_end_to_end(live_server):
             assert "hundred_run" in names
             res = await c.call_tool("hundred_start", {"agent": FREE.slug, "task": "test"})
             assert not res.is_error
-        async with Client(f"{base}/mcp") as c:  # no key → free agents only
+        async with Client(f"{base}/mcp?free=1") as c:  # anonymous → free agents only
             names = [t.name for t in (await c.list_tools()).tools]
             assert FREE.start_tool_name in names
             assert all(not n.startswith(PAID[0].prefix + "__") for n in names) if PAID else True

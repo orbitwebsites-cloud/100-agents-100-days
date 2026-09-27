@@ -410,17 +410,39 @@ def agent_page(agent: Agent) -> str:
 
 
 # ── setup, welcome, offer, account ──────────────────────────
-def _setup_blocks(url: str) -> str:
+def install_links(url: str) -> dict[str, str]:
+    """One-click install links (Cursor and VS Code document these URL formats)."""
+    import base64
+    from urllib.parse import quote
+
+    cursor_cfg = base64.b64encode(json.dumps({"url": url}).encode()).decode()
+    vscode_cfg = quote(json.dumps({"name": "hundred", "type": "http", "url": url}), safe="")
+    return {
+        "cursor": f"cursor://anysphere.cursor-deeplink/mcp/install?name=hundred&config={cursor_cfg}",
+        "vscode": f"vscode:mcp/install?{vscode_cfg}",
+    }
+
+
+def _install_buttons(url: str) -> str:
+    links = install_links(url)
+    return (f'<div class="actions"><a class="btn" href="{e(links["cursor"])}">Add to Cursor</a>'
+            f'<a class="btn line" href="{e(links["vscode"])}">Add to VS Code</a></div>')
+
+
+def _setup_blocks(url: str, signs_in: bool = True) -> str:
+    """Per-app steps. With sign-in the URL is the same for everyone; with a key it carries the key."""
     cfg = json.dumps({"mcpServers": {"hundred": {"url": url}}}, indent=2)
+    then = " Sign in when it asks." if signs_in else ""
     rows = [
-        ("Claude", "Web and desktop", "<p>Settings → Connectors → <b>Add custom connector</b>. Paste your link and select Add. "
-         "Then turn it on in a chat from the tools menu.</p>"),
-        ("ChatGPT", "Connectors", "<p>Settings → Apps &amp; Connectors → turn on <b>Developer mode</b> under Advanced → <b>Create</b>. "
-         "Paste your link with no authentication. Menu names vary by plan.</p>"),
-        ("Claude Code", "Terminal", f'<pre>claude mcp add --transport http hundred "{e(url)}"</pre>'),
-        ("Cursor, Windsurf, VS Code", "MCP config file", f"<p>Add this to your MCP config, for example <code>~/.cursor/mcp.json</code>:</p><pre>{e(cfg)}</pre>"),
-        ("Other clients", "If ?key= is dropped", f"<p>Use <code>{e(settings.public_url)}/k/&lt;your-key&gt;/mcp</code>, "
-         "or send the header <code>Authorization: Bearer &lt;key&gt;</code>.</p>"),
+        ("Claude", "Web, desktop and mobile", f"<p>Settings → Connectors → <b>Add custom connector</b>. Paste the URL and "
+         f"select Add.{then} Then turn it on in a chat from the tools menu.</p>"),
+        ("ChatGPT", "Connectors", "<p>Settings → Apps &amp; Connectors → turn on <b>Developer mode</b> under Advanced → "
+         f"<b>Create</b>. Paste the URL{', choose OAuth' if signs_in else ' with no authentication'}.{then} "
+         "Menu names vary by plan.</p>"),
+        ("Cursor and VS Code", "One click", _install_buttons(url)),
+        ("Claude Code", "Terminal", f'<pre>claude mcp add --transport http hundred "{e(url)}"</pre>'
+         + ("<p>Then run <code>/mcp</code> in Claude Code and choose Authenticate.</p>" if signs_in else "")),
+        ("Anything else", "MCP config file", f"<p>Add this to the app's MCP config:</p><pre>{e(cfg)}</pre>"),
     ]
     return '<div class="clientlist">' + "".join(
         f'<div class="client"><div><h3>{e(name)}</h3><div class="label" style="margin-top:4px">{e(kind)}</div></div><div>{how}</div></div>'
@@ -428,16 +450,47 @@ def _setup_blocks(url: str) -> str:
     ) + "</div>"
 
 
+def connect_page(req: str, client_name: str, error: str = "") -> str:
+    msg = f'<div class="notice" role="alert">{e(error)}</div>' if error else ""
+    free = " and ".join(a.name for a in registry.all_agents().values() if a.free)
+    body = f"""<div class="wrap page-head" style="max-width:560px"><div class="label">Connect</div>
+<h1>Sign in to use your agents in {e(client_name)}</h1>
+<p class="lede">Enter the email you subscribed with. We'll send a 6-digit code. No subscription yet? You'll get {e(free)} free.</p>{msg}
+<form method="post" class="field"><input type="hidden" name="req" value="{e(req)}"><input type="hidden" name="action" value="email">
+<label class="label" for="c-email">Email</label><input type="email" id="c-email" name="email" required autocomplete="email" autofocus>
+<button class="btn">Email me a code</button></form>
+<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">Have a license key instead?</summary>
+<form method="post" class="field" style="margin-top:12px"><input type="hidden" name="req" value="{e(req)}"><input type="hidden" name="action" value="key">
+<label class="label" for="c-key">License key</label><input type="text" id="c-key" name="key" placeholder="hnd_live_…" autocomplete="off">
+<button class="btn line">Connect with key</button></form></details></div>"""
+    return layout(f"Connect · {settings.brand}", body)
+
+
+def code_page(req: str, email: str, error: str = "") -> str:
+    msg = f'<div class="notice" role="alert">{e(error)}</div>' if error else ""
+    body = f"""<div class="wrap page-head" style="max-width:560px"><div class="label">Connect</div>
+<h1>Check your email</h1><p class="lede">We sent a 6-digit code to <b>{e(email)}</b>. It expires in 10 minutes.</p>{msg}
+<form method="post" class="field"><input type="hidden" name="req" value="{e(req)}"><input type="hidden" name="action" value="code">
+<input type="hidden" name="email" value="{e(email)}"><label class="label" for="c-code">Code</label>
+<input type="text" id="c-code" name="code" inputmode="numeric" pattern="[0-9]{{6}}" maxlength="6" required autocomplete="one-time-code" autofocus>
+<button class="btn">Connect</button></form></div>"""
+    return layout(f"Check your email · {settings.brand}", body)
+
+
 def setup_page() -> str:
-    free = [a for a in registry.all_agents().values() if a.free]
-    free_names = " and ".join(a.name for a in free)
-    body = f"""<div class="wrap page-head"><div class="label">Setup</div><h1>Connect your AI</h1>
-<p class="lede">Your private link is in your welcome email. No key yet? Connect <code>{e(settings.mcp_url)}</code> to use {e(free_names)} for free.</p></div>
-<div class="wrap"><section>{_setup_blocks(settings.mcp_url + "?key=YOUR_KEY")}</section>
-<section><div class="cols"><div style="display:grid;gap:12px"><div class="label">Then</div><h2>Ask as you normally would</h2></div>
+    free = " and ".join(a.name for a in registry.all_agents().values() if a.free)
+    body = f"""<div class="wrap page-head"><div class="label">Setup</div><h1>Add one URL. Sign in. Ask.</h1>
+<p class="lede">Every plan uses the same address. Your AI app asks you to sign in with your email once, then your agents are there.
+No subscription yet? Signing in gives you {e(free)} free.</p>
+<div class="keybox">{e(settings.mcp_url)}</div></div>
+<div class="wrap"><section>{_setup_blocks(settings.mcp_url)}</section>
+<section><div class="cols"><div style="display:grid;gap:12px"><div class="label">Then</div><h2>Ask the way you normally would</h2></div>
 <div style="display:grid;gap:12px"><p class="quote">“Write a 4-step cold email sequence for CFOs at 50 to 200 person SaaS companies.”</p>
-<p style="color:var(--muted)">Your AI picks the agent, follows its playbook and runs its tools. On large plans it finds agents with <code>hundred_find_agent</code>.
-To keep a connection focused, add <code>&amp;agents=cold-email,lead-qualifier</code> to the link.</p></div></div></section></div>"""
+<p class="quote">“Forecast my cash for the next 13 weeks.”</p>
+<p style="color:var(--muted)">Your AI picks the right agent, follows its playbook and runs its tools. You don't need to name the agent.</p></div></div></section>
+<section><div class="cols"><div style="display:grid;gap:12px"><div class="label">If your app can't sign in</div><h2>Use your private link</h2></div>
+<p style="color:var(--muted)">Your welcome email has a link with your key built in, like <code>{e(settings.mcp_url)}?key=hnd_live_…</code>.
+Paste that instead and skip sign-in. Lost it? <a href="/account">Get a new one</a>.</p></div></section></div>"""
     return layout(f"Setup · {settings.brand}", body)
 
 
@@ -477,14 +530,15 @@ def welcome_page(key: str | None, offer=None, offer_fields: dict[str, str] | Non
     if key:
         url = f"{settings.mcp_url}?key={key}"
         top = f"""<div class="label" style="color:var(--teal)">Payment received</div><h1>You're in.</h1>
-<p class="lede">This is your private MCP link. It's shown here once and it's also in your email. Keep it private, like a password.</p>
+<p class="lede">Pick your AI app below. This link has your key built in, so there's nothing to sign in to. It's shown here once
+and it's also in your email. Keep it private, like a password.</p>
 <div class="keybox">{e(url)}</div>"""
-        blocks = _setup_blocks(url)
+        blocks = _setup_blocks(url, signs_in=False)
     else:
-        top = """<div class="label" style="color:var(--teal)">Payment received</div><h1>Finishing setup</h1>
-<p class="lede">Your key is on its way to your inbox, usually within a minute. If you already opened this page once, the key is only in the email now.
-Nothing after 5 minutes? Use <a href="/account">Account → recover key</a>.</p>"""
-        blocks = _setup_blocks(settings.mcp_url + "?key=YOUR_KEY")
+        top = f"""<div class="label" style="color:var(--teal)">Payment received</div><h1>You're in.</h1>
+<p class="lede">Add <code>{e(settings.mcp_url)}</code> to your AI app and sign in with the email you just used.
+Your private link is also on its way to your inbox.</p>"""
+        blocks = _setup_blocks(settings.mcp_url)
     upsell_html = offer_card(offer, offer_fields or {}) if offer else ""
     body = f"""<div class="wrap page-head">{top}</div>
 <div class="wrap">{upsell_html}<section id="setup" aria-labelledby="setup-h"><div class="section-head"><div class="label">Setup</div>

@@ -86,3 +86,12 @@ def send_canceled(to: str) -> str:
         "Your subscription ended and your agents are now off. The free agents keep working.\n\n"
         f"Come back anytime: {settings.public_url}/pricing\n",
     )
+
+
+def send_sign_in_code(to: str, code: str, client_name: str) -> str:
+    return send(
+        to,
+        f"{code} is your {settings.brand} sign-in code",
+        f"Enter {code} to connect {settings.brand} to {client_name}. It expires in 10 minutes.\n\n"
+        "If you didn't try to sign in, ignore this email.\n",
+    )

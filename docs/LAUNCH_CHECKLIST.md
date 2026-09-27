@@ -32,6 +32,16 @@ watch it come back. Use the Stripe CLI to replay events locally:
 Create a Resend account, verify your domain, set `RESEND_API_KEY` and `EMAIL_FROM`. Without it
 emails are logged instead of sent (fine for testing, not for launch — the key is emailed).
 
+## 2b. Sign-in from AI apps (OAuth)
+Customers add just `https://<your-domain>/mcp`; Claude, ChatGPT, Cursor, VS Code and Claude Code
+then open your `/connect` page, the customer enters their email, gets a 6-digit code, and is connected.
+- `PUBLIC_URL` must be your real **https** domain: it is the OAuth issuer, and apps reject a mismatch.
+- Email (step 2) must be live, since the sign-in code is emailed.
+- Keys still work everywhere (`?key=`, `/k/<key>/mcp`, `Authorization: Bearer <key>`) for apps
+  that can't sign in. Directory listings that need an anonymous endpoint use `/mcp?free=1`.
+- Test it: add the URL as a custom connector in Claude, sign in with the email on a test
+  subscription, then ask "write a cold email to a VP of operations". It should just work.
+
 ## 3. Deploy (Fly.io example; any Docker host with a persistent disk works)
 ```bash
 fly launch --no-deploy            # uses fly.toml

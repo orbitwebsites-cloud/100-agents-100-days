@@ -15,8 +15,10 @@ Both always include ``hundred_account``.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,7 +39,7 @@ READ_ONLY = types.ToolAnnotations(read_only_hint=True, destructive_hint=False, i
 INSTRUCTIONS = """\
 This server gives you expert agents (sales, marketing, writing, SEO, ops, finance, engineering,
 product, career, creator, e-commerce, legal). When the user's request matches an agent, call that
-agent's `<agent>__start` tool FIRST (or `hundred_start` in router mode) and follow the operating
+agent's `<agent>__start` tool FIRST (or `hundred_start` with the user's words, which picks the agent for you) and follow the operating
 procedure it returns — including calling the agent's tools for any math, scoring, dates or limits.
 Use `hundred_memory` to recall saved context before a job and to save what the user wants kept; use
 `hundred_recipes` when a job needs several agents in sequence. Call `hundred_account` if the user asks about
@@ -74,11 +76,20 @@ def extract_key(request: Any) -> str:
 
 def resolve_access(store: Store, request: Any) -> Access:
     key = extract_key(request)
-    lic = store.by_key(key) if key else None
-    blocked = None
-    if key and lic is None:
-        blocked = "That license key isn't recognised. Check the link, or get a new one."
-    elif lic is not None and not lic.active:
+    lic, blocked = None, None
+    if key.startswith("hnd_at_"):  # OAuth access token from "sign in" in the AI app
+        from .oauth import subject_from_bearer
+
+        subject = subject_from_bearer(store, key) or ""
+        if subject.startswith("lic:"):
+            lic = store.by_key_hash(subject[4:])
+        elif not subject.startswith("free:"):
+            blocked = "Your sign-in expired. Reconnect Hundred in your AI app's connector settings."
+    elif key:
+        lic = store.by_key(key)
+        if lic is None:
+            blocked = "That license key isn't recognised. Check the link, or get a new one."
+    if not blocked and lic is not None and not lic.active:
         if lic.payment_failed or lic.status in ("past_due", "unpaid"):
             blocked = "Your last payment was declined, so your agents are paused."
         elif lic.status == "canceled":
@@ -181,8 +192,8 @@ ROUTER_TOOLS = [
     types.Tool(
         name="hundred_find_agent",
         title="Find the right agent",
-        description="Search the user's expert agents by what they want done (e.g. 'cold email', 'cash flow', "
-        "'SQL'). Returns matching agents with their slugs. Call this first in router mode, then hundred_start.",
+        description="Search all expert agents by what the user wants done (e.g. 'cold email', 'cash flow', "
+        "'SQL'). Returns the best matches with their slugs and whether the user has each one.",
         input_schema={
             "type": "object",
             "properties": {"query": {"type": "string", "description": "What the user wants done."}},
@@ -193,15 +204,16 @@ ROUTER_TOOLS = [
     types.Tool(
         name="hundred_start",
         title="Start an agent",
-        description="Load an expert agent's operating procedure and its tool schemas. Follow the procedure; "
-        "call its tools via hundred_run.",
+        description="START HERE for any work request: writing, sales, marketing, SEO, finance, legal, code, "
+        "product, hiring, e-commerce, fitness, travel, study. Pass the user's words as `task` and this picks the "
+        "right expert agent and returns its procedure and tools (or pass `agent` to choose one). Follow the "
+        "procedure; call the agent's tools directly or via hundred_run.",
         input_schema={
             "type": "object",
             "properties": {
-                "agent": {"type": "string", "description": "Agent slug from hundred_find_agent, e.g. 'cold-email'."},
                 "task": {"type": "string", "description": "The user's request, in their words."},
+                "agent": {"type": "string", "description": "Optional agent slug, e.g. 'cold-email'. Omit to auto-pick."},
             },
-            "required": ["agent"],
         },
         annotations=READ_ONLY,
     ),
@@ -228,6 +240,7 @@ def list_tools_for(access: Access) -> list[types.Tool]:
     tools = [ACCOUNT_TOOL, MEMORY_TOOL, RECIPES_TOOL]
     if access.mode == "router":
         return tools + ROUTER_TOOLS
+    tools += [t for t in ROUTER_TOOLS if t.name in ("hundred_find_agent", "hundred_start")]
     for agent in access.agents:
         tools.append(_start_tool(agent))
         tools.extend(_agent_tools(agent))
@@ -274,30 +287,70 @@ def account_summary(access: Access) -> str:
     return "\n".join(lines)
 
 
-def find_agents(access: Access, query: str, limit: int = 8) -> list[dict]:
-    """Rank owned agents for a request. Rare terms ("regex") outweigh common ones ("email")."""
+_STOP = frozenset("a an and are as at be by can do for from have i in is it me my of on or our please the this "
+                  "to we what with you your need want help make get give some".split())
+
+
+def _stem(word: str) -> str:
+    w = word.lower()
+    for suffix in ("ations", "ation", "ings", "ing", "ies", "ers", "er", "es", "ed", "ly", "s"):
+        if len(w) - len(suffix) >= 3 and w.endswith(suffix):
+            return w[: -len(suffix)] + ("y" if suffix == "ies" else "")
+    return w
+
+
+def _stems(text_: str) -> list[str]:
+    return [_stem(t) for t in re.findall(r"[a-z0-9]+", text_.lower()) if len(t) > 1 and t not in _STOP]
+
+
+@functools.lru_cache(maxsize=1)
+def _agent_index() -> list[tuple[Agent, set[str], Counter]]:
+    out = []
+    for a in registry.all_agents().values():
+        title = set(_stems(f"{a.slug.replace('-', ' ')} {a.name}"))
+        body = Counter(_stems(" ".join([a.tagline, a.description, " ".join(a.triggers), " ".join(a.examples),
+                                        a.category])))
+        out.append((a, title, body))
+    return out
+
+
+def rank_agents(query: str) -> list[tuple[float, Agent]]:
+    """Rank every agent for a request on stemmed words; rare words ("regex", "squat") outweigh common ones."""
     import math
 
-    terms = [t for t in re.findall(r"[a-z0-9]+", query.lower()) if len(t) > 1]
-    docs = []
-    for a in access.agents:
-        title = f"{a.slug} {a.name}".lower()
-        body = " ".join([a.tagline, a.description, " ".join(a.triggers), a.category]).lower()
-        docs.append((a, title, body))
-    n = max(1, len(docs))
+    terms = list(dict.fromkeys(_stems(query)))
+    index = _agent_index()
+    n = len(index)
+    df = {t: sum(1 for _, ti, bo in index if t in ti or t in bo) for t in terms}
     scored = []
-    for a, title, body in docs:
-        score = 0.0
-        for t in terms:
-            df = sum(1 for _, ti, bo in docs if t in ti or t in bo)
-            if not df:
-                continue
-            idf = math.log(1 + n / df)
-            score += idf * ((6 if t in title else 0) + min(body.count(t), 3))
+    for a, title, body in index:
+        score = sum(math.log(1 + n / df[t]) * ((6 if t in title else 0) + min(body[t], 3)) for t in terms if df[t])
         if score:
             scored.append((score, a))
     scored.sort(key=lambda x: -x[0])
-    return [{"agent": a.slug, "name": a.name, "does": a.tagline} for _, a in scored[:limit]]
+    return scored
+
+
+def find_agents(access: Access, query: str, limit: int = 8) -> list[dict]:
+    """Best agents for a request across the whole library, marking which ones this connection has."""
+    owned = {a.slug for a in access.agents}
+    return [{"agent": a.slug, "name": a.name, "does": a.tagline, "owned": a.slug in owned}
+            for _, a in rank_agents(query)[:limit]]
+
+
+def pick_agent(access: Access, task: str) -> tuple[Agent | None, Agent | None]:
+    """(agent to run, better agent the user doesn't own). Prefers an owned agent that fits nearly as well."""
+    owned = {a.slug for a in access.agents}
+    ranked = rank_agents(task)
+    if not ranked:
+        return None, None
+    best_score, best = ranked[0]
+    if best.slug in owned:
+        return best, None
+    for score, a in ranked[1:6]:
+        if a.slug in owned and score >= 0.6 * best_score:
+            return a, best
+    return None, best
 
 
 def start_payload(agent: Agent, task: str, router: bool) -> str:
@@ -334,8 +387,21 @@ def call_tool(store: Store, access: Access, name: str, arguments: dict[str, Any]
         return _text(render_result(found))
 
     # Resolve (agent, tool) for start/run/direct names.
+    note = ""
     if name == "hundred_start":
-        slug, tool_name = str(arguments.get("agent", "")), "start"
+        slug, tool_name = str(arguments.get("agent", "")).strip(), "start"
+        if not slug:
+            task = str(arguments.get("task", ""))
+            pick, better = pick_agent(access, task)
+            if pick is None:
+                if better is None:
+                    return _text("No agent matches that request. Ask the user for a bit more detail, or answer "
+                                 "normally. hundred_find_agent lists what's available.")
+                return _text(_upsell(better.slug) + " Meanwhile, help the user as best you can without it.")
+            slug = pick.slug
+            if better is not None:
+                note = (f"(Picked {pick.name}, which the user has. {better.name} fits this request best; "
+                        f"mention it once: {settings.public_url}/agents/{better.slug})\n\n")
     elif name == "hundred_run":
         slug, tool_name = str(arguments.get("agent", "")), str(arguments.get("tool", ""))
         tool_name = tool_name.split("__")[-1]
@@ -362,7 +428,7 @@ def call_tool(store: Store, access: Access, name: str, arguments: dict[str, Any]
         store.record_call(access.key_hash, slug)
 
     if tool_name == "start":
-        return _text(start_payload(agent, str(arguments.get("task", "")), router=access.mode == "router"))
+        return _text(note + start_payload(agent, str(arguments.get("task", "")), router=access.mode == "router"))
 
     tool = agent.get_tool(tool_name)
     if tool is None:

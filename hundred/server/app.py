@@ -17,14 +17,22 @@ Run:  uvicorn hundred.server.app:app --host 0.0.0.0 --port 8000
 from __future__ import annotations
 
 import logging
+import re
+from urllib.parse import parse_qs
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Route
 
+from mcp.server.auth.provider import AuthorizeError
+from mcp.server.auth.routes import build_resource_metadata_url, create_auth_routes, create_protected_resource_routes
+from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
+from pydantic import AnyHttpUrl
+
 from .. import plans, registry
 from . import billing, emailer, upsell, web
 from .mcp_server import build_server
+from .oauth import SCOPE, HundredOAuth, subject_for_email, subject_for_key, subject_from_bearer
 from .settings import settings
 from .store import Store
 
@@ -32,6 +40,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("hundred.app")
 
 store = Store(settings.database_path)
+oauth = HundredOAuth(store)
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 async def home(request: Request) -> Response:
@@ -197,7 +207,49 @@ async def ref(request: Request) -> Response:
     return resp
 
 
+async def connect(request: Request) -> Response:
+    """The sign-in page an AI app opens when the customer adds our MCP URL."""
+    if request.method == "GET":
+        req = request.query_params.get("req", "")
+        found = oauth.pending(req)
+        if found is None:
+            return HTMLResponse(web.message_page("Sign-in link expired", "Start again from your AI app's connector "
+                                                 "settings."), status_code=400)
+        return HTMLResponse(web.connect_page(req, found[0].client_name or "your AI app"))
+    form = await request.form()
+    req, action = str(form.get("req", "")), str(form.get("action", ""))
+    found = oauth.pending(req)
+    if found is None:
+        return HTMLResponse(web.message_page("Sign-in link expired", "Start again from your AI app's connector "
+                                             "settings."), status_code=400)
+    client_name = found[0].client_name or "your AI app"
+    try:
+        if action == "key":
+            subject = subject_for_key(store, str(form.get("key", "")).strip())
+            if subject is None:
+                return HTMLResponse(web.connect_page(req, client_name, error="That key isn't recognised. It's the "
+                                                     "part of your link after key=."), status_code=400)
+            return RedirectResponse(oauth.complete(req, subject), status_code=302)
+        if action == "email":
+            email = str(form.get("email", "")).strip().lower()
+            if not EMAIL_RE.match(email):
+                return HTMLResponse(web.connect_page(req, client_name, error="Enter a valid email address."),
+                                    status_code=400)
+            emailer.send_sign_in_code(email, oauth.start_email_code(req, email), client_name)
+            return HTMLResponse(web.code_page(req, email))
+        if action == "code":
+            email = oauth.check_email_code(req, str(form.get("code", "")))
+            if email is None:
+                return HTMLResponse(web.code_page(req, str(form.get("email", "")), error="That code is wrong or has "
+                                                  "expired. Check the newest email, or start again."), status_code=400)
+            return RedirectResponse(oauth.complete(req, subject_for_email(store, email)), status_code=302)
+    except AuthorizeError as e:
+        return HTMLResponse(web.message_page("Couldn't sign in", e.error_description or str(e)), status_code=400)
+    return RedirectResponse(f"/connect?req={req}", status_code=303)
+
+
 ROUTES = [
+    Route("/connect", connect, methods=["GET", "POST"]),
     Route("/", home),
     Route("/pricing", home),
     Route("/agents/{slug}", agent_page),
@@ -213,14 +265,60 @@ ROUTES = [
     Route("/r/{code}", ref),
 ]
 
+AUTH_ROUTES = create_auth_routes(
+    provider=oauth,
+    issuer_url=AnyHttpUrl(settings.public_url),
+    client_registration_options=ClientRegistrationOptions(enabled=True, valid_scopes=[SCOPE], default_scopes=[SCOPE]),
+    revocation_options=RevocationOptions(enabled=True),
+) + create_protected_resource_routes(
+    resource_url=AnyHttpUrl(settings.mcp_url),
+    authorization_servers=[AnyHttpUrl(settings.public_url)],
+    scopes_supported=[SCOPE],
+    resource_name=settings.brand,
+)
+RESOURCE_METADATA_URL = str(build_resource_metadata_url(AnyHttpUrl(settings.mcp_url)))
+
 mcp_server = build_server(store)
 _inner = mcp_server.streamable_http_app(
     streamable_http_path="/mcp",
     stateless_http=True,
     json_response=True,
     host="0.0.0.0",
-    custom_starlette_routes=ROUTES,
+    custom_starlette_routes=ROUTES + AUTH_ROUTES,
 )
+
+
+def _needs_sign_in(scope) -> bool:
+    """/mcp with no credentials (or an expired sign-in) answers 401 so the AI app opens our sign-in page.
+
+    Keys in the URL (?key=, /k/<key>/mcp), license keys as Bearer, and ?free=1 (the anonymous free
+    agents, e.g. for directory listings) skip sign-in entirely.
+    """
+    if scope["type"] != "http" or scope["method"] == "OPTIONS" or scope["path"].rstrip("/") != "/mcp":
+        return False
+    if scope.get("hundred_key"):
+        return False
+    q = parse_qs(scope.get("query_string", b"").decode())
+    if q.get("key") or q.get("api_key") or q.get("free") == ["1"]:
+        return False
+    headers = {k.lower(): v.decode() for k, v in scope.get("headers", [])}
+    if headers.get(b"x-hundred-key"):
+        return False
+    auth = headers.get(b"authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return True
+    token = auth[7:].strip()
+    return token.startswith("hnd_at_") and subject_from_bearer(store, token) is None
+
+
+async def _ask_to_sign_in(send) -> None:
+    body = b'{"error":"invalid_token","error_description":"Sign in to connect your agents."}'
+    await send({"type": "http.response.start", "status": 401, "headers": [
+        (b"content-type", b"application/json"),
+        (b"www-authenticate", f'Bearer error="invalid_token", resource_metadata="{RESOURCE_METADATA_URL}", '
+                              f'scope="{SCOPE}"'.encode()),
+    ]})
+    await send({"type": "http.response.body", "body": body})
 
 
 async def app(scope, receive, send):
@@ -229,4 +327,7 @@ async def app(scope, receive, send):
         parts = scope["path"].split("/", 3)  # ['', 'k', '<key>', 'mcp...']
         if len(parts) == 4 and parts[3].startswith("mcp"):
             scope = dict(scope, path="/" + parts[3], raw_path=("/" + parts[3]).encode(), hundred_key=parts[2])
+    if _needs_sign_in(scope):
+        await _ask_to_sign_in(send)
+        return
     await _inner(scope, receive, send)

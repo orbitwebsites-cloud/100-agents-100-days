@@ -197,6 +197,10 @@ class Store:
         row = self._exec("SELECT * FROM licenses WHERE key_hash=?", (hash_key(key),)).fetchone()
         return License.from_row(row) if row else None
 
+    def by_key_hash(self, key_hash: str) -> License | None:
+        row = self._exec("SELECT * FROM licenses WHERE key_hash=?", (key_hash,)).fetchone()
+        return License.from_row(row) if row else None
+
     def by_subscription(self, subscription_id: str) -> License | None:
         row = self._exec("SELECT * FROM licenses WHERE subscription_id=?", (subscription_id,)).fetchone()
         return License.from_row(row) if row else None

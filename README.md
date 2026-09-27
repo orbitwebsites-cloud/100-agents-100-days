@@ -69,7 +69,14 @@ claude mcp add --transport http hundred-all "http://localhost:8000/mcp?key=hnd_l
 | Deploy | `Dockerfile`, `fly.toml`, [docs/LAUNCH_CHECKLIST.md](docs/LAUNCH_CHECKLIST.md) |
 | Go-to-market, launch copy, email sequences, directories | [`marketing/`](marketing/) |
 
-Keys can be passed as `?key=`, `Authorization: Bearer`, or path-style
+**Connecting is: add one URL, sign in, ask.** `/mcp` answers 401 with OAuth discovery metadata, so
+Claude, ChatGPT, Cursor and VS Code open the `/connect` sign-in page (email + 6-digit code, or a
+license key). Signing in with an email that has no subscription connects the free agents and records a
+lead. Then the customer just types: `hundred_start` picks the right agent from their words, and if the
+best agent isn't in their plan it says which one and how to add it. `hundred_memory` keeps context
+across chats and `hundred_recipes` chains agents for whole jobs.
+
+Keys still work too, as `?key=`, `Authorization: Bearer`, or path-style
 `/k/<key>/mcp` for clients that drop query strings. `&agents=a,b` scopes a
 connection to a few agents; `&mode=direct|router` forces a mode.
 
