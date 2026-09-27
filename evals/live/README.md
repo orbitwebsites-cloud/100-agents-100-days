@@ -20,7 +20,8 @@ numbers in it.
 ## Run it
 
 Keys are read from environment variables (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`). Set them in the
-environment's settings, never in the repo.
+environment's settings, never in the repo. If you named them differently, pass
+`--key-env YOUR_VAR_NAME`.
 
 ```bash
 # What ChatGPT users get

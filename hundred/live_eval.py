@@ -345,14 +345,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--price-in", type=float, help="$ per 1M input tokens if the model isn't on the price list")
     ap.add_argument("--price-out", type=float, help="$ per 1M output tokens")
     ap.add_argument("--no-instructions", action="store_true", help="simulate clients that ignore server instructions")
+    ap.add_argument("--key-env", help="name of the env var holding the API key, if not the provider default")
     ap.add_argument("--out", default="evals/live", help="where to write the report")
-    ap.add_argument("--key-env", help="env var holding the API key (default OPENAI_API_KEY / OPENROUTER_API_KEY)")
     args = ap.parse_args(argv)
 
     key_env = args.key_env or PROVIDERS[args.provider]["key"]
     key = os.environ.get(key_env, "").strip()
     if not key:
-        print(f"Set {key_env} in the environment first.", file=sys.stderr)
+        print(f"Set {key_env} in the environment first (or pass --key-env NAME).", file=sys.stderr)
         return 2
     scenarios = [s for s in SCENARIOS if not args.scenario or s.id in args.scenario]
     modes = ["router", "pick5"] if args.mode == "both" else [args.mode]
