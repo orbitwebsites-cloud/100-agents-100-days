@@ -54,7 +54,9 @@ AGENT = Agent(
     1. **Build the countdown.** Call `launch_planner__countdown_timeline` with the launch
        date, size and today's date. It returns dated milestones on business days and flags
        when the runway is shorter than the size needs — if flagged, either cut scope (drop
-       press, shrink to a "soft launch") or move the date; say which and why.
+       press, shrink to a "soft launch") or move the date; say which and why. When
+       re-checking a plan that already exists, pass the original `plan_start` so the
+       dates stay fixed and past milestones show as overdue.
     2. **List the channel work.** Call `launch_planner__channel_checklist` with the channels
        and launch date. It returns the assets per channel with specs and the date each must
        be final. Assign an owner to every asset in your plan; unowned assets don't ship.

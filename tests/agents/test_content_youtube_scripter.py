@@ -20,14 +20,14 @@ def call(tool, **kwargs):
 
 def test_script_timing_counts_spoken_words_and_sections():
     out = call("script_timing", script=SCRIPT, wpm=150, target_minutes=8)
-    assert out["spoken_words"] == 17 + 720 + 80 + 5
+    assert out["spoken_words"] == 16 + 720 + 80 + 5  # [B-ROLL] excluded; "you'll" is one word
     assert out["runtime"] == "5:28"
-    assert out["hook_seconds"] == 7 and out["hook_fits_30s"] is True
+    assert out["hook_seconds"] == 6 and out["hook_fits_30s"] is True
     secs = {s["section"]: s for s in out["sections"]}
-    assert secs["Why emails get ignored"]["start"] == "0:07" and secs["Why emails get ignored"]["seconds"] == 288
-    assert secs["The fix"]["start"] == "4:55"
+    assert secs["Why emails get ignored"]["start"] == "0:06" and secs["Why emails get ignored"]["seconds"] == 288
+    assert secs["The fix"]["start"] == "4:54"
     assert any("no B-roll/interrupt marker" in f for f in out["flags"])
-    assert out["words_vs_target"] == 822 - 1200
+    assert out["words_vs_target"] == 821 - 1200
 
 
 def test_script_timing_rejects_bad_pace():
@@ -68,7 +68,8 @@ def test_title_check_ranks_and_flags():
     assert out["truncating"] == ["A very long title that goes on and on and on and on and on and on and on and on forever"]
     caps = next(r for r in out["ranked"] if r["title"].startswith("YOU"))
     assert any("ALL-CAPS" in x for x in caps["reasons"]) and any("clickbait" in x for x in caps["reasons"])
-    assert out["ranked"][-1]["sidebar_preview"].endswith("…")
+    long = next(r for r in out["ranked"] if r["title"].startswith("A very long"))
+    assert long["sidebar_preview"].endswith("…") and len(long["sidebar_preview"]) <= 58
 
 
 def test_title_check_rejects_empty():

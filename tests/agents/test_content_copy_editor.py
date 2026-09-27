@@ -97,7 +97,7 @@ def test_style_check_rejects_bad_style():
 
 def test_readability_diff_measures_and_warns():
     out = call("readability_diff", before="In order to win at this point in time, the report was written by Sam, which was 40% longer than before.", after="To win now, Sam wrote the report.")
-    assert out["before"]["words"] == 20
+    assert out["before"]["words"] == 21
     assert out["after"]["words"] == 7
     assert out["before"]["passive_sentences"] == 1 and out["after"]["passive_sentences"] == 0
     assert out["delta"]["fk_grade"] < 0

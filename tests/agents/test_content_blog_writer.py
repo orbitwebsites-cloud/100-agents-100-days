@@ -47,14 +47,14 @@ def test_word_budget_rejects_out_of_range():
 def test_outline_lint_flags_structure():
     out = call("outline_lint", markdown=MD)
     assert out["h1_count"] == 1 and out["h2_count"] == 3
-    assert out["intro_words"] == 55
+    assert out["intro_words"] == 47
     flags = " ".join(out["flags"])
     assert "Skipped level: H2 → H4" in flags
     assert "thin" in flags
     assert "without alt text" in flags
     assert out["links"] == 1 and out["images"] == 1
     warm = next(s for s in out["sections"] if s["title"] == "Warm up")
-    assert warm["words"] == 10 and warm["flag"].startswith("thin")
+    assert warm["words"] == 12 and warm["flag"].startswith("thin")  # 10 own + 2 in its H4 child
 
 
 def test_outline_lint_requires_headings():
@@ -63,11 +63,11 @@ def test_outline_lint_requires_headings():
 
 
 def test_readability_report_lists_long_sentences():
-    long = "This sentence keeps going and going with clause after clause and never stops because the writer forgot that readers breathe and that commas are not periods at all. "
+    long = "This sentence keeps going and going with clause after clause and never stops because the writer forgot that readers breathe and that commas are not periods in any style guide I have ever read. "
     out = call("readability_report", markdown=long * 3 + "Short one. " * 5)
-    assert out["long_sentences"] and out["long_sentences"][0]["words"] == 31
+    assert out["long_sentences"] and out["long_sentences"][0]["words"] == 34
     assert out["sentence_length_buckets"][">30"] == 3
-    assert out["words"] == 103
+    assert out["words"] == 112
     assert any("over 30 words" in f for f in out["fixes"])
 
 

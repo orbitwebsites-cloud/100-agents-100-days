@@ -146,7 +146,7 @@ IMPERATIVE_FIX = {"added": "add", "adds": "add", "adding": "add", "fixed": "fix"
                   "implements": "implement", "refactored": "refactor", "created": "create", "creates": "create", "moved": "move", "renamed": "rename", "deleted": "delete",
                   "improved": "improve", "bumped": "bump", "merged": "merge"}
 VAGUE = re.compile(r"^(fix(es)?( bug| stuff| things| it)?|update(s)?|change(s)?|wip|misc|cleanup|stuff|minor changes?|tweaks?|more|changes|test|tests)$", re.I)
-TICKET_RE = re.compile(r"\b(?:(?:fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved|refs?|see)\s+)?(#\d+|[A-Z]{2,10}-\d+)\b")
+TICKET_RE = re.compile(r"(?<![\w/#-])(#\d+|[A-Z]{2,10}-\d+)\b")
 BREAKING_RE = re.compile(r"^BREAKING[ -]CHANGE:\s*(.+)$", re.M)
 
 

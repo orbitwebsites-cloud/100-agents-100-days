@@ -586,6 +586,45 @@ def _contains_unbounded(atom: dict) -> bool:
     return False
 
 
+def _group_first_set(group: dict):
+    s: set[str] = set()
+    for br in group["alternatives"]:
+        f = _first_atom(br)
+        if f is None:
+            return ALL
+        cs = _charset(f)
+        if cs is ALL:
+            return ALL
+        s |= cs
+    return s
+
+
+def _nested_ambiguous(group: dict) -> bool:
+    """A repeated group is dangerous when an unbounded repeat inside it can hand characters
+    to what follows it in the same iteration or to the start of the next iteration."""
+    first = _group_first_set(group)
+    for br in group["alternatives"]:
+        atoms = [a for a in br if a["type"] not in ("flags", "comment")]
+        for idx, x in enumerate(atoms):
+            inner_unbounded = _unbounded(x) or (x["type"] == "group" and not x.get("quant") and _contains_unbounded(x))
+            if not inner_unbounded:
+                continue
+            xs = _charset(x)
+            follow = set()
+            ends_open = True
+            for y in atoms[idx + 1:]:
+                cs = _charset(y)
+                follow = ALL if (cs is ALL or follow is ALL) else follow | cs
+                if not _can_be_empty(y):
+                    ends_open = False
+                    break
+            if ends_open:
+                follow = ALL if (follow is ALL or first is ALL) else follow | first
+            if _overlap(xs, follow):
+                return True
+    return False
+
+
 def _can_be_empty(atom: dict) -> bool:
     q = atom.get("quant")
     if q and q["min"] == 0:
@@ -604,7 +643,7 @@ def _scan(branches: list[list[dict]], findings: list[dict], dot_stars: list[int]
                 dot_stars.append(a["start"])
             if a["type"] == "group":
                 if _unbounded(a) and not a["quant"]["possessive"] and a["kind"] != "atomic":
-                    if _contains_unbounded(a):
+                    if _contains_unbounded(a) and _nested_ambiguous(a):
                         findings.append({"level": "dangerous", "at": a["start"], "token": a["raw"] + a["quant"]["raw"], "problem": "nested quantifier: a repeated group containing an unbounded repeat — exponential backtracking on non-matching input",
                                          "fix": "Make the inner repeat and the outer separator mutually exclusive (e.g. (?:\\w+(?:\\s\\w+)*)), bound the repeats, or use possessive/atomic."})
                     if len(a["alternatives"]) > 1:

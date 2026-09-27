@@ -196,11 +196,15 @@ def extract_voice_profile(samples: list[str], brand_name: str = "") -> dict:
     samples = [str(s) for s in samples if str(s).strip()]
     if not samples:
         raise ToolError("Provide at least one non-empty sample.")
-    if len(samples) > 100 or sum(len(s) for s in samples) > 400_000:
-        raise ToolError("Too much text: max 100 samples / 400k chars.")
+    if len(samples) > 100 or sum(len(s) for s in samples) > 60_000:
+        raise ToolError("Too much text: max 100 samples / 60k chars (~10k words is plenty for a profile).")
     combined = "\n\n".join(samples)
     agg = _metrics(combined)
-    per_sample = [_metrics(s) for s in samples]
+    per_sample = []
+    for s in samples:
+        ws_n = len(text.words(s))
+        ss_n = max(1, len(text.sentences(s)))
+        per_sample.append({"words": ws_n, "avg_sentence_words": round(ws_n / ss_n, 1)})
     total_words = agg["words"]
     warnings = []
     if len(samples) < 3:
@@ -270,7 +274,7 @@ def score_against_profile(draft: str, profile: dict, banned_terms: list[str] = [
         profile: The profile dict from extract_voice_profile (or a hand-set one with the same keys).
         banned_terms: Words/phrases the brand never uses; each occurrence costs points.
     """
-    d = require_text(draft, "draft")
+    d = require_text(draft, "draft", 60_000)
     if not isinstance(profile, dict) or "avg_sentence_words" not in profile:
         raise ToolError("profile must be the 'profile' object from extract_voice_profile.")
     m = _metrics(d)
@@ -387,7 +391,7 @@ def tone_dimensions(content: str) -> dict:
     Args:
         content: The text to analyse (≥ 50 words for a stable reading).
     """
-    c = require_text(content, "content")
+    c = require_text(content, "content", 60_000)
     ws = text.words(c)
     n = len(ws) or 1
     per100 = lambda k: 100 * k / n  # noqa: E731

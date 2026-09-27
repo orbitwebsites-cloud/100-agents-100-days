@@ -266,13 +266,22 @@ def rhetoric_check(script: str) -> dict:
     sents = text.sentences(plain)
     if len(sents) < 3:
         raise ToolError("Need at least 3 sentences.")
-    n = len(sents)
     found: dict[str, list[dict]] = {k: [] for k in ("tricolon", "anaphora", "epistrophe", "antithesis", "rhetorical_question", "alliteration", "refrain", "callback")}
+    # units: sentences plus clause/line splits (so anaphora across lines is caught); part = by word position
+    units = [u for u in re.split(r"(?<=[.!?;:])\s+|\n+", plain) if len(text.words(u)) >= 2]
+    n = len(units)
+    unit_words = [len(text.words(u)) for u in units]
+    total_words = sum(unit_words) or 1
+    offsets, acc = [], 0
+    for w in unit_words:
+        offsets.append(acc)
+        acc += w
 
     def part(i: int) -> str:
-        return "opening" if i < n * 0.15 else "close" if i >= n * 0.85 else "body"
+        frac = offsets[i] / total_words
+        return "opening" if frac < 0.15 else "close" if frac >= 0.85 else "body"
 
-    for i, s in enumerate(sents):
+    for i, s in enumerate(units):
         if re.search(r"\b\w[\w' -]{0,40}, \w[\w' -]{0,40},? (and|or|but) \w[\w' -]{0,60}", s) and s.count(",") in (1, 2):
             found["tricolon"].append({"sentence": i + 1, "part": part(i), "text": s[:160]})
         if s.rstrip().endswith("?"):
@@ -288,38 +297,36 @@ def rhetoric_check(script: str) -> dict:
                     found["alliteration"].append({"sentence": i + 1, "part": part(i), "text": s[:160]})
             else:
                 run = 1
-    # anaphora / epistrophe across consecutive sentences (and across lines within a sentence list)
-    units = [u for u in re.split(r"(?<=[.!?;:])\s+|\n+", plain) if len(text.words(u)) >= 2]
     starts = [" ".join(_norm_words(u)[:2]) for u in units]
     ends = [" ".join(_norm_words(u)[-2:]) for u in units]
-    # sentence-level tricolon: three consecutive short units with parallel shape (same opener or same ending)
+    # sentence-level tricolon: three consecutive short, distinct units with parallel shape (same opener or same ending)
     i = 0
-    while i + 2 < len(units):
+    while i + 2 < n:
         trio = units[i:i + 3]
         short = all(len(text.words(u)) <= 8 for u in trio) and len({" ".join(_norm_words(u)) for u in trio}) == 3
-        parallel =(starts[i] == starts[i + 1] == starts[i + 2] and starts[i]) or (ends[i] == ends[i + 1] == ends[i + 2] and ends[i])
+        parallel = (starts[i] == starts[i + 1] == starts[i + 2] and starts[i]) or (ends[i] == ends[i + 1] == ends[i + 2] and ends[i])
         if short and parallel:
-            found["tricolon"].append({"sentence": i + 1, "part": part(min(n - 1, int(i * n / max(1, len(units))))), "text": " ".join(trio)[:160]})
+            found["tricolon"].append({"sentence": i + 1, "part": part(i), "text": " ".join(trio)[:160]})
             i += 3
         else:
             i += 1
     i = 0
-    while i < len(units):
+    while i < n:
         j = i
-        while j + 1 < len(units) and starts[j + 1] == starts[i] and starts[i]:
+        while j + 1 < n and starts[j + 1] == starts[i] and starts[i]:
             j += 1
         if j - i + 1 >= 3:
-            found["anaphora"].append({"sentence": i + 1, "part": part(min(n - 1, int(i * n / max(1, len(units))))), "text": f"'{starts[i]}…' ×{j - i + 1}"})
+            found["anaphora"].append({"sentence": i + 1, "part": part(i), "text": f"'{starts[i]}…' ×{j - i + 1}"})
             i = j + 1
         else:
             i += 1
     i = 0
-    while i < len(units):
+    while i < n:
         j = i
-        while j + 1 < len(units) and ends[j + 1] == ends[i] and ends[i]:
+        while j + 1 < n and ends[j + 1] == ends[i] and ends[i]:
             j += 1
         if j - i + 1 >= 3:
-            found["epistrophe"].append({"sentence": i + 1, "part": part(min(n - 1, int(i * n / max(1, len(units))))), "text": f"'…{ends[i]}' ×{j - i + 1}"})
+            found["epistrophe"].append({"sentence": i + 1, "part": part(i), "text": f"'…{ends[i]}' ×{j - i + 1}"})
             i = j + 1
         else:
             i += 1
@@ -433,7 +440,17 @@ def structure_map(script: str, wpm: int = 130) -> dict:
         hook = "greeting (weak)"
     close_sents = text.sentences(close_text)
     last_sent = close_sents[-1] if close_sents else close_text
-    close_move = next((name for name, rx in CLOSE_TYPES if rx.search(last_sent) or (name == "charge" and rx.search(close_text[-200:]))), "statement")
+    charge_rx = dict(CLOSE_TYPES)["charge"]
+    if dict(CLOSE_TYPES)["thanks"].search(last_sent):
+        close_move = "thanks"
+    elif dict(CLOSE_TYPES)["toast"].search(close_text):
+        close_move = "toast"
+    elif any(charge_rx.match(s) for s in close_sents[-4:]):
+        close_move = "charge"
+    elif dict(CLOSE_TYPES)["vision"].search(last_sent):
+        close_move = "vision"
+    else:
+        close_move = "statement"
     if close_move == "thanks":
         flags.append("Last line is 'thank you' — end on the last line of the speech; the thanks can follow the applause.")
     if re.search(r"\b(to summari[sz]e|in summary|in conclusion|to sum up|three things i|let me recap)\b", close_text, re.I):

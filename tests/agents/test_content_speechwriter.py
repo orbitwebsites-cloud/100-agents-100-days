@@ -25,15 +25,15 @@ def call(tool, **kwargs):
 
 def test_timing_counts_words_pauses_and_sections():
     out = call("timing", script=SPEECH, wpm=130, slot_minutes=5)
-    assert out["spoken_words"] == 28 + 275 + 26
+    assert out["spoken_words"] == 28 + 309 + 27  # headings and [marks] excluded
     assert out["marks"] == {"pause": 1, "applause": 1}
     assert out["pause_time"] == "0:11"  # 2 + 8 + 2 paragraph breaks × 0.5
-    assert out["total"] == "2:43"
+    assert out["total"] == "2:59"  # 364/130 min = 168 s + 11 s
     secs = {s["section"]: s for s in out["sections"]}
     assert secs["OPENING"]["words"] == 28 and secs["BODY"]["start"] == "0:15"
     assert out["target"] == "4:30"
     assert any("more words" in f for f in out["flags"])
-    assert out["long_breath_sentences"][0]["words"] == 24
+    assert out["long_breath_sentences"][0]["words"] == 26
     preset = call("timing", script=SPEECH, pace="ceremonial")
     assert preset["wpm"] == 110
 
@@ -71,12 +71,12 @@ def test_rhetoric_check_rejects_tiny():
 
 def test_structure_map_shares_and_moves():
     out = call("structure_map", script=SPEECH)
-    assert out["shares"]["opening_pct"] == 8.5 and out["shares"]["close_pct"] == 7.9
+    assert out["shares"]["opening_pct"] == 7.7 and out["shares"]["close_pct"] == 7.4
     assert out["opening_hook"] == "question"
     assert out["closing_move"] == "charge"
     assert "built stops working" in out["callbacks"]
     assert out["timeline"][0]["section"] == "OPENING"
-    weak = call("structure_map", script="Thank you for having me.\n\nThe middle part is here and it is long enough to count as a body paragraph.\n\nIn summary, three things. Thank you.")
+    weak = call("structure_map", script="Thank you for having me.\n\nThe middle part is here and it is long enough to count as a body paragraph, with a story about a customer, a number that mattered, and a lesson we learned the hard way last year.\n\nIn summary, three things. Thank you.")
     assert weak["opening_hook"] == "greeting (weak)"
     assert any("summary" in f for f in weak["flags"]) and any("thank you" in f for f in weak["flags"])
 
