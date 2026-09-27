@@ -55,7 +55,7 @@ def test_extract_deadlines_resolves_durations_and_dates():
     assert by["12 months"]["from_effective_date"] == "2027-10-01" and by["12 months"]["type"] == "term"
     assert by["90 days"]["from_effective_date"] == "2026-12-30" and by["90 days"]["type"] == "notice / termination"
     assert by["60 days"]["type"] == "payment"
-    assert by["10 days"]["type"] == "cure period" or by["10 days"]["type"] == "notice / termination"
+    assert by["10 days"]["type"] == "cure period"
     assert "twelve (12) monthstwelve" not in by["12 months"]["context"]
     assert out["longest_notice_days"] == 90 and out["auto_renewal_language"] is True
     assert out["explicit_dates"][0]["iso"] == "2026-03-03"

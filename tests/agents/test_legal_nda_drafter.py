@@ -44,7 +44,7 @@ def test_build_nda_assembles_clauses_and_brackets():
     assert "MUTUAL NON-DISCLOSURE AGREEMENT" in text
     assert "1833" in text and "Residuals" in text
     assert "independently developed" in text and "required by law" in text
-    assert out["to_confirm"] == ["[ENTITY TYPE, e.g. a Delaware corporation]", "[NAME, TITLE]", "[NOTICE ADDRESS]"]
+    assert out["to_confirm"] == ["[DISCLOSER: consider deleting this clause — it is recipient-favourable]", "[ENTITY TYPE, e.g. a Delaware corporation]", "[NAME, TITLE]", "[NOTICE ADDRESS]"]
     assert out["key_dates"] == {"effective": "2026-10-01", "term_end": "2028-09-30", "obligations_end": "2031-09-30"}
     one_way = call("build_nda", party_a={"name": "A"}, party_b={"name": "B"}, purpose="services", effective_date="2026-10-01", mutual=False)
     assert one_way["type"] == "one-way" and "Receiving Party" not in one_way["agreement_text"]

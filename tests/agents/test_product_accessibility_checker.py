@@ -34,10 +34,12 @@ def test_contrast_ratio_known_values(fg, bg, ratio, aa_normal, aa_large):
 
 
 def test_contrast_ratio_large_text_threshold_and_alpha():
-    out = call("contrast_ratio", foreground="#777777", background="#ffffff", font_px=18, bold=True)
+    out = call("contrast_ratio", foreground="#777777", background="#ffffff", font_px=19, bold=True)
     assert out["text_size"] == "large" and out["this_text"]["aa"] is True
+    small_bold = call("contrast_ratio", foreground="#777777", background="#ffffff", font_px=18, bold=True)
+    assert small_bold["text_size"] == "normal"  # 14pt bold = 18.66px; 18px bold is still "normal"
     half = call("contrast_ratio", foreground="#00000080", background="#ffffff")
-    assert 5.0 < half["ratio"] < 6.0 and "flattened" in half["foreground"]
+    assert 3.9 < half["ratio"] < 4.1 and half["foreground"].startswith("#7f7f7f") and "flattened" in half["foreground"]
 
 
 def test_contrast_ratio_rejects_bad_colour():

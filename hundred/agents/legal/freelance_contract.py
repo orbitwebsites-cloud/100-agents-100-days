@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from ...core import Agent, ToolError
 from ...lib import dates
-from ._common import SCOPE_NOTE, check_rows, check_text, excerpt, money, parse_date, to_float
+from ._common import SCOPE_NOTE, check_text, excerpt, money, parse_date, to_float
 
 AGENT = Agent(
     slug="freelance-contract",

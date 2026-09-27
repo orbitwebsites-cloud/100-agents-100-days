@@ -7,7 +7,8 @@ from datetime import timedelta
 
 from ...core import Agent, ToolError
 from ...lib import dates
-from ._common import SCOPE_NOTE, add_months, check_text, excerpt, parse_date
+from ._common import SCOPE_NOTE, check_text, excerpt, parse_date
+from ._common import term_end as _term_end
 
 AGENT = Agent(
     slug="nda-drafter",
@@ -150,8 +151,8 @@ def calculate_terms(effective_date: str, term_months: int = 24, survival_months:
     for name, v, lo, hi in (("term_months", term_months, 1, 120), ("survival_months", survival_months, 0, 240), ("return_within_days", return_within_days, 1, 180), ("termination_notice_days", termination_notice_days, 0, 180)):
         if not isinstance(v, int) or not lo <= v <= hi:
             raise ToolError(f"{name} must be an integer between {lo} and {hi}.")
-    term_end = add_months(start, term_months) - timedelta(days=1)
-    obligations_end = add_months(term_end + timedelta(days=1), survival_months) - timedelta(days=1) if survival_months else term_end
+    term_end = _term_end(start, term_months)
+    obligations_end = _term_end(term_end + timedelta(days=1), survival_months) if survival_months else term_end
     return_deadline = term_end + timedelta(days=return_within_days)
     early_term_earliest = start + timedelta(days=termination_notice_days)
     total_years = round((obligations_end - start).days / 365.25, 1)
@@ -271,14 +272,14 @@ def build_nda(party_a: dict, party_b: dict, purpose: str, effective_date: str, m
     ]
     text = "\n\n".join(clauses)
     brackets = sorted(set(re.findall(r"\[[^\]]+\]", text)))
-    end = add_months(start, term_months) - timedelta(days=1)
+    end = _term_end(start, term_months)
     return {
         "type": "mutual" if mutual else "one-way",
         "agreement_text": text,
         "clause_count": n[0],
         "words": len(text.split()),
         "to_confirm": brackets,
-        "key_dates": {"effective": start.isoformat(), "term_end": end.isoformat(), "obligations_end": (add_months(end + timedelta(days=1), survival_months) - timedelta(days=1)).isoformat() if survival_months else end.isoformat()},
+        "key_dates": {"effective": start.isoformat(), "term_end": end.isoformat(), "obligations_end": _term_end(end + timedelta(days=1), survival_months).isoformat() if survival_months else end.isoformat()},
         "options_applied": {"residuals": include_residuals, "non_solicit": include_non_solicit, "marking_required": marking_required, "feedback": include_feedback_clause, "dtsa_notice": individuals_signing},
         "plain_english": [
             f"{'Each side' if mutual else b['name']} may use what it learns only for: {purpose.strip()}.",

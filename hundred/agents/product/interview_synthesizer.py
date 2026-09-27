@@ -169,13 +169,15 @@ def extract_signals(notes: str, max_quotes: int = 40) -> dict:
             if len(text.words(sent)) < 4:
                 continue
             hits = [k for k, rx in SIGNALS.items() if k != "hypothetical" and rx.search(sent)]
-            if not hits:
-                continue
             hypothetical = bool(SIGNALS["hypothetical"].search(sent))
+            if not hits and not hypothetical:
+                continue
             score = len(hits) * 2 + (1 if SIGNALS["money_frequency"].search(sent) else 0) - (3 if hypothetical else 0)
             for h in hits:
                 per_type[h] += 1
-            quotes.append({"interview": label, "quote": sent.strip()[:300], "signals": hits, "hypothetical": hypothetical, "score": score})
+            if hypothetical:
+                per_type["hypothetical"] += 1
+            quotes.append({"interview": label, "quote": sent.strip()[:300], "signals": hits + (["hypothetical"] if hypothetical else []), "hypothetical": hypothetical, "score": score})
     quotes.sort(key=lambda q: (-q["score"], q["interview"]))
     kept = quotes[:max_quotes]
     return {

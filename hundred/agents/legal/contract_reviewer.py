@@ -293,7 +293,8 @@ def extract_deadlines(contract_text: str, effective_date: str = "") -> dict:
         contract_text: The full contract text.
         effective_date: YYYY-MM-DD the agreement takes effect; when given, durations are resolved to dates.
     """
-    text = _norm(check_text(contract_text, "contract_text"))
+    # PDFs paste with line breaks mid-sentence; collapse them so context windows span the whole clause
+    text = re.sub(r"\s*\n\s*", " ", _norm(check_text(contract_text, "contract_text")))
     base = parse_date(effective_date, "effective_date") if effective_date else None
     items, seen = [], set()
     for m in _DEADLINE_CTX.finditer(text):

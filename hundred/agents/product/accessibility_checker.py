@@ -408,7 +408,7 @@ def lint_html(html: str) -> dict:
         f.append({"severity": "major", "criterion": "2.4.2", "element": "<title>", "problem": "missing or empty page title", "fix": "add a unique, descriptive <title>"})
     h1s = p.headings.count(1)
     if p.headings:
-        if h1s == 0:
+        if h1s == 0 and full_doc:
             f.append({"severity": "major", "criterion": "1.3.1", "element": "headings", "problem": "no <h1>", "fix": "make the page's main heading an <h1>"})
         elif h1s > 1:
             f.append({"severity": "minor", "criterion": "1.3.1", "element": "headings", "problem": f"{h1s} <h1> elements", "fix": "keep one h1; demote the others"})

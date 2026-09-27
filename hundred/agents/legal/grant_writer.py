@@ -8,6 +8,7 @@ from datetime import timedelta
 from ...core import Agent, ToolError
 from ...lib import dates, text as textlib
 from ._common import SCOPE_NOTE, add_months, check_rows, check_text, money, parse_date, to_float
+from ._common import term_end as _term_end
 
 AGENT = Agent(
     slug="grant-writer",
@@ -421,7 +422,7 @@ def project_timeline(start_date: str, duration_months: int, milestones: list[dic
     for name, v in (("report_lag_days", report_lag_days), ("final_report_lag_days", final_report_lag_days)):
         if not isinstance(v, int) or not 0 <= v <= 365:
             raise ToolError(f"{name} must be an integer between 0 and 365.")
-    end = add_months(start, duration_months) - timedelta(days=1)
+    end = _term_end(start, duration_months)
     reports = []
     if step:
         m = step

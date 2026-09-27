@@ -321,7 +321,9 @@ def check_applicability(company_country: str, user_regions: list[str], annual_re
                 if rev >= law["revenue"] and (consumers_per_year >= law["consumers"] or (consumers_per_year >= 25_000 and share_pct >= 50)):
                     meets, reasons = True, ["$25M revenue AND consumer threshold"]
             elif state == "texas":
-                meets, reasons = True, ["no numeric threshold (small-business exemption may apply — verify SBA size standard)"]
+                # no numeric threshold, but small businesses (SBA size standards) are exempt; use $25M revenue as a proxy unless Texas is named explicitly
+                if named or rev >= 25_000_000:
+                    meets, reasons = True, ["no numeric threshold — applies unless you are an SBA small business (verify size standard)"]
             else:
                 if consumers_per_year >= law["consumers"]:
                     meets, reasons = True, [f"≥ {law['consumers']:,} consumers"]

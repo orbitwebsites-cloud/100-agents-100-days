@@ -163,7 +163,8 @@ def check_completeness(prd_text: str) -> dict:
             continue
         # crude body-size check: words in the paragraph after the matched heading
         body_words = _section_words(body, rx)
-        if body_words is not None and body_words < 25:
+        min_words = 8 if key in ("open_questions", "appendix") else 25
+        if body_words is not None and body_words < min_words:
             thin.append({"section": key, "words": body_words, "should_contain": should})
             score += weight // 2
         else:

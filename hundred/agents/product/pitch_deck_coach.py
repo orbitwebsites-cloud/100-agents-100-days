@@ -6,7 +6,7 @@ import re
 
 from ...core import Agent, ToolError
 from ...lib import text
-from ._common import check_rows, pct, to_float
+from ._common import check_rows, to_float
 
 AGENT = Agent(
     slug="pitch-deck-coach",

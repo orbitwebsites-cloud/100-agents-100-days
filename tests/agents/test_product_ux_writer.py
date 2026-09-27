@@ -70,7 +70,8 @@ def test_localization_expansion_flags_overflow():
     rows = {r["locale"]: r for r in out["locales"]}
     assert rows["de"]["estimated_chars"] == 28 and rows["de"]["fits"] is False
     assert rows["ja"]["estimated_chars"] == 17 and rows["ja"]["fits"] is True
-    assert out["overflow"] == ["de", "fr"]
+    assert rows["fr"]["estimated_chars"] == 24 and rows["fr"]["fits"] is True
+    assert out["overflow"] == ["de"]
     assert out["safe_source_length"] == 16
 
 

@@ -7,7 +7,6 @@ import re
 from collections import Counter, defaultdict
 
 from ...core import Agent, ToolError
-from ...lib import text
 from ._common import check_rows, mean, pct, to_float
 
 AGENT = Agent(
