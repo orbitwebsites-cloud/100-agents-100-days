@@ -145,3 +145,19 @@ def test_lint_html_eval_regressions_empty_heading_idrefs_duplicate_label_autocom
 def test_suggest_color_ratios_are_truncated_like_webaim():
     out = call("suggest_color", foreground="#9ca3af", background="#ffffff", target_ratio=4.5)
     assert out["suggestion"] == "#727780" and out["current_ratio"] == 2.53  # WebAIM: 2.53 and 4.50
+
+
+def test_simulate_color_blindness_matches_machado_reference_and_flags_luminance_twins():
+    out = call("simulate_color_blindness", colors=["#d73d3d", "#178841"])
+    sim = out["simulated"][0]
+    assert (sim["protanopia"], sim["deuteranopia"], sim["tritanopia"]) == ("#6a613b", "#908238", "#ec003f")  # colorspacious 1.1.2
+    assert out["collapsed"][0]["collapses_for"] == ["achromatopsia"] and out["collapsed"][0]["contrast_between"] == 1.0
+    with pytest.raises(ToolError):
+        call("simulate_color_blindness", colors=["#fff"], pairs=[["#fff"]])
+
+
+def test_lint_html_main_landmark_and_platform_targets():
+    out = call("lint_html", html='<html lang="en"><head><title>x</title></head><body><h1>x</h1><div>content</div></body></html>')
+    assert any(f["problem"] == "no <main> landmark" for f in out["findings"])
+    t = call("target_size", targets=[{"name": "fab", "width": 44, "height": 44}])["targets"][0]
+    assert t["ios_44pt"] is True and t["android_48dp"] is False

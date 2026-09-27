@@ -797,3 +797,23 @@ def test_roadmap_final_plan_after_judgement_moves_fits():
     assert out["must_pct_of_capacity"] == round(100 * 14.5 / 36, 1) == 40.3
     assert out["problems"] == [] and out["below_the_line"] == ["Bulk CSV import", "Dark mode"]
     assert out["verdict"] == "Plan fits with contingency (Coulds are the buffer)"
+
+
+# Machado 2009 severity-1.0 simulations computed by colorspacious 1.1.2 ("sRGB1+CVD", severity 100) — an
+# independent published implementation — for the palette's fixed error/success/link/warning colours
+COLORSPACIOUS = {
+    "d73d3d": ("#6a613b", "#908238", "#ec003f"), "178841": ("#897c3b", "#7c7346", "#008578"),
+    "2563eb": ("#0076f0", "#0064e8", "#00869d"), "b45309": ("#6f6100", "#877703", "#c63c47"),
+}
+
+
+def test_a11y_colour_blindness_simulation_matches_colorspacious():
+    out = run("accessibility-checker", "simulate_color_blindness", colors=["#" + c for c in COLORSPACIOUS],
+              pairs=[["#d73d3d", "#178841"], ["#2563eb", "#1f2937"], ["#b45309", "#178841"]])
+    for row in out["simulated"]:
+        assert (row["protanopia"], row["deuteranopia"], row["tritanopia"]) == COLORSPACIOUS[row["color"][1:]]
+    # the fixed error red and success green both sit at ~4.5:1 on white, so they are luminance twins:
+    # only hue separates them → WCAG 1.4.1 needs an icon/text cue
+    pair = out["pairs"][0]
+    assert pair["contrast_between"] == 1.0 and pair["collapses_for"] == ["achromatopsia"]
+    assert out["pairs"][1]["collapses_for"] == []

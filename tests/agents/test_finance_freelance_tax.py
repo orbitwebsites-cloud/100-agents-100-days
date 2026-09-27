@@ -103,5 +103,6 @@ def test_payment_deadlines_weekend_rollover():
     # IRS-published dates: 2022 Q1 due Apr 18 2022; 2023 Q4 due Jan 16 2024
     assert call("payment_deadlines", tax_year=2022, as_of="2022-01-01")["deadlines"][0]["due"] == "2022-04-18"
     assert call("payment_deadlines", tax_year=2023, as_of="2023-01-01")["deadlines"][3]["due"] == "2024-01-16"
+    assert call("payment_deadlines", tax_year=2022, as_of="2022-01-01")["deadlines"][3]["due"] == "2023-01-17"  # IRS: "Final 2022 quarterly estimated tax payment due January 17"
     with pytest.raises(ToolError):
         call("payment_deadlines", tax_year=1900)

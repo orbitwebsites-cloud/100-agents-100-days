@@ -65,8 +65,9 @@ AGENT = Agent(
        projected end-of-period spend and the daily budget from here to land on plan.
     5. **Project the outcome.** Call `marketing_budget__growth_projection` with the monthly
        budget, blended CAC, ARPU, margin and churn to show customers and MRR month by month,
-       including when cumulative contribution turns positive. Present the goal in those
-       terms.
+       including when cumulative contribution turns positive. If there are starting
+       customers, judge the spend by `acquired_cohort_breakeven_month` (the customers this
+       budget buys), not the whole-business figure. Present the goal in those terms.
     6. **Deliver** in the output format with the triggers: when to move money (CAC > ceiling
        for 2 consecutive weeks; ROAS < break-even; a channel hits diminishing returns —
        CAC rising > 25 % as spend rises).
@@ -274,26 +275,37 @@ def allocate_budget(total: float, channels: list[dict], core_pct: float = 70.0, 
         items.append({"channel": name, "weight": w, "min": lo, "max": hi, "tag": str(raw.get("tag", "") or "").lower()})
     if sum(i["min"] for i in items) > total + 1e-9:
         raise ToolError(f"Minimums sum to {sum(i['min'] for i in items):,.0f}, more than the {total:,.0f} budget.")
-    # Iterative proportional fill respecting bounds.
-    alloc = {i["channel"]: i["min"] for i in items}
+    # Proportional-to-weight with bounds ("water-filling"): amount_i = clamp(λ·w_i, min_i, max_i), with λ
+    # chosen so the amounts sum to the total. A minimum is a floor, not an extra on top of the weight share.
+    def filled(lam: float) -> dict[str, float]:
+        out = {}
+        for i in items:
+            v = max(i["min"], lam * i["weight"])
+            out[i["channel"]] = min(v, i["max"]) if i["max"] is not None else v
+        return out
+
+    uncapped = any(i["max"] is None and i["weight"] > 0 for i in items)
+    ceiling = float("inf") if uncapped else sum(filled(1e18).values())
+    if ceiling <= total:
+        alloc = filled(1e18)  # every weighted channel at its max; the rest can't be placed
+    else:
+        lo, hi = 0.0, 1.0
+        while sum(filled(hi).values()) < total:
+            hi *= 2
+        for _ in range(200):
+            mid = (lo + hi) / 2
+            if sum(filled(mid).values()) < total:
+                lo = mid
+            else:
+                hi = mid
+        alloc = filled(hi)
+        # Trim the sub-cent bisection overshoot from the largest channel that stays above its floor.
+        over = sum(alloc.values()) - total
+        floors = {i["channel"]: i["min"] for i in items}
+        movable = [c for c in alloc if alloc[c] - over >= floors[c]]
+        if over > 0 and movable:
+            alloc[max(movable, key=lambda c: alloc[c])] -= over
     remaining = total - sum(alloc.values())
-    free = [i for i in items if i["weight"] > 0 and (i["max"] is None or alloc[i["channel"]] < i["max"])]
-    for _ in range(100):
-        if remaining <= 1e-9 or not free:
-            break
-        wsum = sum(i["weight"] for i in free)
-        capped = []
-        spent = 0.0
-        for i in free:
-            give = remaining * i["weight"] / wsum
-            room = (i["max"] - alloc[i["channel"]]) if i["max"] is not None else float("inf")
-            actual = min(give, room)
-            alloc[i["channel"]] += actual
-            spent += actual
-            if actual < give - 1e-9:
-                capped.append(i)
-        remaining -= spent
-        free = [i for i in free if i not in capped]
     unallocated = round(remaining, 2) if remaining > 0.005 else 0.0
     rows = [{"channel": i["channel"], "tag": i["tag"] or "untagged", "amount": round(alloc[i["channel"]], 2), "share_pct": round(100 * alloc[i["channel"]] / total, 1), "at_min": abs(alloc[i["channel"]] - i["min"]) < 0.01 and i["min"] > 0, "at_max": i["max"] is not None and abs(alloc[i["channel"]] - i["max"]) < 0.01} for i in items]
     rows.sort(key=lambda r: -r["amount"])
@@ -406,6 +418,7 @@ def growth_projection(monthly_budget: float, cac: float, arpu_monthly: float, gr
     cum = 0.0
     rows = []
     breakeven_month = None
+    cohort, cohort_cum, cohort_breakeven = 0.0, 0.0, None
     cur_cac = cac
     for m in range(1, months + 1):
         new = monthly_budget / cur_cac
@@ -415,11 +428,17 @@ def growth_projection(monthly_budget: float, cac: float, arpu_monthly: float, gr
         gp = mrr * margin
         contribution = gp - monthly_budget
         cum += contribution
-        if breakeven_month is None and cum >= 0 and m > 1:
+        if breakeven_month is None and cum >= 0:
             breakeven_month = m
-        rows.append({"month": m, "spend": round(monthly_budget, 2), "cac": round(cur_cac, 2), "new_customers": round(new, 1), "churned": round(churned, 1), "customers": round(customers, 1), "mrr": round(mrr, 2), "gross_profit": round(gp, 2), "contribution": round(contribution, 2), "cumulative_contribution": round(cum, 2)})
+        # The cohort bought by this budget alone (excludes starting customers), to judge the spend itself.
+        cohort = cohort * (1 - churn) + new
+        cohort_cum += cohort * arpu_monthly * margin - monthly_budget
+        if cohort_breakeven is None and cohort_cum >= 0:
+            cohort_breakeven = m
+        rows.append({"month": m, "spend": round(monthly_budget, 2), "cac": round(cur_cac, 2), "new_customers": round(new, 1), "churned": round(churned, 1), "customers": round(customers, 1), "mrr": round(mrr, 2), "gross_profit": round(gp, 2), "contribution": round(contribution, 2), "cumulative_contribution": round(cum, 2), "acquired_cohort_customers": round(cohort, 1), "acquired_cohort_cumulative_contribution": round(cohort_cum, 2)})
         cur_cac *= 1 + cac_inflation_pct_per_month / 100
-    steady = monthly_budget / cac / churn if churn else None
+    end_cac = rows[-1]["cac"]
+    steady = monthly_budget / end_cac / churn if churn else None  # at the final (inflated) CAC
     last = rows[-1]
     return {
         "months": months,
@@ -430,9 +449,17 @@ def growth_projection(monthly_budget: float, cac: float, arpu_monthly: float, gr
         "total_new_customers": round(sum(r["new_customers"] for r in rows), 1),
         "cumulative_contribution": last["cumulative_contribution"],
         "breakeven_month": breakeven_month,
+        "acquired_cohort_breakeven_month": cohort_breakeven,
+        "acquired_cohort_cumulative_contribution": round(cohort_cum, 2),
         "steady_state_customers": round(steady, 0) if steady else None,
         "summary": f"After {months} months: {last['customers']:,.0f} customers, MRR {last['mrr']:,.0f}, cumulative contribution {last['cumulative_contribution']:,.0f}"
         + (f"; turns positive in month {breakeven_month}." if breakeven_month else "; not yet positive.")
-        + (f" Steady state at this budget/churn ≈ {steady:,.0f} customers." if steady else ""),
+        + (
+            f" The spend's own cohort (excluding the {starting_customers:,} starting customers) "
+            + (f"pays back in month {cohort_breakeven}." if cohort_breakeven else f"has not paid back yet ({cohort_cum:,.0f}).")
+            if starting_customers
+            else ""
+        )
+        + (f" Steady state at this budget/churn (CAC {end_cac:,.0f}) ≈ {steady:,.0f} customers." if steady else ""),
     }
 

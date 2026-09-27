@@ -444,6 +444,7 @@ class _Auditor(HTMLParser):
         self.idrefs: list[tuple[str, str, str]] = []  # (element, attribute, referenced id) for non-control elements
         self.referenced_ids: set[str] = set()
         self.pending_names: list[tuple[str, str, list[str]]] = []  # (tag, element, aria-labelledby ids)
+        self.has_main = False
 
     def _add(self, sev: str, crit: str, el: str, problem: str, fix: str) -> None:
         self.findings.append({"severity": sev, "criterion": crit, "element": el[:120], "problem": problem, "fix": fix})
@@ -455,6 +456,8 @@ class _Auditor(HTMLParser):
             self.html_seen = True
             if attrs.get("lang", "").strip():
                 self.has_lang = True
+        if tag == "main" or attrs.get("role") == "main":
+            self.has_main = True
         if tag == "svg":
             self.svg_depth += 1
             label = attrs.get("aria-label", "").strip()
@@ -630,6 +633,8 @@ def lint_html(html: str) -> dict:
     for t in p.tables:
         if t["th"] == 0:
             f.append({"severity": "major", "criterion": "1.3.1", "element": t["el"], "problem": "data table without <th> headers", "fix": "add <th scope=col/row> for header cells (or role=presentation if layout)"})
+    if full_doc and not p.has_main:
+        f.append({"severity": "minor", "criterion": "1.3.1 / 2.4.1 (best practice)", "element": "page", "problem": "no <main> landmark", "fix": "wrap the primary content in <main> so screen-reader users can jump to it"})
     if full_doc and not p.skip_link_candidate and p.first_link_seen:
         f.append({"severity": "minor", "criterion": "2.4.1", "element": "page", "problem": "no skip link as first focusable element", "fix": 'add <a href="#main" class="skip-link">Skip to content</a>'})
     order = {"blocker": 0, "major": 1, "minor": 2}
@@ -647,7 +652,9 @@ def lint_html(html: str) -> dict:
 
 @AGENT.tool
 def target_size(targets: list[dict]) -> dict:
-    """Check interactive elements against WCAG 2.5.8 (24×24 AA) and 2.5.5 (44×44 AAA) target sizes.
+    """Check interactive elements against WCAG 2.5.8 (24×24 AA), 2.5.5 (44×44 AAA) and iOS 44pt / Android 48dp targets.
+
+    CSS px are treated as equal to iOS points and Android dp for the platform checks.
 
     Args:
         targets: List of {"name": str, "width": px, "height": px, "spacing": px gap to nearest other target (optional), "inline": bool (optional, text links in a sentence are exempt)}.
@@ -676,5 +683,6 @@ def target_size(targets: list[dict]) -> dict:
             issues.append(f"< 44×44 (2.5.5 AAA) — recommended for primary mobile actions")
         aa_fail += not aa
         aaa_fail += not aaa
-        out.append({"name": str(raw.get("name", f"target {i + 1}")), "width": w, "height": h, "spacing": spacing, "aa_2_5_8": aa, "aaa_2_5_5": aaa, "issues": issues})
+        platform = {"ios_44pt": inline or short >= 44, "android_48dp": inline or short >= 48}  # Apple HIG 44×44 pt; Material 48×48 dp
+        out.append({"name": str(raw.get("name", f"target {i + 1}")), "width": w, "height": h, "spacing": spacing, "aa_2_5_8": aa, "aaa_2_5_5": aaa, **platform, "issues": issues})
     return {"targets": out, "aa_failures": aa_fail, "aaa_failures": aaa_fail, "verdict": f"{len(out) - aa_fail}/{len(out)} meet 2.5.8 (AA); {len(out) - aaa_fail}/{len(out)} meet 2.5.5 (AAA)"}
