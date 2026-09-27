@@ -339,6 +339,8 @@ def test_pricing_strategist_scenario():
     assert (be["breakeven_volume_change_pct"], be["breakeven_units"], be["units_can_lose"]) == (-20.7, 935.4, 244.6)
     tb = run("pricing-strategist", "tier_builder", anchor_price=59, tiers=3)
     assert [(t["monthly"], t["annual_per_month"]) for t in tb["tiers"]] == [(29.0, 24.0), (59.0, 49.0), (129.0, 107.0)]
+    hold = run("pricing-strategist", "tier_builder", anchor_price=49, tiers=3)  # the recommended ladder (hold Pro at $49)
+    assert [(t["monthly"], t["annual_per_month"]) for t in hold["tiers"]] == [(19.0, 15.0), (49.0, 40.0), (109.0, 90.0)]
 
 
 # ---------------------------------------------------------------- investor-update

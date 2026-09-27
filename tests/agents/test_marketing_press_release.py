@@ -44,7 +44,8 @@ def test_ap_style_check_catches_the_classics():
     assert ("numerals: use figures for 10 and above", "twenty") in found
     assert ("attribution: use 'said'", '" stated') in found
     assert ("time: use 'a.m.' / 'p.m.'", "9 AM") in found
-    assert ("states: abbreviate state after a city", "San Francisco, California") in found
+    # AP since 2014: states are spelled out in body text, so "San Francisco, California" in the body is correct.
+    assert not any(r.startswith("states") and "San Francisco" in f for r, f in found)
     assert ("punctuation: no exclamation marks", "!") in found
     assert ("numerals: spell out one through nine", "3") in found
     assert any(r == "dates: month abbreviation needs a period" for r, _ in found)

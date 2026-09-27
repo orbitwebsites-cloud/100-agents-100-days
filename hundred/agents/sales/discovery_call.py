@@ -80,6 +80,12 @@ AGENT = Agent(
        questions for the next call, and the stage recommendation. Never inflate the
        score to be kind.
 
+    **Team / trend mode** (a manager pastes several calls, or one rep's last few calls)
+    7. Call `discovery_call__compare_calls` with every transcript and its rep. It runs the
+       same measurements on each call and returns per-rep averages (talk %, questions per
+       30 min, open-question %, longest monologue, topics missed most often) against the
+       benchmarks, so coaching targets the habit, not one bad call.
+
     ## Frameworks
     - **MEDDPICC:** Metrics · Economic buyer · Decision criteria · Decision process ·
       Paper process · Identify pain · Champion · Competition. Weights: Pain, Champion,
@@ -465,4 +471,59 @@ def grade_questions(questions: list[str]) -> dict:
         "score": score,
         "meets_bar": open_pct >= 70 and counts["leading"] == 0 and counts["multi"] == 0,
         "verdict": f"{n} questions, {open_pct}% open, {counts['leading']} leading, {counts['multi']} double-barrelled — score {score}/100.",
+    }
+
+
+@AGENT.tool
+def compare_calls(calls: list[dict]) -> dict:
+    """Measure several discovery calls at once and average the metrics per rep: talk %, questions/30 min, open %, monologue, topic gaps.
+
+    Call in team/trend mode. Each call: {"transcript": str, "rep_name": str, "label": str (optional),
+    "call_minutes": int (optional)}. Uses exactly the same measurements as analyze_transcript.
+
+    Args:
+        calls: 2-50 calls, each with transcript and rep_name.
+    """
+    if not isinstance(calls, list) or not 2 <= len(calls) <= 50:
+        raise ToolError("Give 2-50 calls.")
+    per_call, by_rep = [], {}
+    for i, cl in enumerate(calls, 1):
+        if not isinstance(cl, dict) or not str(cl.get("transcript", "")).strip():
+            raise ToolError(f"Call {i} needs a transcript.")
+        r = analyze_transcript(str(cl["transcript"]), str(cl.get("rep_name", "")), int(cl.get("call_minutes", 0) or 0))
+        row = {"label": str(cl.get("label") or f"Call {i}"), "rep": r["rep"], "rep_talk_pct": r["rep_talk_pct"], "questions_per_30min": r["rep_questions_per_30min"],
+               "open_question_pct": r["open_question_pct"], "leading": r["question_types"].get("leading", 0), "multi": r["question_types"].get("multi", 0),
+               "longest_monologue_words": r["longest_rep_monologue"]["words"], "topics_missed": r["topics_missed"], "minutes": r["estimated_minutes"]}
+        per_call.append(row)
+        by_rep.setdefault(r["rep"], []).append(row)
+    reps = {}
+    for rep, rows in by_rep.items():
+        n = len(rows)
+        missed = Counter(t for x in rows for t in x["topics_missed"])
+        avg = {
+            "calls": n,
+            "avg_rep_talk_pct": round(sum(x["rep_talk_pct"] for x in rows) / n, 1),
+            "avg_questions_per_30min": round(sum(x["questions_per_30min"] for x in rows) / n, 1),
+            "avg_open_question_pct": round(sum(x["open_question_pct"] for x in rows) / n, 1),
+            "avg_longest_monologue_words": round(sum(x["longest_monologue_words"] for x in rows) / n, 1),
+            "leading_questions_total": sum(x["leading"] for x in rows),
+            "topics_missed_most": [f"{t} ({k}/{n})" for t, k in missed.most_common(3)],
+        }
+        habits = []
+        if avg["avg_rep_talk_pct"] > 45:
+            habits.append(f"talks {avg['avg_rep_talk_pct']}% on average (target ≤ 45%)")
+        if avg["avg_open_question_pct"] < 60:
+            habits.append(f"{avg['avg_open_question_pct']}% open questions on average (target ≥ 60%)")
+        if avg["avg_longest_monologue_words"] > 150:
+            habits.append(f"average longest monologue {avg['avg_longest_monologue_words']} words (cap ~150)")
+        for t, k in missed.most_common():
+            if k >= max(2, (n + 1) // 2):
+                habits.append(f"misses {t} in {k} of {n} calls")
+        avg["habits_to_coach"] = habits
+        reps[rep] = avg
+    worst = max(reps.items(), key=lambda kv: len(kv[1]["habits_to_coach"]))
+    return {
+        "calls": per_call,
+        "by_rep": reps,
+        "verdict": f"{len(per_call)} calls, {len(reps)} rep(s). " + (f"{worst[0]}: " + "; ".join(worst[1]["habits_to_coach"][:3]) + "." if worst[1]["habits_to_coach"] else "No recurring habit outside benchmark."),
     }

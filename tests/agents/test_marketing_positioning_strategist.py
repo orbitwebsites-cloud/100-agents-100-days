@@ -51,8 +51,8 @@ def test_differentiation_matrix_rejects_out_of_range():
 
 def test_positioning_statement_builds_and_lints():
     out = call("positioning_statement", target="clinic managers who still book by phone", need="need to fill cancelled slots fast", product="Slotly", category="patient scheduling tool", key_benefit="fills 80% of cancellations within 2 hours", primary_alternative="Calendly and the front desk", differentiator="read the EHR directly, so availability is never stale")
-    assert out["moore_statement"].startswith("For clinic managers who still book by phone who need to fill cancelled slots fast, Slotly is a patient scheduling tool that fills 80%")
-    assert out["x_for_y"] == "Slotly is patient scheduling tool for clinic managers who still book by phone."
+    assert out["moore_statement"].startswith("For clinic managers who still book by phone and need to fill cancelled slots fast, Slotly is a patient scheduling tool that fills 80%")  # no "who … who"
+    assert out["x_for_y"] == "Slotly is a patient scheduling tool for clinic managers who still book by phone."
     assert out["ready"] is True
     weak = call("positioning_statement", target="teams", need="want to work better", product="X", category="all-in-one platform", key_benefit="work seamlessly", primary_alternative="email", differentiator="a better way to work")
     assert any("Generic claim" in l for l in weak["lint"])

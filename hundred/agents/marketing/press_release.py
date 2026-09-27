@@ -59,7 +59,7 @@ AGENT = Agent(
        customer/investor, availability/pricing, boilerplate, media contact, "###".
     3. **Lint style.** Call `press_release__ap_style_check` with the full text. Apply every
        fix (numerals, month abbreviations, percent, "said", title capitalisation, times,
-       state abbreviations). Re-run until clean.
+       state names: abbreviated in the dateline, spelled out in the body). Re-run until clean.
     4. **Score structure.** Call `press_release__release_structure` with the text. Fix
        anything flagged: lede length, missing dateline, quote without attribution, no
        boilerplate/contact/end mark, too many superlatives.
@@ -82,7 +82,8 @@ AGENT = Agent(
       money, percent, dates); abbreviate Jan., Feb., Aug., Sept., Oct., Nov., Dec. when
       with a date, never March–July; "%" with numerals; "said" (not "stated/exclaimed");
       capitalise titles only directly before a name; times as "9 a.m."/"noon"; states
-      abbreviated after a city in datelines (Calif., N.Y., etc.); no Oxford comma in simple
+      abbreviated in datelines (Calif., N.Y.) but spelled out in body text, and 30 big
+      cities (SAN FRANCISCO, NEW YORK, CHICAGO…) take no state; no Oxford comma in simple
       series; no exclamation marks.
     - **Quotes:** 1-2 sentences, opinion or forward-looking (facts go in the body), no
       "we're thrilled/excited".
@@ -138,6 +139,25 @@ MONTHS_FULL = ["january", "february", "march", "april", "may", "june", "july", "
 STATES = {
     "alabama": "Ala.", "arizona": "Ariz.", "arkansas": "Ark.", "california": "Calif.", "colorado": "Colo.", "connecticut": "Conn.", "delaware": "Del.", "florida": "Fla.", "georgia": "Ga.", "illinois": "Ill.", "indiana": "Ind.", "kansas": "Kan.", "kentucky": "Ky.", "louisiana": "La.", "maryland": "Md.", "massachusetts": "Mass.", "michigan": "Mich.", "minnesota": "Minn.", "mississippi": "Miss.", "missouri": "Mo.", "montana": "Mont.", "nebraska": "Neb.", "nevada": "Nev.", "new hampshire": "N.H.", "new jersey": "N.J.", "new mexico": "N.M.", "new york": "N.Y.", "north carolina": "N.C.", "north dakota": "N.D.", "oklahoma": "Okla.", "oregon": "Ore.", "pennsylvania": "Pa.", "rhode island": "R.I.", "south carolina": "S.C.", "south dakota": "S.D.", "tennessee": "Tenn.", "vermont": "Vt.", "virginia": "Va.", "washington": "Wash.", "west virginia": "W.Va.", "wisconsin": "Wis.", "wyoming": "Wyo.",
 }
+POSTAL = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky",
+    "LA": "Louisiana", "ME": "Maine", "MD": "Maryland", "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri",
+    "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island",
+    "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia",
+    "WA": "Washington", "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming",
+}
+# AP datelines: these cities stand alone, without a state.
+STANDALONE_CITIES = frozenset(
+    """Atlanta|Baltimore|Boston|Chicago|Cincinnati|Cleveland|Dallas|Denver|Detroit|Honolulu|Houston|Indianapolis|Las Vegas|
+    Los Angeles|Miami|Milwaukee|Minneapolis|New Orleans|New York|Oklahoma City|Philadelphia|Phoenix|Pittsburgh|St. Louis|
+    Salt Lake City|San Antonio|San Diego|San Francisco|Seattle|Washington""".replace("\n", "").replace("    ", "").split("|")
+)
+DATELINE_RE = re.compile(
+    r"^(?P<city>[A-Z][A-Z .'-]+?),\s*(?:(?P<state>[A-Z][A-Za-z. ]+?),\s*)?(?:[A-Z][a-z]+\.?\s+\d{1,2},\s*\d{4})\s*[—–-]{1,2}",
+    re.M,
+)
 HYPE = re.compile(r"\b(revolutionary|groundbreaking|game-chang\w+|world-class|best-in-class|leading|cutting-edge|state-of-the-art|unique|innovative|disruptive|excited to announce|thrilled|proud to announce|pleased to announce|first-ever|unprecedented|next-generation|seamless|robust)\b", re.I)
 ATTRIB_VERBS = re.compile(r"\b(stated|exclaimed|noted|commented|remarked|explained|added|shared|expressed|enthused|affirmed|announced)\b(?=[^.]{0,80}\b(CEO|founder|chief|president|director|head|vp|officer|manager|partner)\b|\s*[A-Z])", re.I)
 TITLE_WORDS = r"(?:Chief\s+\w+\s+Officer|CEO|CTO|CFO|COO|CMO|President|Vice\s+President|Founder|Co-founder|Director|Manager|Head\s+of\s+\w+)"
@@ -214,10 +234,32 @@ def ap_style_check(content: str) -> dict:
     for m in re.finditer(r"\b12\s*(a\.m\.|p\.m\.|noon|midnight)\b", t):
         if m.group(1) in ("a.m.", "p.m."):
             add("time: use 'noon' / 'midnight'", m, "'12 p.m.' → 'noon'; '12 a.m.' → 'midnight'")
-    # States after city (dateline or body)
+    # States. AP (since 2014): abbreviate the state in the DATELINE only; spell it out in body text.
+    # Thirty major cities stand alone in datelines with no state at all.
+    dl = DATELINE_RE.search(t)
+    dl_span = (dl.start(), dl.end()) if dl else (-1, -1)
+
+    def in_dateline(m: re.Match) -> bool:
+        return dl_span[0] <= m.start() < dl_span[1]
+
+    if dl:
+        city = dl.group("city").strip().title()
+        if city in STANDALONE_CITIES and dl.group("state"):
+            add("dateline: this city stands alone", dl, f"AP datelines use '{city.upper()}' with no state.", "fix")
     for full, abbr in STATES.items():
-        for m in re.finditer(rf"\b([A-Z][a-z]+(?: [A-Z][a-z]+)?),\s+({full.title()})\b", t):
-            add("states: abbreviate state after a city", m, f"'{m.group(2)}' → '{abbr}'", "check")
+        for m in re.finditer(rf"\b([A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)?),\s+({full.title()})\b", t):
+            if in_dateline(m):
+                add("dateline: abbreviate the state", m, f"'{m.group(2)}' → '{abbr}' in the dateline", "fix")
+        for m in re.finditer(rf"\b([A-Z][a-z]+(?: [A-Z][a-z]+)?),\s+({re.escape(abbr)})(?=\W)", t):
+            if not in_dateline(m):
+                add("states: spell out the state in body text", m, f"'{m.group(2)}' → '{full.title()}' (AP abbreviates only in datelines)")
+    for m in re.finditer(r"\b([A-Z][a-z]+(?: [A-Z][a-z]+)?),\s+([A-Z]{2})\b(?!\s*\d{5})", t):
+        code = m.group(2)
+        if code in POSTAL and not in_dateline(m):
+            add("states: no postal codes in text", m, f"'{code}' → '{POSTAL[code]}'")
+        elif code in POSTAL and in_dateline(m):
+            full = POSTAL[code].lower()
+            add("dateline: use AP state abbreviation, not postal code", m, f"'{code}' → '{STATES.get(full, POSTAL[code])}'")
     # Miscellaneous AP preferences
     misc = [
         (r"\btowards\b", "'towards' → 'toward'"), (r"\be-mail\b", "'e-mail' → 'email'"), (r"\bWeb site\b|\bWebsite\b(?!\s+[A-Z])", "'website' is lowercase"),
@@ -232,6 +274,8 @@ def ap_style_check(content: str) -> dict:
     for m in re.finditer(r"!", t):
         add("punctuation: no exclamation marks", m, "Replace with a period.")
     for m in re.finditer(r"\b(\w+), (\w+), and (\w+)\b", t):
+        if m.group(2).lower() in STATES or m.group(2) in POSTAL.values():
+            continue  # "Austin, Texas, and Denver": the comma closes "City, State," — not an Oxford comma
         add("punctuation: no Oxford comma in a simple series", m, f"'{m.group(1)}, {m.group(2)}, and {m.group(3)}' → '{m.group(1)}, {m.group(2)} and {m.group(3)}'", "check")
     for m in HYPE.finditer(t):
         add("hype: journalists cut this", m, f"Delete '{m.group(0)}' or replace with a fact/number.", "check")

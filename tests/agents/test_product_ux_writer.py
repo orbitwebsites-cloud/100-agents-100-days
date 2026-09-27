@@ -112,3 +112,11 @@ def test_check_consistency_inflections_hyphens_and_sign_pair():
     assert set(c["delete"]["variants"]) == {"delete", "remove"}
     assert c["sign in / sign out pair"]["standardise_on"] == "sign in / sign out"
     assert "save" not in c  # "Update your card" is not a synonym of save
+
+
+def test_check_consistency_glossary_block_list():
+    out = call("check_consistency", strings=["Invite to workspace", "Workspaces", "Sign in"], glossary={"workspace": "team", "login": "sign in"})
+    assert [(g["string"], g["use"]) for g in out["glossary_violations"]] == [("Invite to workspace", "team"), ("Workspaces", "team")]
+    assert "glossary violation" in out["verdict"]
+    with pytest.raises(ToolError):
+        call("check_consistency", strings=["x"], glossary=["login"])

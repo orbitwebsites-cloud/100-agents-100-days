@@ -130,3 +130,18 @@ def test_minutes_from_timestamps_and_partial_transcript_warning():
     assert any("partial transcript" in f for f in partial["flags"])
     fill = call("analyze_transcript", transcript="Rep: I think you'll like the dashboard. It was, like, huge.\nBuyer: ok", rep_name="Rep")
     assert fill["rep_fillers"] == {"like": 1}
+
+
+def test_compare_calls_averages_per_rep():
+    a = "Sam: Is budget approved?\nDana: Not yet, we lose 10 hours a week on this.\nSam: Do you use Excel?\nDana: Yes."
+    b = "Sam: How are you handling renewals today?\nLee: Manually in a spreadsheet, and it is slow and we missed two last quarter.\nSam: Right."
+    c_ = "Ana: What prompted the call?\nBo: Our renewals process broke and it cost us a customer, so we want it live by Q1."
+    out = call("compare_calls", calls=[{"transcript": a, "rep_name": "Sam"}, {"transcript": b, "rep_name": "Sam"}, {"transcript": c_, "rep_name": "Ana"}])
+    one = call("analyze_transcript", transcript=a, rep_name="Sam")
+    two = call("analyze_transcript", transcript=b, rep_name="Sam")
+    sam = out["by_rep"]["Sam"]
+    assert sam["calls"] == 2 and sam["avg_rep_talk_pct"] == round((one["rep_talk_pct"] + two["rep_talk_pct"]) / 2, 1)
+    assert sam["avg_open_question_pct"] == round((one["open_question_pct"] + two["open_question_pct"]) / 2, 1)
+    assert out["by_rep"]["Ana"]["calls"] == 1
+    with pytest.raises(ToolError):
+        call("compare_calls", calls=[{"transcript": a, "rep_name": "Sam"}])

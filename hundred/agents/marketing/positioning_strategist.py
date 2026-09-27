@@ -303,9 +303,14 @@ def positioning_statement(target: str, need: str, product: str, category: str, k
         if len(str(v)) > 500:
             raise ToolError(f"{k} is over 500 chars.")
     t, n, p, c, b, a, d = (str(v).strip().rstrip(".") for v in fields.values())
-    moore = f"For {t} who {n}, {p} is a {c} that {b}. Unlike {a}, we {d}."
-    one_liner = f"{p}: the {c} for {t} — {b}."
-    x_for_y = f"{p} is {c} for {t}."
+    # Avoid "For X who … who …" when the target already carries its behavioural "who" clause.
+    n_clause = re.sub(r"^who\s+", "", n, flags=re.I)
+    joiner = " and " if re.search(r"\bwho\b", t, re.I) else " who "
+    has_article = re.match(r"^(a|an|the)\s", c, re.I)
+    art = "" if has_article else ("an " if re.match(r"^[aeiou]", c, re.I) else "a ")
+    moore = f"For {t}{joiner}{n_clause}, {p} is {art}{c} that {b}. Unlike {a}, we {d}."
+    one_liner = f"{p}: {'' if has_article else 'the '}{c} for {t} — {b}."
+    x_for_y = f"{p} is {art}{c} for {t}."
     lint = []
     words_moore = len(text.words(moore))
     if words_moore > 60:

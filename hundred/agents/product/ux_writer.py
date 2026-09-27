@@ -60,7 +60,8 @@ AGENT = Agent(
        verb the user can act on). The tool checks for those parts, error codes shown to humans,
        blame ("you entered an invalid…"), "please", ALL CAPS, exclamation marks, and vague phrases
        ("something went wrong") without a next step. Rewrite until it passes.
-    3. **Audit consistency** across the whole table with `ux_writer__check_consistency`. It finds
+    3. **Audit consistency** across the whole table with `ux_writer__check_consistency` (pass the
+       team's glossary as {banned: preferred} if they have one). It finds
        synonym conflicts (Sign in / Log in / Login; Delete / Remove / Trash; Cancel / Dismiss;
        OK / Okay / Got it), casing drift for the same term, mixed punctuation habits, and reports
        the majority form so you can standardise. One concept = one word.
@@ -331,11 +332,13 @@ SYNONYM_GROUPS: list[list[str]] = [
 
 
 @AGENT.tool
-def check_consistency(strings: list[str]) -> dict:
+def check_consistency(strings: list[str], glossary: dict[str, str] | None = None) -> dict:
     """Find terminology, casing and punctuation inconsistencies across a string table and pick a standard.
 
     Args:
         strings: All UI strings from the screen/product (plain list; up to 500).
+        glossary: Optional team terminology rules {"banned term": "preferred term"}, e.g. {"login": "sign in",
+            "workspace": "team"}; every string using a banned term (any inflection) is reported with its replacement.
     """
     rows = check_rows(strings, "strings")
     lowered = [str(s).strip() for s in rows if str(s).strip()]
@@ -371,6 +374,18 @@ def check_consistency(strings: list[str]) -> dict:
         if len(found) > 1:
             conflicts.append({"concept": group[0], "variants": found, "standardise_on": chosen[group[0]], "affected": sum(found.values())})
     # paired terms must share a verb: "Sign in" pairs with "Sign out", "Log in" with "Log out"
+    glossary_hits = []
+    if glossary is not None:
+        if not isinstance(glossary, dict):
+            raise ToolError("glossary must be an object of banned term → preferred term.")
+        for banned, preferred in list(glossary.items())[:200]:
+            b = str(banned).strip()
+            if not b:
+                continue
+            rx = term_rx(b.lower())
+            for text_ in lowered:
+                if rx.search(text_):
+                    glossary_hits.append({"string": text_, "banned": b, "use": str(preferred).strip()})
     fam = lambda t: "log" if t.startswith("log") else "sign"  # noqa: E731
     if "sign in" in chosen and "sign out" in chosen and fam(chosen["sign in"]) != fam(chosen["sign out"]):
         want = fam(chosen["sign in"])
@@ -388,17 +403,19 @@ def check_consistency(strings: list[str]) -> dict:
         cases[_casing(s)] += 1
     title_case = [s for s in lowered if _casing(s) == "Title Case"][:15]
     fixes = [f"'{c['concept']}': use '{c['standardise_on']}' everywhere ({c['affected']} strings)" for c in conflicts]
+    fixes += [f"'{g['string']}': replace '{g['banned']}' with '{g['use']}' (glossary)" for g in glossary_hits]
     if title_case:
         fixes.append(f"{len(title_case)} Title Case strings → sentence case")
     return {
         "strings_checked": len(lowered),
         "terminology_conflicts": conflicts,
+        "glossary_violations": glossary_hits,
         "casing_drift": casing_drift,
         "case_mix": dict(cases),
         "title_case_examples": title_case,
         "ending_punctuation": ending,
         "fixes": fixes,
-        "verdict": "Consistent" if not conflicts and not title_case else f"{len(conflicts)} terminology conflict(s), {len(title_case)} Title Case string(s)",
+        "verdict": "Consistent" if not conflicts and not title_case and not glossary_hits else f"{len(conflicts)} terminology conflict(s), {len(glossary_hits)} glossary violation(s), {len(title_case)} Title Case string(s)",
     }
 
 
