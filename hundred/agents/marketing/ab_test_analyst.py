@@ -307,7 +307,7 @@ def sample_size(
     out["method"] = (
         "Two-proportion z-test, pooled variance under H0 (Fleiss, no continuity correction) — the same test "
         "significance_test runs. Evan Miller's calculator uses the baseline variance under H0 and returns ~5-8% fewer "
-        "visitors (e.g. 1,030 vs 1,094 per arm at 20% baseline, +5 pp)."
+        "visitors (1,030 vs 1,094 per arm at 20% baseline, +5 pp); at 1,030 the pooled test has ~78% power, not 80%."
     )
     out["summary"] = f"Need {per_arm:,} visitors per arm ({total:,} total) to detect +{round(mde_relative_pct, 2)}% relative (+{round(100 * (p2 - p1), 3)} pp) at {int(power * 100)}% power, α={alpha}."
     return out
