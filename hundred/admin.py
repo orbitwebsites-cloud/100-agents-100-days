@@ -175,4 +175,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    import signal
+
+    if hasattr(signal, "SIGPIPE"):  # `... | head` shouldn't print a BrokenPipe traceback
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     raise SystemExit(main())

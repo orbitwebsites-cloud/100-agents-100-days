@@ -97,3 +97,12 @@ def test_lint_policy_text_scores_vagueness():
 def test_lint_policy_text_rejects_bad_grade():
     with pytest.raises(ToolError):
         call("lint_policy_text", policy_text=POLICY, target_grade=30)
+
+
+def test_check_applicability_whole_word_regions_and_ccpa_prong_b():
+    ca = call("check_applicability", company_country="US", user_regions=["California"], consumers_per_year=150_000)
+    assert not any("PIPEDA" in n for n in ca["regime_names"]) and "CalOPPA (California)" in ca["regime_names"]
+    assert "US state privacy laws" not in ca["regime_names"] and ca["not_triggered_notes"]
+    assert call("check_applicability", company_country="US", user_regions=["Austria"])["regime_names"] == ["GDPR (EU/EEA)"]
+    bought = call("check_applicability", company_country="US", user_regions=["California"], consumers_per_year=150_000, buys_personal_data=True)
+    assert "US state privacy laws" in bought["regime_names"]

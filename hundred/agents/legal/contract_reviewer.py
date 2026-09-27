@@ -18,7 +18,7 @@ AGENT = Agent(
     tagline="Clause-by-clause red flags, every deadline on a calendar, and the redlines to ask for — before you sign.",
     description=(
         "Reviews commercial contracts (SaaS, MSA, services, licensing, vendor) the way an experienced "
-        "commercial lawyer triages them: detects 24 clause types and scores red flags from your side of the "
+        "commercial lawyer triages them: detects 26 clause types and scores red flags from your side of the "
         "table (customer or vendor), extracts every deadline, notice period and auto-renewal trap, builds the "
         "renewal/notice calendar with reminder dates, quantifies liability-cap exposure against market norms, "
         "and produces a prioritised issues list with market-standard fallback language. Drafting aid, not legal advice."

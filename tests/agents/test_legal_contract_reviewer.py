@@ -96,3 +96,15 @@ def test_liability_exposure_math_and_market():
 def test_liability_exposure_rejects_bad_cap_type():
     with pytest.raises(ToolError):
         call("liability_exposure", annual_contract_value=1000, cap_type="whatever")
+
+
+def test_detect_clauses_structural_checks():
+    text = ("Provider may change the fees at any time. Provider may terminate this Agreement for convenience at any time. "
+            "Provider's aggregate liability shall not exceed the fees paid in the three (3) months preceding the claim. "
+            "Customer grants Provider a perpetual, irrevocable licence to use Customer Data. This Agreement is governed by the laws "
+            "of the State of Texas. Signed by Acme, a Delaware limited liability company.")
+    out = call("detect_clauses", contract_text=text, my_role="customer", my_jurisdiction="Oregon")
+    flags = " | ".join(f["flag"] for f in out["red_flags"])
+    for needle in ("unilateral right to change fees", "only the vendor may terminate", "liability cap = 3 month", "protects only the vendor", "perpetual, irrevocable licence to your data", "not your home jurisdiction (Oregon)", "ownership of Customer Data is ambiguous"):
+        assert needle in flags, needle
+    assert out["liability_cap"]["months_of_fees"] == 3 and out["governing_law"] == "Texas"

@@ -118,3 +118,11 @@ def test_rate_calculator_fixed_fee_check():
 def test_rate_calculator_rejects_partial_fixed_fee():
     with pytest.raises(ToolError):
         call("rate_calculator", target_income=50000, fixed_fee=1000)
+
+
+def test_check_contract_clauses_word_number_payment_terms_and_forum_clause():
+    text = "Client will pay within thirty (30) days of receiving the invoice. The courts of Oregon have exclusive jurisdiction."
+    out = call("check_contract_clauses", contract_text=text, my_role="freelancer")
+    assert "Payment terms (net days)" not in {m["clause"] for m in out["missing"]}
+    assert "Non-compete / exclusivity" not in {t["flag"] for t in out["traps"]}
+    assert "Non-compete / exclusivity" in {t["flag"] for t in call("check_contract_clauses", contract_text="Designer will work exclusively for Client.", my_role="freelancer")["traps"]}

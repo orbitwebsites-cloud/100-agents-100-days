@@ -104,3 +104,21 @@ def test_project_timeline_reports_and_milestones():
 def test_project_timeline_rejects_bad_cadence():
     with pytest.raises(ToolError):
         call("project_timeline", start_date="2026-10-01", duration_months=12, reporting="weekly")
+
+
+def test_budget_table_2024_rules_per_unit_equipment_and_per_subaward_allowance():
+    out = call(
+        "budget_table",
+        line_items=[
+            {"category": "equipment", "description": "Laptops", "quantity": 4, "unit_cost": 1800},
+            {"category": "equipment", "description": "Trailer", "quantity": 1, "unit_cost": 18000},
+            {"category": "subaward", "description": "Y1", "subrecipient": "Uni", "amount": 40000},
+            {"category": "subaward", "description": "Y2", "subrecipient": "Uni", "amount": 20000},
+        ],
+        indirect_rate_pct=15,
+    )
+    # laptops -> supplies (7,200 in MTDC); trailer excluded; one $50k allowance across both subaward years
+    assert out["mtdc"] == 7200 + 50000 and out["mtdc_exclusions"]["equipment"] == 18000
+    assert out["rules"]["subaward_mtdc_allowance"] == 50000
+    high = call("budget_table", line_items=[{"category": "supplies", "amount": 1000}], indirect_rate_pct=20)
+    assert any("de minimis" in f for f in high["flags"])

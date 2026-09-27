@@ -90,3 +90,14 @@ def test_review_nda_passes_clean_document():
 def test_review_nda_rejects_bad_role():
     with pytest.raises(ToolError):
         call("review_nda", nda_text=GOOD_NDA, my_role="lawyer")
+
+
+def test_review_nda_exclusions_phrasing_and_no_forum_false_alarm():
+    text = ("Confidential Information excludes information that (a) is publicly available; (b) was rightfully in Recipient's possession "
+            "without restriction before receipt; (c) is received by Recipient from a third party that is not under an obligation of "
+            "confidentiality; or (d) is independently developed. Disclosure required by law is permitted. The courts of Delaware have "
+            "exclusive jurisdiction. Discloser may seek injunctive relief without the need to post a bond.")
+    out = A.get_tool("review_nda").call({"nda_text": text, "my_role": "discloser"})
+    clauses = {f["clause"] for f in out["findings"]}
+    assert not any(c.startswith("Exclusion") for c in clauses)
+    assert "Exclusivity / no-shop obligation" not in clauses and "Bond required before injunctive relief" not in clauses
