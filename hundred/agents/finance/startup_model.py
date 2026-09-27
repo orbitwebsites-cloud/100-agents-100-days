@@ -366,7 +366,7 @@ def fundraise_sizing(
     for _ in range(total_months):
         cum += b
         b *= 1 + g
-    raise_amt = cum.quantize(Decimal("1000"), rounding="ROUND_CEILING")
+    raise_amt = cum.quantize(Decimal("1E3"), rounding="ROUND_CEILING")
     out = {
         "months_funded": total_months,
         "cumulative_burn": money(cum),
@@ -382,10 +382,12 @@ def fundraise_sizing(
             raise ToolError("option_pool_pct must be 0-49 and founder_ownership_pct 1-100")
         post = pre + raise_amt
         investor_pct = raise_amt / post
-        # pool created pre-money: existing holders diluted by pool then by investors
-        existing_after = (1 - investor_pct) * (1 - pool) if pool else (1 - investor_pct)
+        # pool sized as % of post-money but created before the round: it comes entirely out of existing holders
+        if investor_pct + pool >= 1:
+            raise ToolError("raise plus option pool would exceed 100% of the company — check pre_money_valuation")
+        existing_after = 1 - investor_pct - pool
         founders_after = founders * existing_after
-        effective_pre = pre * (1 - pool) if pool else pre
+        effective_pre = pre - pool * post  # what the pre-money is really worth to existing holders
         out.update(
             {
                 "pre_money": money(pre),

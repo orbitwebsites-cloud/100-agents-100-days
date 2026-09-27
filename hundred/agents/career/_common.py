@@ -257,6 +257,13 @@ NICE_CUES = re.compile(r"\b(preferred|nice[- ]to[- ]have|bonus|plus|ideally|desi
 YEARS_RE = re.compile(r"(\d{1,2})\s*\+?\s*(?:-|–|to)?\s*(\d{1,2})?\s*\+?\s*(?:years?|yrs?)\b", re.I)
 DEGREE_RE = re.compile(r"\b(bachelor'?s?|master'?s?|mba|ph\.?d|doctorate|b\.?s\.?|b\.?a\.?|m\.?s\.?|degree)\b", re.I)
 BULLET_RE = re.compile(r"^\s*(?:[-*•·▪◦o]|\d{1,2}[.)])\s+")
+HEADING_CUES = re.compile(
+    r"^(?:what you.ll do|what you will do|what you.ll be doing|responsibilities|the role|in this role|day[- ]to[- ]day|"
+    r"what you bring|what we.re looking for|about you|requirements|qualifications|must[- ]haves?|you have|"
+    r"nice[- ]to[- ]haves?|bonus points|preferred(?: qualifications)?|what we offer|benefits|perks|how we hire|"
+    r"about (?:us|the role|this role)|why join|our team|compensation)\b",
+    re.I,
+)
 
 
 def split_requirements(jd: str) -> list[dict]:
@@ -276,17 +283,23 @@ def split_requirements(jd: str) -> list[dict]:
         if not line:
             continue
         is_bullet = bool(BULLET_RE.match(raw))
-        is_heading = (not is_bullet) and len(line) <= 60 and not line.endswith(".") and (line.endswith(":") or line.istitle() or line.isupper())
+        is_heading = (
+            (not is_bullet)
+            and len(line) <= 60
+            and len(text.words(line)) <= 7
+            and not line.endswith(".")
+            and (line.endswith(":") or line.istitle() or line.isupper() or bool(HEADING_CUES.search(line)))
+        )
         if is_heading:
             section = line.rstrip(":")
             if NICE_CUES.search(line):
                 current_tier = "nice"
-            elif MUST_CUES.search(line):
+            elif MUST_CUES.search(line) or re.search(r"\b(about you|looking for)\b", line, re.I):
                 current_tier = "must"
+            elif re.search(r"^\s*about\b|\b(benefits|perks|we offer|compensation|why join|our team|who we are)\b", line, re.I):
+                current_tier = "unclear"
             elif re.search(r"\b(responsibilit|what you.ll do|what you will do|you will|day[- ]to[- ]day|duties|the role|in this role)", line, re.I):
                 current_tier = "duty"
-            elif re.search(r"\b(about|benefits|perks|we offer|compensation|why join|our team)", line, re.I):
-                current_tier = "unclear"
             continue
         if not is_bullet and len(text.words(line)) < 4:
             continue

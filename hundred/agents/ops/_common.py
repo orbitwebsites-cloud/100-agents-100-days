@@ -137,3 +137,65 @@ def iso(d: date | None) -> str | None:
 
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
+
+
+_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_NUM_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "ten": 10}
+
+
+def resolve_relative_date(phrase: str, base: date) -> tuple[date | None, str]:
+    """'by Friday', 'EOD', 'tomorrow', 'in 2 weeks', 'next Tuesday', 'end of month', '2026-10-05' -> (date, rule)."""
+    from datetime import timedelta
+
+    p = (phrase or "").lower().strip()
+    m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", p)
+    if m:
+        try:
+            return datetime.fromisoformat(m.group(1)).date(), "explicit"
+        except ValueError:
+            return None, "bad explicit date"
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", p)
+    if m:
+        mo, da, yr = int(m.group(1)), int(m.group(2)), m.group(3)
+        year = base.year if not yr else (int(yr) + 2000 if len(yr) == 2 else int(yr))
+        try:
+            d = date(year, mo, da)
+            if not yr and d < base:
+                d = date(year + 1, mo, da)
+            return d, "explicit (m/d)"
+        except ValueError:
+            return None, "bad explicit date"
+    if "tomorrow" in p:
+        return base + timedelta(days=1), "next day"
+    if re.search(r"\b(today|eod|end of (the )?day|tonight|asap|now|immediately|urgent(ly)?)\b", p):
+        return base, "same day"
+    m = re.search(r"\b(?:in|within) (\d+|a|an|one|two|three|four|five|six|seven|ten) (business |working )?(day|week|month|hour)s?\b", p)
+    if m:
+        n = _NUM_WORDS.get(m.group(1)) or int(m.group(1))
+        unit = m.group(3)
+        if unit == "hour":
+            return base + timedelta(days=1 if n >= 12 else 0), f"+{n} hours"
+        if m.group(2):
+            from ...lib import dates as _dates
+
+            return _dates.add_business_days(base, n), f"+{n} business days"
+        return base + timedelta(days=n * {"day": 1, "week": 7, "month": 30}[unit]), f"+{n} {unit}(s)"
+    if re.search(r"\b(eow|end of (?:the |this |next )?week|this week)\b", p):
+        d = base + timedelta(days=(4 - base.weekday()) % 7)
+        return (d + timedelta(days=7) if "next" in p else d), "Friday"
+    if re.search(r"\b(eom|end of (the |this )?month)\b", p):
+        nxt = (base.replace(day=28) + timedelta(days=4)).replace(day=1)
+        return nxt - timedelta(days=1), "last day of month"
+    if re.search(r"\b(eoq|end of (the |this )?quarter)\b", p):
+        q_end_month = ((base.month - 1) // 3 + 1) * 3
+        nxt = (date(base.year, q_end_month, 28) + timedelta(days=4)).replace(day=1)
+        return nxt - timedelta(days=1), "last day of quarter"
+    if re.search(r"\bnext week\b", p):
+        return base + timedelta(days=7 - base.weekday()), "Monday next week"
+    for i, day in enumerate(_WEEKDAYS):
+        if re.search(rf"\b{day[:3]}(?:{day[3:]})?\b", p):
+            ahead = (i - base.weekday()) % 7 or 7
+            if "next" in p and ahead < 7:
+                ahead += 7
+            return base + timedelta(days=ahead), day.title()
+    return None, "unrecognised"

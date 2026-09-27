@@ -175,7 +175,7 @@ def score_hook(hook: str) -> dict:
     if re.search(r"\d", h):
         score += 15
         reasons.append("+15 contains a specific number")
-    proper = [w for w in text.words(h)[1:] if w[:1].isupper() and w.lower() not in text.STOPWORDS and w.upper() != w]
+    proper = c.proper_nouns(h)
     if proper:
         score += 5
         reasons.append(f"+5 names something concrete ({proper[0]})")

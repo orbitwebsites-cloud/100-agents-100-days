@@ -171,6 +171,17 @@ def spoken_words(script: str) -> list[str]:
     return text.words(STAGE_DIR_RE.sub(" ", strip_markdown(script)))
 
 
+def proper_nouns(s: str) -> list[str]:
+    """Capitalised words that are not sentence/line-initial and not ALL CAPS — names, products, places."""
+    out: list[str] = []
+    for chunk in re.split(r"[.!?:\n]+", s):
+        ws = text.words(chunk)
+        for w in ws[1:]:
+            if w[:1].isupper() and not w.isupper() and w.lower() not in text.STOPWORDS and w.lower() != "i":
+                out.append(w)
+    return out
+
+
 def pct(part: float, whole: float, nd: int = 1) -> float:
     return round(100.0 * part / whole, nd) if whole else 0.0
 

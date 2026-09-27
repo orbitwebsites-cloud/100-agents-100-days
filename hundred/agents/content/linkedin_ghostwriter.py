@@ -187,7 +187,7 @@ def score_hook(hook: str) -> dict:
     if CONTRAST.search(h):
         score += 10
         reasons.append("+10 tension/contrast")
-    proper = [w for w in text.words(h)[1:] if w[:1].isupper() and w.lower() not in text.STOPWORDS and not w.isupper()]
+    proper = c.proper_nouns(h)
     if proper:
         score += 4
         reasons.append(f"+4 names something concrete ({proper[0]})")
@@ -380,7 +380,7 @@ def format_post(draft: str, one_sentence_per_line: bool = True) -> dict:
         s = re.sub(r"(?<!\w)([*_])(?!\s)([^*_\n]{1,300}?)(?<!\s)\1(?!\w)", r"\2", s)
         changes.append("removed *italic* markers")
     if re.search(r"^\s{0,3}#{1,6}\s+", s, re.M):
-        s = re.sub(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", r"\1", s, flags=re.M)
+        s = re.sub(r"^[ \t]{0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$", r"\1", s, flags=re.M)
         changes.append("converted # headings to plain lines")
     if c.MD_LINK_RE.search(s):
         s = c.MD_LINK_RE.sub(lambda m: f"{m.group(1)}: {m.group(2)}" if m.group(1) else m.group(2), s)
