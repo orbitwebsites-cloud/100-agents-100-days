@@ -13,7 +13,7 @@ from __future__ import annotations
 import html
 import json
 
-from .. import plans, registry
+from .. import plans, recipes, registry
 from ..core import CATEGORIES, Agent
 from .settings import settings
 
@@ -335,6 +335,13 @@ def home_page(founder_left: int, canceled: bool = False) -> str:
 <div class="step"><span class="n">3</span><h3>Ask as usual</h3><p style="color:var(--muted)">“Forecast my cash for 13 weeks.” Your AI picks the agent, follows its playbook and runs its tools.</p></div>
 </div></section>
 
+<section aria-labelledby="edge-h"><div class="section-head"><div class="label">What separate tools can't do</div><h2 id="edge-h">Agents that work together and remember.</h2></div>
+<div class="steps">
+<div class="step"><span class="n">Recipes</span><h3>Whole jobs, not single tasks</h3><p style="color:var(--muted)">“Launch the product.” Positioning, landing page, ads, emails, press and the launch calendar run as one chain, each step handing its result to the next. {len(recipes.RECIPES)} recipes cover launches, deals, month-end, hiring, fundraising and more.</p></div>
+<div class="step"><span class="n">Memory</span><h3>Picks up where you left off</h3><p style="color:var(--muted)">Your brand voice, scoring weights, training log and last week's numbers are saved when you say so, and every agent starts from them next time.</p></div>
+<div class="step"><span class="n">Your AI</span><h3>Nothing new to learn</h3><p style="color:var(--muted)">It all happens in the AI you already use, with the apps you already connected: Gmail, HubSpot, Notion, GitHub, Shopify.</p></div>
+</div></section>
+
 <section id="pricing" aria-labelledby="pricing-h"><div class="section-head"><div class="label">Pricing</div><h2 id="pricing-h">Start with one agent or take them all.</h2>
 <p style="color:var(--muted)">Every plan starts with a 7-day free trial. If a payment fails, agents pause; update your card and they come back on the same link.</p></div>
 {founder_html}<div class="plans">{cols}</div></section>
@@ -348,7 +355,7 @@ def home_page(founder_left: int, canceled: bool = False) -> str:
 <div><h3>Which AI apps does it work with?</h3><p>Anything that connects to MCP servers over HTTP: Claude (web, desktop and Claude Code), ChatGPT connectors, Cursor, VS Code, Windsurf and Gemini CLI. The <a href="/setup">setup guide</a> covers each one.</p></div>
 <div><h3>What is inside an agent?</h3><p>A step-by-step procedure your AI follows, plus tools that compute exact answers: scores, dates, statistics, character limits and parsed data.</p></div>
 <div><h3>What if my card is declined?</h3><p>Paid agents pause on the next request and we email you a link to update your card. They switch back on the moment the payment goes through.</p></div>
-<div><h3>Do you store my data?</h3><p>No. Your AI sends only what a tool needs, such as the numbers for a forecast. We count calls for fair use and keep nothing else.</p></div>
+<div><h3>Do you store my data?</h3><p>Only what you ask your AI to remember, such as your brand voice or last week's pipeline. It's tied to your key, you can list or delete it at any time, and it's never used for anything else. Tool inputs are not stored; we only count calls for fair use.</p></div>
 <div><h3>Can I change agents later?</h3><p>Yes. Add or swap agents at any time. They appear in your AI without reinstalling anything.</p></div>
 <div><h3>Is anything free?</h3><p>{" and ".join(a.name for a in agents.values() if a.free)} are free forever. Connect with no key to try them.</p></div>
 </div></section>

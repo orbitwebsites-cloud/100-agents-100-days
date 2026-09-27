@@ -174,7 +174,8 @@ def test_router_mode_for_big_bundles(store):
     total = sum(1 + len(a.tools) for a in access.agents)
     names = [t.name for t in list_tools_for(access)]
     if total > 40:
-        assert names == ["hundred_account", "hundred_find_agent", "hundred_start", "hundred_run"]
+        assert names == ["hundred_account", "hundred_memory", "hundred_recipes", "hundred_find_agent", "hundred_start",
+                         "hundred_run"]
     focused = resolve_access(store, req(key, agents=FREE.slug))
     assert focused.mode == "direct" and FREE.start_tool_name in [t.name for t in list_tools_for(focused)]
 

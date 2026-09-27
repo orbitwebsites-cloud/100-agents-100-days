@@ -212,6 +212,16 @@ class Agent:
                 + ", ".join(self.connectors)
                 + ". If not, produce the output ready to paste.",
             ]
+        from .memory import briefing_section
+
+        lines += [
+            "",
+            briefing_section(self.slug),
+            "",
+            "## Bigger jobs",
+            "If this task is one step of a larger job (a launch, a hire, month-end, a deal), call `hundred_recipes` "
+            "with the goal: it returns the ordered chain of agents and what each hands to the next.",
+        ]
         return "\n".join(lines)
 
     def summary(self) -> dict[str, Any]:

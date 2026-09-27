@@ -39,7 +39,9 @@ This server gives you expert agents (sales, marketing, writing, SEO, ops, financ
 product, career, creator, e-commerce, legal). When the user's request matches an agent, call that
 agent's `<agent>__start` tool FIRST (or `hundred_start` in router mode) and follow the operating
 procedure it returns — including calling the agent's tools for any math, scoring, dates or limits.
-Call `hundred_account` if the user asks about their plan or an agent says access is paused."""
+Use `hundred_memory` to recall saved context before a job and to save what the user wants kept; use
+`hundred_recipes` when a job needs several agents in sequence. Call `hundred_account` if the user asks about
+their plan or an agent says access is paused."""
 
 
 @dataclass
@@ -136,6 +138,45 @@ ACCOUNT_TOOL = types.Tool(
     annotations=READ_ONLY,
 )
 
+MEMORY_TOOL = types.Tool(
+    name="hundred_memory",
+    title="Agent memory",
+    description="Save and recall small notes for the user's agents across chats: brand voice profiles, ICP "
+    "weights, training logs, flashcard state, last week's numbers. Actions: list (optional prefix), get, save "
+    "(name + JSON value + short note), delete (name, or '*' with confirm=true to erase everything). Stored per "
+    "license key; save only what the user agrees to keep, never secrets.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["list", "get", "save", "delete"], "description": "What to do."},
+            "name": {"type": "string", "description": "Memory name, lowercase with / . - _ (e.g. 'brand-voice/acme')."},
+            "value": {"description": "JSON value to save (object, list, string or number), up to 48 KB."},
+            "note": {"type": "string", "description": "One line describing what this is, shown in list."},
+            "prefix": {"type": "string", "description": "For list: only names starting with this."},
+            "confirm": {"type": "boolean", "description": "Required true to delete everything with name '*'."},
+        },
+        "required": ["action"],
+    },
+    annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True,
+                                      open_world_hint=False),
+)
+
+RECIPES_TOOL = types.Tool(
+    name="hundred_recipes",
+    title="Multi-agent recipes",
+    description="Chain several expert agents for a bigger job (launch a product, after a sales call, month-end "
+    "numbers, hire someone, ship a feature, raise a round…). Pass `goal` to find recipes, or `recipe` to get the "
+    "ordered steps: which agent does what and what it hands to the next.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "goal": {"type": "string", "description": "What the user is trying to get done."},
+            "recipe": {"type": "string", "description": "A recipe slug from a previous call, for its full plan."},
+        },
+    },
+    annotations=READ_ONLY,
+)
+
 ROUTER_TOOLS = [
     types.Tool(
         name="hundred_find_agent",
@@ -184,7 +225,7 @@ ROUTER_TOOLS = [
 
 
 def list_tools_for(access: Access) -> list[types.Tool]:
-    tools = [ACCOUNT_TOOL]
+    tools = [ACCOUNT_TOOL, MEMORY_TOOL, RECIPES_TOOL]
     if access.mode == "router":
         return tools + ROUTER_TOOLS
     for agent in access.agents:
@@ -280,6 +321,12 @@ def call_tool(store: Store, access: Access, name: str, arguments: dict[str, Any]
     if name == "hundred_account":
         return _text(account_summary(access))
 
+    if name == "hundred_memory":
+        return memory_call(store, access, arguments)
+
+    if name == "hundred_recipes":
+        return recipes_call(access, arguments)
+
     if name == "hundred_find_agent":
         found = find_agents(access, str(arguments.get("query", "")))
         if not found:
@@ -329,6 +376,77 @@ def call_tool(store: Store, access: Access, name: str, arguments: dict[str, Any]
         log.exception("tool %s crashed", name)
         return _text(f"{agent.name}/{tool_name} hit an internal error. It's been logged; try rephrasing the input.",
                      error=True)
+
+
+# ── memory + recipes ─────────────────────────────────────────
+def memory_call(store: Store, access: Access, args: dict[str, Any]) -> types.CallToolResult:
+    import json
+    import re as _re
+
+    from .. import memory
+
+    if access.license is None:
+        return _text("Memory is part of every paid plan and needs a license key on this connection. "
+                     f"Free agents work without one. Plans: {settings.public_url}/pricing", error=True)
+    kh = access.license.key_hash
+    action = str(args.get("action", "")).strip()
+    name = str(args.get("name", "")).strip().lower()
+    if action == "list":
+        items = store.memory_list(kh, str(args.get("prefix", "")).strip().lower())
+        return _text(render_result({"count": len(items), "limit": memory.MAX_ENTRIES, "items": items}))
+    if action in ("get", "save", "delete") and not name:
+        return _text(f"'{action}' needs a name.", error=True)
+    if action == "get":
+        item = store.memory_get(kh, name)
+        return _text(render_result(item) if item else f"Nothing saved under {name!r}. Use action 'list' to see names.")
+    if action == "delete":
+        if name == "*":
+            if args.get("confirm") is not True:
+                return _text("Deleting all memory needs confirm=true. Ask the user first.", error=True)
+            store.memory_delete(kh, "*")
+            return _text("All saved memory for this key was deleted.")
+        return _text(f"Deleted {name!r}." if store.memory_delete(kh, name) else f"Nothing saved under {name!r}.")
+    if action == "save":
+        if access.blocked_reason:
+            return _text(_fix_billing_message(access) + " Saved memory stays readable and deletable meanwhile.",
+                         error=True)
+        if not _re.match(memory.NAME_RE, name):
+            return _text("Names use lowercase letters, digits and / . - _ (max 120 chars), e.g. 'brand-voice/acme'.",
+                         error=True)
+        if "value" not in args:
+            return _text("'save' needs a value.", error=True)
+        blob = json.dumps(args["value"], ensure_ascii=False)
+        if len(blob.encode()) > memory.MAX_VALUE_BYTES:
+            return _text(f"That value is {len(blob.encode()):,} bytes; the limit is {memory.MAX_VALUE_BYTES:,}. "
+                         "Save a summary or split it by topic.", error=True)
+        if store.memory_get(kh, name) is None and store.memory_count(kh) >= memory.MAX_ENTRIES:
+            return _text(f"Memory is full ({memory.MAX_ENTRIES} entries). Delete old entries first.", error=True)
+        store.memory_save(kh, name, args["value"], str(args.get("note", ""))[:200])
+        return _text(f"Saved {name!r} ({len(blob.encode()):,} bytes). It will be here in future chats.")
+    return _text("action must be one of: list, get, save, delete.", error=True)
+
+
+def recipes_call(access: Access, args: dict[str, Any]) -> types.CallToolResult:
+    from .. import recipes
+
+    owned = {a.slug for a in access.agents}
+    slug = str(args.get("recipe", "")).strip()
+    if slug:
+        recipe = recipes.BY_SLUG.get(slug)
+        if recipe is None:
+            return _text(f"No recipe {slug!r}. Recipes: {', '.join(recipes.BY_SLUG)}", error=True)
+        out = recipes.plan(recipe, owned)
+        if out["missing_agents"]:
+            out["upgrade"] = (f"The user doesn't have {', '.join(out['missing_agents'])} yet. Skip those steps and say so, "
+                              f"or tell them All-Access covers every step: {settings.public_url}/pricing")
+        return _text(render_result(out))
+    found = recipes.find(str(args.get("goal", "")))
+    return _text(render_result([
+        {"recipe": r.slug, "name": r.name, "goal": r.goal,
+         "chain": " → ".join(registry.get(s.agent).name if registry.get(s.agent) else s.agent for s in r.steps),
+         "owned_steps": f"{sum(s.agent in owned for s in r.steps)}/{len(r.steps)}"}
+        for r in found
+    ]))
 
 
 # ── prompts: each owned agent doubles as a slash-command in clients that show prompts ──

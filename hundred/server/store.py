@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS usage (
     PRIMARY KEY (key_hash, day, agent)
 );
 
+CREATE TABLE IF NOT EXISTS memory (
+    key_hash   TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    value      TEXT NOT NULL,          -- JSON, saved only when the customer's AI asks
+    note       TEXT,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (key_hash, name)
+);
+
 CREATE TABLE IF NOT EXISTS leads (
     email      TEXT PRIMARY KEY,
     source     TEXT,
@@ -223,10 +232,7 @@ class Store:
         if lic is None:
             return None
         key = new_key(old_key.startswith("hnd_live_"))
-        self._exec(
-            "UPDATE licenses SET key_hash=?, key_prefix=?, updated_at=? WHERE key_hash=?",
-            (hash_key(key), key[:14], int(time.time()), lic.key_hash),
-        )
+        self._rekey(lic.key_hash, key)
         return key
 
     def rotate_key_for_subscription(self, subscription_id: str) -> str | None:
@@ -234,11 +240,16 @@ class Store:
         if lic is None:
             return None
         key = new_key(True)
-        self._exec(
-            "UPDATE licenses SET key_hash=?, key_prefix=?, updated_at=? WHERE subscription_id=?",
-            (hash_key(key), key[:14], int(time.time()), subscription_id),
-        )
+        self._rekey(lic.key_hash, key)
         return key
+
+    def _rekey(self, old_hash: str, key: str) -> None:
+        """Swap a license to a new key, carrying its memory and usage with it."""
+        new_hash = hash_key(key)
+        self._exec("UPDATE licenses SET key_hash=?, key_prefix=?, updated_at=? WHERE key_hash=?",
+                   (new_hash, key[:14], int(time.time()), old_hash))
+        self._exec("UPDATE memory SET key_hash=? WHERE key_hash=?", (new_hash, old_hash))
+        self._exec("UPDATE usage SET key_hash=? WHERE key_hash=?", (new_hash, old_hash))
 
     def count_active(self, plan: str | None = None) -> int:
         sql = "SELECT COUNT(*) FROM licenses WHERE status IN ('active','trialing')"
@@ -289,6 +300,38 @@ class Store:
         day = time.strftime("%Y-%m-%d", time.gmtime())
         row = self._exec("SELECT COALESCE(SUM(calls),0) FROM usage WHERE key_hash=? AND day=?", (key_hash, day)).fetchone()
         return int(row[0])
+
+    # ── memory: small JSON notes a customer's AI saves for its agents ──
+    def memory_save(self, key_hash: str, name: str, value: Any, note: str = "") -> None:
+        self._exec(
+            """INSERT INTO memory VALUES (?,?,?,?,?)
+               ON CONFLICT(key_hash, name) DO UPDATE SET value=excluded.value, note=excluded.note,
+               updated_at=excluded.updated_at""",
+            (key_hash, name, json.dumps(value, ensure_ascii=False), note, int(time.time())),
+        )
+
+    def memory_get(self, key_hash: str, name: str) -> dict | None:
+        row = self._exec("SELECT * FROM memory WHERE key_hash=? AND name=?", (key_hash, name)).fetchone()
+        if not row:
+            return None
+        return {"name": row["name"], "value": json.loads(row["value"]), "note": row["note"],
+                "updated_at": row["updated_at"]}
+
+    def memory_list(self, key_hash: str, prefix: str = "") -> list[dict]:
+        rows = self._exec(
+            "SELECT name, note, updated_at, length(value) AS size FROM memory "
+            "WHERE key_hash=? AND substr(name, 1, ?) = ? ORDER BY name",
+            (key_hash, len(prefix), prefix),
+        ).fetchall()
+        return [{"name": r["name"], "note": r["note"], "updated_at": r["updated_at"], "bytes": r["size"]} for r in rows]
+
+    def memory_count(self, key_hash: str) -> int:
+        return int(self._exec("SELECT COUNT(*) FROM memory WHERE key_hash=?", (key_hash,)).fetchone()[0])
+
+    def memory_delete(self, key_hash: str, name: str) -> bool:
+        if name == "*":
+            return self._exec("DELETE FROM memory WHERE key_hash=?", (key_hash,)).rowcount > 0
+        return self._exec("DELETE FROM memory WHERE key_hash=? AND name=?", (key_hash, name)).rowcount > 0
 
     def add_lead(self, email: str, source: str = "") -> None:
         self._exec("INSERT OR IGNORE INTO leads VALUES (?,?,?)", (email.lower().strip(), source, int(time.time())))
