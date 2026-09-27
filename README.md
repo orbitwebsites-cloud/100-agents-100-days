@@ -1,74 +1,96 @@
-# 100 Agents · 100 Days
+# 100 Agents · 100 Days → **Hundred**
 
-Building 24 genuinely-agentic tools in public — the kind with a real trigger, a
-real integration, and a real action, not a ChatGPT prompt in a trenchcoat.
+100 expert AI agents, sold as a subscription, delivered as **one MCP link** that
+customers paste into the AI they already use — Claude, ChatGPT, Cursor, VS Code,
+Claude Code, Windsurf, Gemini CLI.
 
-> The test every agent here has to pass: **could you get the same result by typing
-> one prompt into ChatGPT?** If yes, it's not an agent. If it needs to fire on its
-> own, read live data, and change something in the world — it's in.
+- **$4.99/mo per agent**, or bundles: any 5 for $14.99 · a whole category for $14.99 ·
+  everything for $29.99 · Founding Member everything for $14.99 locked for life (first 500).
+- **7-day free trial**, card required. Two agents are free forever (Meeting Ops, Copy Editor).
+- **Access follows payment.** Card declines → agents switch off on the next call.
+  Payment succeeds → they're back instantly, same link, nothing to reinstall.
+- **No LLM runs on our side.** The customer's AI does the reasoning; we supply the expert
+  playbook and the deterministic tools. Inference cost is zero, so margin is ~all of it.
 
-## Agent #1 — Meeting Ops
+> The test every agent has to pass: **is it obviously better than typing the same
+> request into your AI with no agent?** Each one ships a top-1% practitioner's
+> operating procedure plus real code for the parts AI gets wrong — math, dates,
+> statistics, character limits, parsing, scoring.
 
-When a meeting ends, Meeting Ops runs the whole post-meeting workflow:
+## What an agent is
 
-1. **Files the notes** — a clean summary + decisions, into **Notion**
-2. **Creates the tasks** — one **Linear** issue per action item, with owners
-3. **Drafts the follow-up** — a send-ready email to the attendees, in **Gmail**
+```
+hundred/agents/sales/cold_email.py
+  AGENT = Agent(slug="cold-email", name="Cold Email Closer", playbook="""…expert procedure…""")
+  @AGENT.tool def score_subject_line(...)      ← deterministic, tested, exposed as an MCP tool
+  @AGENT.tool def schedule_sequence(...)
+```
 
-It's a real agent loop: the model reads the transcript and *calls the tools
-itself* until the work is done — it doesn't just describe the notes, it takes the
-actions. Runs on either brain:
+Over MCP each owned agent appears as `<agent>__start` (returns the playbook — the AI
+follows it) plus its tools (`cold_email__score_subject_line`, …). Keys that own more
+than ~40 tools automatically get **router mode**: three meta-tools
+(`hundred_find_agent`, `hundred_start`, `hundred_run`) that reach every agent, so
+All-Access works in clients that cap tool counts. Every tool is annotated read-only,
+so clients can auto-approve them.
 
-- **Cerebras** (free tier — Llama/Qwen) via the OpenAI-compatible API
-- **Anthropic** (`claude-opus-4-8`) via the Tool Runner
+The quality bar is enforced in code: `tests/test_library.py` fails any agent with a thin
+playbook, missing sections, a tool the playbook never tells the AI to call, or an
+undocumented parameter. The full bar is in [docs/AGENT_SPEC.md](docs/AGENT_SPEC.md); the
+roster in [docs/ROSTER.md](docs/ROSTER.md).
 
-Whichever key you put in `.env` is the one it uses (Cerebras wins if both are set).
-
-### Run it in 30 seconds
+## Run it
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # add CEREBRAS_API_KEY (free) or ANTHROPIC_API_KEY
-python run.py                 # runs on the bundled sample transcript
+cp .env.example .env
+python -m pytest -q                         # library quality gates + billing + MCP end-to-end
+python -m hundred.admin catalog             # list the agents
+python -m hundred.admin serve               # storefront + MCP on http://localhost:8000
 ```
 
-Free key: sign up at [cloud.cerebras.ai](https://cloud.cerebras.ai), drop the key in
-`CEREBRAS_API_KEY`. With just that, the Notion / Linear / Gmail connectors run in
-**dry-run**: they print exactly what they *would* do and return a fake id. So the
-whole agent works end-to-end before you connect a single external account —
-perfect for a first look (and for filming).
+Try it in Claude Code without paying anything:
+
+```bash
+claude mcp add --transport http hundred "http://localhost:8000/mcp"            # free agents
+python -m hundred.admin issue-key --email you@example.com --plan all            # comp key for everything
+claude mcp add --transport http hundred-all "http://localhost:8000/mcp?key=hnd_live_…"
+```
+
+## How the business runs
+
+| Piece | Where |
+|---|---|
+| Storefront, per-agent SEO pages, pick-your-agents checkout | `hundred/server/web.py`, `app.py` |
+| Stripe Checkout, webhooks, portal, reconcile | `hundred/server/billing.py` |
+| Licenses (hashed keys, one-time reveal, usage metering) | `hundred/server/store.py` |
+| Entitlement-gated MCP endpoint | `hundred/server/mcp_server.py` |
+| Pricing & what each plan unlocks | `hundred/plans.py` |
+| Operator CLI (stripe-setup, comp keys, revoke, reconcile) | `hundred/admin.py` |
+| Deploy | `Dockerfile`, `fly.toml`, [docs/LAUNCH_CHECKLIST.md](docs/LAUNCH_CHECKLIST.md) |
+| Go-to-market, launch copy, email sequences, directories | [`marketing/`](marketing/) |
+
+Keys can be passed as `?key=`, `Authorization: Bearer`, or path-style
+`/k/<key>/mcp` for clients that drop query strings. `&agents=a,b` scopes a
+connection to a few agents; `&mode=direct|router` forces a mode.
+
+---
+
+## Agent #1 — Meeting Ops (standalone version)
+
+The original day-1 build still lives here as a standalone script that takes real
+actions (Notion page, Linear issues, Gmail draft) with its own model loop:
 
 ```bash
 python run.py --selftest                    # check the plumbing, no API key needed
-python run.py --transcript path/to/your.txt # your own meeting
+python run.py                               # runs on the bundled sample (Cerebras or Anthropic key)
 ```
-
-### Go live
-
-Fill in the optional keys in `.env` and that connector flips from dry-run to real:
-
-| Connector | Keys | What it does |
-|-----------|------|--------------|
-| Notion | `NOTION_API_KEY`, `NOTION_DATABASE_ID` | Files the meeting notes as a page |
-| Linear | `LINEAR_API_KEY`, `LINEAR_TEAM_ID` | Creates an issue per action item |
-| Gmail | *(dry-run for now)* | Drafts the follow-up email |
-
-### How it's built
 
 ```
 run.py                     CLI entry point (--transcript / --selftest)
-meeting_ops/
-  agent.py                 Anthropic Tool Runner loop
-  cerebras_agent.py        Cerebras / OpenAI-compatible loop (same tools)
-  prompts.py               the shared system prompt
-  tools.py                 the 3 tools + schemas both backends share
-  config.py                env keys, provider pick, dry-run switch
-  connectors/
-    notion.py              real Notion REST, dry-run fallback
-    linear.py              real Linear GraphQL, dry-run fallback
-    gmail.py               drafts the follow-up (OAuth: a later episode)
+meeting_ops/               agent loop (Anthropic Tool Runner or Cerebras), prompts, tools, connectors
 samples/standup_transcript.txt
 ```
 
-The build plan for all 24 agents lives in the 6-week launch spreadsheet. Meeting
-Ops is Sprint 1, Day 1 — the flagship.
+The MCP version (`hundred/agents/ops/meeting_ops.py`) is the free lead-magnet agent in
+the store: same job, but it runs inside the customer's own AI and uses *their* Notion /
+Linear / Gmail connectors.

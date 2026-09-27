@@ -1,4 +1,16 @@
+# Meeting Ops (standalone agent #1)
 anthropic>=0.116.0
 openai>=1.40.0
 python-dotenv>=1.0.0
 requests>=2.31.0
+
+# Hundred — the agent store + MCP server
+mcp>=2.2,<3
+stripe>=15,<16
+pydantic>=2.7
+starlette>=0.40
+uvicorn[standard]>=0.30
+
+# dev
+pytest>=8
+httpx>=0.27
