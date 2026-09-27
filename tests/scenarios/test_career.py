@@ -243,14 +243,14 @@ STAR_I = (
 
 def test_star_we_story_flags_ownership():
     out = call("interview-coach", "check_star_story", story=STAR_WE)
-    words = re.findall(r"[A-Za-z0-9]+(?:'[A-Za-z]+)?", STAR_WE)
+    words = [t for t in STAR_WE.split() if re.search(r"[^\W_]", t)]  # Word's count: "sign-up" is one word
     we_hand = len(re.findall(r"\b(?:we|our|us)\b|\bthe team\b", STAR_WE, re.I))
     i_hand = len(re.findall(r"\bI\b|\bmy\b|\bme\b", STAR_WE))
     assert (we_hand, i_hand) == (11, 0)
     assert out["ownership"]["we_total"] == we_hand and out["ownership"]["i_total"] == 0
     assert out["ownership"]["we_in_action"] == 7 and out["ownership"]["i_in_action"] == 0
     assert any("'we' 7× vs 'I' 0×" in i for i in out["issues"])
-    assert out["words"] == len(words) == 120 and out["spoken_seconds"] == round(120 / 150 * 60) == 48
+    assert out["words"] == len(words) == 118 and out["spoken_seconds"] == round(118 / 150 * 60) == 47
     assert out["score"] < 80
     fixed = call("interview-coach", "check_star_story", story=STAR_I)
     assert fixed["score"] == 100 and fixed["ownership"]["i_in_action"] > fixed["ownership"]["we_in_action"]

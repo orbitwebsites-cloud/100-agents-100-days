@@ -288,7 +288,7 @@ def mmss(seconds: float) -> str:
 
 def spoken_words(script: str) -> list[str]:
     """Words an audience would hear: stage directions in [brackets] / (Capitalised parens) removed."""
-    return text.words(STAGE_DIR_RE.sub(" ", strip_markdown(script)))
+    return text.words(STAGE_DIR_RE.sub(" ", strip_markdown(script)), spoken=True)
 
 
 def proper_nouns(s: str) -> list[str]:

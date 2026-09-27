@@ -168,7 +168,7 @@ def _number_words(m: re.Match) -> int:
 def spoken_word_count(line: str) -> int:
     """Words as they will be spoken: numbers, currency and % expanded; everything else as written."""
     extra = sum(_number_words(m) for m in NUM_RE.finditer(line))
-    return len(text.words(NUM_RE.sub(" ", line))) + extra
+    return len(text.words(NUM_RE.sub(" ", line), spoken=True)) + extra
 
 
 def _spoken_lines(script: str) -> tuple[list[str], list[str]]:

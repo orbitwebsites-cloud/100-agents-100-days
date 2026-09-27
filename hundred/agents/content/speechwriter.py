@@ -199,7 +199,7 @@ def timing(script: str, wpm: int = 130, slot_minutes: float = 0.0, pace: Literal
     if slot_minutes < 0 or slot_minutes > 180:
         raise ToolError("slot_minutes must be 0-180.")
     secs = _script_sections(script)
-    words = text.words(_spoken_text(script))
+    words = text.words(_spoken_text(script), spoken=True)
     if len(words) < 10:
         raise ToolError("Fewer than 10 spoken words.")
     pause_s = 0.0

@@ -178,7 +178,7 @@ def analyze_transcript(transcript: str, host: str = "") -> dict:
             unattributed += 1
             continue
         speaker, said = m.group(1).strip(), m.group(2)
-        wc = len(text.words(said))
+        wc = len(text.words(said, spoken=True))
         words_by[speaker] += wc
         questions[speaker] += said.count("?")
         f = len(FILLER_RE.findall(said))

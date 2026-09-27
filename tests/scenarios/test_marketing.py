@@ -140,10 +140,11 @@ BV_REWRITE = (
 def test_brand_voice_scenario():
     prof = run("brand-voice", "extract_voice_profile", samples=BV_SAMPLES, brand_name="Fernhill")
     p = prof["profile"]
-    # Independent count (whitespace tokens, sentences split on . ? !): 280 tokens (tool splits "cash-up"/"one-card" → 282),
+    # Independent count (whitespace tokens, sentences split on . ? !): 280 tokens — the shared tokenizer now counts
+    # "cash-up"/"one-card" as one word each, like Word, so the tool matches it exactly;
     # 32 sentences, 17 contractions and 0 expandable forms → 100 %; "you"-family incl. you'll/you're = 23 → 8.2 per 100.
-    assert p["sentences"] == 32 and p["words"] == 282
-    assert p["avg_sentence_words"] == pytest.approx(8.8, abs=0.06)  # 282/32 = 8.81 (independent 280/32 = 8.75)
+    assert p["sentences"] == 32 and p["words"] == 280
+    assert p["avg_sentence_words"] == pytest.approx(8.75, abs=0.06)  # 280/32
     assert p["contraction_rate_pct"] == 100.0
     assert p["pronouns_per_100"]["you"] == pytest.approx(8.2, abs=0.1)
     assert max(p["pronouns_per_100"], key=p["pronouns_per_100"].get) == "you"

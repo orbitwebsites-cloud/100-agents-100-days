@@ -66,7 +66,7 @@ def stem(w: str) -> str:
 def term_set(s: str) -> frozenset[str]:
     """Lower-cased content words of a string, stopwords removed, light stemming."""
     out = set()
-    for w in text.words(s.lower()):
+    for w in text.words(s.lower(), spoken=True):  # split "follow-up" so it matches "follow up"
         if w in text.STOPWORDS or len(w) < 3:
             continue
         out.add(stem(w))

@@ -20,7 +20,7 @@ def call(tool, **kwargs):
 
 def test_issue_audit_sections_and_balance():
     out = call("issue_audit", markdown=ISSUE, target_minutes=3)
-    assert out["words"] == 270  # headings count toward reading time; sections exclude them
+    assert out["words"] == 267  # headings count toward reading time; sections exclude them (Word's count)
     assert out["reading_minutes"] == 1.1
     lead = next(s for s in out["sections"] if s["section"].startswith("Lead"))
     assert lead["words"] == 246 and lead["links"] == 2 and lead["share_pct"] > 90

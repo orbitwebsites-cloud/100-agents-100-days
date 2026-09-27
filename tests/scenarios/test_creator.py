@@ -10,6 +10,8 @@ import math
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import re
+
 import pytest
 
 from hundred import registry
@@ -110,7 +112,8 @@ def test_short_video_timing_counts_numbers_as_spoken():
     out = run("short-video-scripter", "time_script", script=SCRIPT, pace="natural", platform="tiktok", target_seconds=60)
     spoken = [len(line.replace("-", " ").split()) for line in SPOKEN.splitlines()]
     assert [r["words"] for r in out["lines"]] == spoken
-    assert out["spoken_words"] == sum(spoken) == 150 and out["written_words"] == 138
+    written = sum(len([t for t in r["line"].split() if re.search(r"[^\W_]", t)]) for r in out["lines"])  # Word's count
+    assert out["spoken_words"] == sum(spoken) == 150 and out["written_words"] == written == 133
     assert out["total_seconds"] == 60.0 == 150 / 2.5  # a written-word count would have said 55.2 s
     assert out["hook_words"] == 7 and out["hook_seconds"] == 2.8
     assert out["lines"][-1]["starts_at"] == "0:54" and (150 - 14) / 2.5 == 54.4 and not out["flags"]

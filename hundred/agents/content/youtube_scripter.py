@@ -162,7 +162,7 @@ def _split_script(script: str) -> list[dict]:
     out = []
     for s in secs:
         body = "\n".join(s["lines"])
-        spoken = text.words(STAGE.sub(" ", c.strip_markdown(body)))
+        spoken = text.words(STAGE.sub(" ", c.strip_markdown(body)), spoken=True)
         if not spoken and s["title"] == "(untitled)":
             continue
         out.append({"title": s["title"], "words": len(spoken), "directions": len(STAGE.findall(body))})

@@ -682,7 +682,9 @@ STRINGS = [
  ("billing.empty.body", "empty_state_body", "Invoices appear here after your first payment. Download them as PDF for your records."),  # good
  ("billing.cta", "button", "Upgrade plan"),                          # good
 ]
-UX_DECOYS = {"billing.error.expired", "billing.toast.saved", "billing.empty.title", "billing.empty.body", "billing.cta"}
+# "billing.empty.body" left the decoy set when the shared syllable counter learned that "PDF" is
+# three syllables: by CMU dictionary counts its FK grade is 6.53, over the 6.0 body-copy limit.
+UX_DECOYS = {"billing.error.expired", "billing.toast.saved", "billing.empty.title", "billing.cta"}
 
 
 def test_ux_microcopy_lint():
@@ -696,6 +698,7 @@ def test_ux_microcopy_lint():
     assert "jargon: token" in by["settings.2fa.tooltip"] and "FK grade" in by["settings.2fa.tooltip"]
     assert "exclamation" in by["billing.error.card"]
     assert all(by[k] == "" for k in UX_DECOYS)
+    assert "FK grade 6.5" in by["billing.empty.body"]
 
 
 @pytest.mark.parametrize("key,score,what,how", [

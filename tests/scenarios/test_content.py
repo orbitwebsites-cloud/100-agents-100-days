@@ -250,6 +250,14 @@ WORD = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)*")
 
 
 def ref_words(s: str) -> int:
+    # Word/Google Docs convention, independent of our tokenizer: whitespace-separated tokens that
+    # contain a letter or digit ("fast-paced", "$38,000" and a URL are one word each).
+    return len([t for t in s.split() if re.search(r"[^\W_]", t)])
+
+
+def ref_spoken_words(s: str) -> int:
+    # What a listener hears as separate words: hyphenated compounds and digit groups split
+    # ("fast-paced" = 2). Timing tools count this way; independent of our tokenizer.
     return len(WORD.findall(s))
 
 
@@ -308,7 +316,7 @@ def call(slug: str, tool: str, **kwargs):
 def test_copy_editor_diagnose_baseline():
     out = call("copy-editor", "diagnose", draft=COPY_DRAFT)
     b = out["baseline"]
-    assert b["words"] == ref_words(COPY_DRAFT) == 282
+    assert b["words"] == ref_words(COPY_DRAFT) == 281
     assert b["sentences"] == ref_sentences(COPY_DRAFT) == 16
     # hand-identified passives: "a decision was made by", "was cleared by Priya", "what was decided … why it was decided", "habits can be broken"
     assert b["passive_sentences"] == 4
@@ -345,10 +353,10 @@ def test_copy_editor_spelling_variant_comes_from_the_original():
 
 def test_copy_editor_readability_diff_matches_hand_counts():
     out = call("copy-editor", "readability_diff", before=COPY_DRAFT, after=COPY_EDIT)
-    assert (out["before"]["words"], out["after"]["words"]) == (282, ref_words(COPY_EDIT)) == (282, 228)
+    assert (out["before"]["words"], out["after"]["words"]) == (281, ref_words(COPY_EDIT)) == (281, 228)
     assert (out["before"]["sentences"], out["after"]["sentences"]) == (16, ref_sentences(COPY_EDIT)) == (16, 18)
     assert out["after"]["passive_sentences"] == 0 and out["after"]["hedges"] == 0
-    assert out["words_change_pct"] == round(100 * (228 - 282) / 282, 1) == -19.1
+    assert out["words_change_pct"] == round(100 * (228 - 281) / 281, 1) == -18.9
     assert out["warnings"] == []  # "3 features" → "three features" is not a lost number
 
 
@@ -446,8 +454,8 @@ def test_newsletter_audit_counts_and_flags():
     secs = _sections(NL_ISSUE)
     heading_words = sum(ref_words(h) for h in re.findall(r"^## (.*)$", NL_ISSUE, flags=re.M))
     total = sum(secs.values()) + heading_words  # headings are read too
-    assert out["words"] == total == 394
-    assert [r["words"] for r in out["sections"]] == list(secs.values()) == [77, 186, 44, 75]
+    assert out["words"] == total == 383
+    assert [r["words"] for r in out["sections"]] == list(secs.values()) == [77, 182, 39, 73]
     assert out["reading_minutes"] == round(total / 238, 1)
     lead = "The lead: Stripe's new fee tiers, explained"
     assert out["lead_share_pct"] == round(100 * secs[lead] / total, 1)
@@ -479,7 +487,7 @@ def test_newsletter_subject_lines():
 def _spoken(md: str) -> list[int]:
     words = []
     for block in re.split(r"^## .*$", md, flags=re.M)[1:]:
-        words.append(ref_words(re.sub(r"\[[^\]]*\]", " ", block)))
+        words.append(ref_spoken_words(re.sub(r"\[[^\]]*\]", " ", block)))
     return words
 
 
@@ -522,23 +530,24 @@ def test_blog_keyword_placement_uses_body_not_title():
     assert out["placements"]["first_100_words"] is ("remote onboarding checklist" in first100) is False
     assert out["placements"]["title"] is True and out["placements"]["any_h2"] is False
     assert out["occurrences"] == BLOG_DRAFT.lower().count("remote onboarding checklist") == 2
-    assert out["density_pct"] == round(100 * 2 * 3 / ref_words(BLOG_DRAFT), 2) == 1.43
+    assert out["density_pct"] == round(100 * 2 * 3 / ref_words(BLOG_DRAFT), 2) == 1.44
 
 
 def test_blog_structure_and_readability_counts():
     lint = call("blog-writer", "outline_lint", markdown=BLOG_DRAFT)
-    assert lint["total_words"] == ref_words(BLOG_DRAFT) == 421
+    assert lint["total_words"] == ref_words(BLOG_DRAFT) == 416
     assert lint["intro_words"] == ref_words(BLOG_DRAFT.split("\n## ")[0].split("\n", 1)[1]) == 94
     h2 = {s["title"]: s["words"] for s in lint["sections"] if s["level"] == 2}
     for part in BLOG_DRAFT.split("\n## ")[1:]:
         title, _, body = part.partition("\n")
         assert h2[title] == ref_words(body)
-    assert {s["title"] for s in lint["sections"] if s.get("flag", "").startswith("thin")} == {"Day one", "Thirty days", "Tools"}
+    # "Before day one" is 79 words by Word's count ("first-day", "one-page" are one word each): thin (< 80).
+    assert {s["title"] for s in lint["sections"] if s.get("flag", "").startswith("thin")} == {"Before day one", "Day one", "Thirty days", "Tools"}
     rr = call("blog-writer", "readability_report", markdown=BLOG_DRAFT)
     body = "\n".join(l for l in BLOG_DRAFT.splitlines() if not l.startswith("#"))
-    assert rr["words"] == ref_words(body) == 403
+    assert rr["words"] == ref_words(body) == 398
     assert rr["sentences"] == ref_sentences(body) == 26
-    assert rr["avg_sentence_words"] == round(403 / 26, 1)
+    assert rr["avg_sentence_words"] == round(398 / 26, 1)
 
 
 # ── 7. case-study-writer — support-desk customer story ────────────────────────
@@ -622,7 +631,7 @@ def test_repurposer_fit_check_counts_like_each_platform():
 
 # ── 9. speechwriter — best-man toast, 3-minute slot, fast talker ──────────────
 def _speech_words(md: str) -> int:
-    return ref_words(re.sub(r"^## .*$|\[[^\]]*\]", " ", md, flags=re.M))
+    return ref_spoken_words(re.sub(r"^## .*$|\[[^\]]*\]", " ", md, flags=re.M))
 
 
 def test_speech_timing_matches_hand_math():

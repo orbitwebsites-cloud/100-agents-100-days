@@ -295,7 +295,7 @@ def jaccard(a: set, b: set) -> float:
 
 
 def shingles(s: str, n: int = 3) -> set[tuple[str, ...]]:
-    ws = [w.lower() for w in _text.words(s)]
+    ws = [w.lower() for w in _text.words(s, spoken=True)]  # "same-day" and "same day" shingle alike
     if len(ws) < n:
         return {tuple(ws)} if ws else set()
     return {tuple(ws[i : i + n]) for i in range(len(ws) - n + 1)}

@@ -102,4 +102,4 @@ def test_lint_script_bad_input():
 def test_time_script_reads_numbers_aloud():
     out = call("time_script", script="Save $250,000 by 2035 at 4.5% a year.", pace="natural")
     # save | two hundred fifty thousand dollars | by | twenty thirty five | at | four point five percent | a year
-    assert out["written_words"] == 10 and out["spoken_words"] == 1 + 5 + 1 + 3 + 1 + 4 + 2
+    assert out["written_words"] == 8 and out["spoken_words"] == 1 + 5 + 1 + 3 + 1 + 4 + 2
