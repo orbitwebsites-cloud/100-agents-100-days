@@ -63,7 +63,7 @@ def test_debt_payoff_avalanche_vs_snowball_and_minimums():
     assert av["attack_order"] == ["Card A", "Card B", "Card C"]
     assert sn["attack_order"] == ["Card B", "Card A", "Card C"]
     assert av["months_to_debt_free"] == 24
-    assert av["debt_free_date"] == "2028-10"
+    assert av["debt_free_date"] == "2028-09"  # payment 1 = Oct 2026, so payment 24 = Sep 2028
     assert av["total_interest"] == 2752.36
     assert av["total_interest"] < sn["total_interest"]
     assert av["minimums_only"]["months"] == 64

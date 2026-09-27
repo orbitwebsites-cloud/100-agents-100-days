@@ -68,9 +68,10 @@ def test_explain_structure_rejects_empty():
 def test_lint_sql_finds_classic_traps():
     out = call("lint_sql", sql=Q)
     rules = [f["rule"] for f in out["findings"]]
-    assert rules[:3] == ["not-in-subquery", "leading-wildcard", "left-join-cancelled"]
+    # lower(u.email) is lowercase in the query — it must still be caught as non-sargable
+    assert rules[:4] == ["not-in-subquery", "leading-wildcard", "non-sargable", "left-join-cancelled"]
     assert "deep-offset" in rules
-    assert out["score"] == 32
+    assert out["score"] == 12
     assert out["verdict"].startswith("Likely wrong or slow")
 
 

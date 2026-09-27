@@ -57,6 +57,10 @@ AGENT = Agent(
        per-review sentiment, issue tags, urgency, the aggregated issue table (share of reviews
        and average rating per issue) and the order to reply in. Reply to the queue in that
        order: 1-2 stars with a service/defect issue first, recent before old, 5-stars last.
+       Anything in `safety_escalations` (injury, burns, choking, sharp edges) goes to a human
+       owner today with the evidence — reply publicly only with a short, caring, offline
+       reply that admits nothing. Run `check_reportable` on every `report_candidates` id.
+       Read `untagged_ids` yourself: an issue the tagger missed is still an issue.
     2. **Draft the reply** using the rating-specific structure (Frameworks). Mirror the
        reviewer's exact issue words. For ≤ 3 stars give the offline path with a real
        address/handle. For 4-5 stars, thank for the specific praise and add one useful line
@@ -125,10 +129,13 @@ AGENT = Agent(
 )
 
 ISSUE_TAGS: list[tuple[str, str]] = [
+    ("safety_injury", r"\b(cut (my|his|her|their|our|me|him)|injur(y|ies|ed)|hurt (my|me|him|her|them)|burn(ed|t)? (my|me|him|her)|urgent care|emergency room|hospital|chok(e|ed|ing)|sharp edges?|unsafe|dangerous|allergic reaction|rash|caught fire|exploded|shattered in)\b"),
+    ("leaking", r"(\b(leak(s|ed|ing)?|leaky|spill(s|ed|ing)?|dripp?(s|ed|ing)?|soak(ed|s)?)\b|not leak[- ]?proof)"),
+    ("delivery_lost", r"\b(stolen|lost in (the )?(mail|post|transit)|never (got|received) (it|my|the)|wrong (porch|house|door)|left (it )?(at|on) the (wrong|porch|doorstep))\b"),
     ("shipping_delay", r"\b(late|delay|took (\d+|two|three|four|five) (weeks?|days?)|slow (shipping|delivery)|never (arrived|came|received)|still waiting|weeks to arrive|shipping (was|took))\b"),
     ("damaged_on_arrival", r"\b(arrived (broken|damaged|cracked|dented|leaking|shattered)|broken (on arrival|when it arrived)|damaged (box|package|in transit)|cracked|shattered|dented)\b"),
     ("defect_quality", r"\b(stopped working|doesn'?t work|broke (after|within)|fell apart|cheap(ly made)?|flimsy|poor quality|low quality|faulty|defective|peeling|ripped|tore|malfunction)\b"),
-    ("sizing_fit", r"\b(runs? (small|large|big)|too (small|big|large|tight|loose|short|long)|doesn'?t fit|size (up|down)|wrong size|fits? (perfectly|great|true to size)|true to size)\b"),
+    ("sizing_fit", r"\b(runs? (small|large|big)|too (small|big|large|tight|loose|short|long)|(doesn'?t|does not|didn'?t|did not|won'?t) fit|size (up|down)|wrong size|fits? (perfectly|great|true to size)|true to size)\b"),
     ("not_as_described", r"\b(not as (described|pictured|advertised|shown)|looks nothing like|different (from|than) (the )?(picture|photo|listing)|misleading|false advertising|smaller than (expected|it looks))\b"),
     ("wrong_item", r"\b(wrong (item|product|colou?r|size)|received (the )?wrong|not what i ordered|missing (item|part|piece)s?)\b"),
     ("customer_service", r"\b(customer (service|support)|support (never|didn'?t|hasn'?t)|no (response|reply|one (answered|responded))|never (responded|replied|answered)|ignored|rude|unhelpful|helpful (support|team|service))\b"),
@@ -140,6 +147,22 @@ ISSUE_TAGS: list[tuple[str, str]] = [
 ]
 NEG_WORDS = re.compile(r"\b(terrible|awful|horrible|worst|disappoint(ed|ing)|useless|garbage|junk|never again|regret|frustrat(ed|ing)|angry|scam|broken|cheap|flimsy|poor|bad|hate|waste|returned|refund)\b", re.I)
 POS_WORDS = re.compile(r"\b(love|great|excellent|amazing|perfect|fantastic|wonderful|awesome|recommend|happy|pleased|impressed|best|quality|sturdy|beautiful|fast|easy|works)\b", re.I)
+
+
+_NEGATED = re.compile(r"\b(no|not|never|doesn'?t|does not|didn'?t|did not|won'?t|zero|without)\s+(\w+\s+){0,2}$")
+
+
+def _tag_matches(tag: str, rx: str, low: str) -> bool:
+    """True if the tag's pattern occurs un-negated ("never leaks", "no spills" are praise, not a leak complaint)."""
+    for m in re.finditer(rx, low):
+        if tag == "leaking" and m.group(0).startswith("not leak"):
+            return True
+        if tag == "leaking" and re.match(r"[- ]?(proof|free|tight)", low[m.end() : m.end() + 7]):
+            continue  # "leak proof" / "leak-free" is praise
+        if tag in ("leaking", "safety_injury") and _NEGATED.search(low[max(0, m.start() - 30) : m.start()]):
+            continue
+        return True
+    return False
 
 
 def _ceil(x: float) -> int:
@@ -188,7 +211,20 @@ def tag_reviews(reviews: list[dict], today: str = "") -> dict:
         if rating is not None and not 1 <= rating <= 5:
             raise ToolError(f"review {r.get('id', i)}: rating must be 1-5.")
         low = txt.lower()
-        tags = [tag for tag, rx in ISSUE_TAGS if re.search(rx, low)]
+        tags = [tag for tag, rx in ISSUE_TAGS if _tag_matches(tag, rx, low)]
+        policy = []
+        if PRIVATE_INFO.search(txt):
+            policy.append("personal information")
+        if PROFANITY.search(txt):
+            policy.append("profanity")
+        if THREAT.search(txt):
+            policy.append("threat")
+        if COMPETITOR.search(txt):
+            policy.append("competitor promotion")
+        if WRONG_PRODUCT.search(txt):
+            policy.append("wrong product")
+        if COURIER_ONLY.search(txt) and not PRODUCT_WORDS.search(txt):
+            policy.append("courier-only")
         sent = _sentiment(txt, rating)
         days_old = None
         if r.get("date"):
@@ -201,7 +237,7 @@ def tag_reviews(reviews: list[dict], today: str = "") -> dict:
             urgency += {1: 50, 2: 40, 3: 25, 4: 8, 5: 3}[int(round(rating))]
         elif sent == "negative":
             urgency += 35
-        service_or_defect = {"customer_service", "defect_quality", "damaged_on_arrival", "wrong_item", "not_as_described"} & set(tags)
+        service_or_defect = {"customer_service", "defect_quality", "damaged_on_arrival", "wrong_item", "not_as_described", "leaking"} & set(tags)
         urgency += 10 * len(service_or_defect)
         if "returns_refund" in tags:
             urgency += 8
@@ -209,7 +245,11 @@ def tag_reviews(reviews: list[dict], today: str = "") -> dict:
             urgency += 10
         if len(text.words(txt)) >= 60:
             urgency += 5  # long reviews get read by more prospects
-        if urgency >= 60:
+        safety = "safety_injury" in tags
+        if safety:
+            urgency += 100  # injury claims jump the queue and go to a human owner today
+            level = "ESCALATE today (safety) — human owner + counsel; reply without admitting fault"
+        elif urgency >= 60:
             level = "reply today"
         elif urgency >= 35:
             level = "reply within 48h"
@@ -235,6 +275,7 @@ def tag_reviews(reviews: list[dict], today: str = "") -> dict:
                 "urgency": level,
                 "words": len(text.words(txt)),
                 "reply_structure": "AAO (acknowledge, account, offline)" if (rating is not None and rating <= 3) or sent == "negative" else "TSA (thank, specific, add value)",
+                "policy_flags": policy,
             }
         )
     n = len(rows)
@@ -245,10 +286,12 @@ def tag_reviews(reviews: list[dict], today: str = "") -> dict:
         issues.append({"issue": t, "reviews": len(rs), "share_pct": pct(len(rs) / n), "avg_rating": round(sum(rs) / len(rs), 2), "evidence": issue_quotes.get(t, "")})
     untagged = [r["id"] for r in rows if not r["issue_tags"]]
     queue = sorted(rows, key=lambda r: -r["urgency_score"])
-    upstream = [i for i in issues if i["reviews"] >= 3 and i["share_pct"] >= 10 and i["issue"] != "praise_quality" and i["avg_rating"] <= 3.5]
+    upstream = [i for i in issues if (i["reviews"] >= 3 and i["share_pct"] >= 10 and i["issue"] != "praise_quality" and i["avg_rating"] <= 3.5) or i["issue"] == "safety_injury"]
     return {
         "reviews": rows,
         "queue_order": [r["id"] for r in queue],
+        "safety_escalations": [r["id"] for r in rows if "safety_injury" in r["issue_tags"]],
+        "report_candidates": [{"id": r["id"], "flags": r["policy_flags"]} for r in rows if r["policy_flags"]],
         "average_rating": round(avg, 2) if avg is not None else None,
         "distribution": {str(k): dist[k] for k in sorted(dist)},
         "negative_share_pct": pct(sum(dist[k] for k in (1, 2)) / len(rated)) if rated else None,
@@ -257,7 +300,8 @@ def tag_reviews(reviews: list[dict], today: str = "") -> dict:
         "untagged_ids": untagged,
         "summary": (
             f"{n} reviews, avg {avg:.2f}" if avg is not None else f"{n} reviews"
-        ) + f"; {len([r for r in rows if r['urgency'] == 'reply today'])} need a reply today. Top issues: " + ", ".join(f"{i['issue']} ({i['share_pct']}%)" for i in issues[:3]) + ".",
+        ) + (f"; SAFETY: {', '.join(r['id'] for r in rows if 'safety_injury' in r['issue_tags'])} — escalate to a human today" if any("safety_injury" in r["issue_tags"] for r in rows) else "")
+        + f"; {len([r for r in rows if r['urgency'] == 'reply today'])} need a reply today. Top issues: " + ", ".join(f"{i['issue']} ({i['share_pct']}%)" for i in issues[:3]) + ".",
     }
 
 
@@ -265,6 +309,7 @@ NON_APOLOGY = ["sorry you feel", "sorry that you feel", "sorry for any inconveni
 DEFENSIVE = re.compile(r"\b(however|but our|but we|we never|you should have|you didn'?t|as (stated|mentioned|noted) (in|on)|our policy|per our|clearly (states|stated)|it is not our|not our fault|the carrier|usps|fedex|ups|dhl|out of our (control|hands)|beyond our control)\b", re.I)
 PUBLIC_MONEY = re.compile(r"\b(refund(ed|ing)?|discount|coupon|promo code|voucher|store credit|\d+% off|free (product|replacement|gift)|gift card)\b", re.I)
 ADMISSION = re.compile(r"\b(known issue|defective batch|bad batch|quality control (issue|failure)|our (fault|mistake|error)|liab(le|ility)|recall(ed)?|design flaw|manufacturing defect)\b", re.I)
+SAFETY_ADMISSION = re.compile(r"\b(should never (have )?(happened|reach\w*|happen)|(same|this|that|the|a) (bad )?batch|defect(ive)?|our fault|we caused|caused (the|your|his|her|their)|recall(ed)?|faulty)\b", re.I)
 PII = re.compile(r"(order\s*#?\s*\d{3,}|[\w.+-]+@[\w-]+\.[\w.]+|\+?\d[\d\s().-]{8,}\d)", re.I)
 OFFLINE = re.compile(r"\b(email|e-mail|dm|message us|reach (me|us)|contact (me|us)|call us|text us|support@|help@|care@|@[\w.]+|\.com|whatsapp|phone)\b", re.I)
 TEMPLATE_SMELL = ["we appreciate your business", "thank you for your feedback", "your feedback is important", "we value your", "we strive to", "we take (this|all) (feedback|concerns) seriously", "please accept our", "we hope to serve you again", "valued customer", "we're glad to hear", "thanks for the review"]
@@ -332,6 +377,12 @@ def lint_response(response: str, review_text: str, rating: float, reviewer_name:
     if a:
         issues.append(f"liability-style admission: “{a.group(0)}” — describe the fix, not the failure category")
         score -= 12
+    safety_review = bool(re.search(ISSUE_TAGS[0][1], review_text.lower()))
+    if safety_review:
+        sa = SAFETY_ADMISSION.search(response)
+        if sa:
+            issues.append(f"injury/safety review: “{sa.group(0)}” concedes cause or a defect in public — say you are looking into it, move it offline, loop in counsel")
+            score -= 20
     p = PII.search(response)
     if p and not re.search(r"(support|help|care|hello|team)@", p.group(0), re.I):
         issues.append(f"personal/order data in public: “{p.group(0).strip()}”")
@@ -369,7 +420,7 @@ def lint_response(response: str, review_text: str, rating: float, reviewer_name:
         "target_words": [lo, hi],
         "mirrored_terms": mirrored,
         "issues": issues,
-        "ready_to_post": score >= 80 and not any(k in " ".join(issues) for k in ("public money", "personal/order data", "prohibited")),
+        "ready_to_post": score >= 80 and not any(k in " ".join(issues) for k in ("public money", "personal/order data", "prohibited", "concedes cause")),
         "verdict": ("Post-ready." if score >= 80 else f"Fix {len(issues)} issue(s) first.") + f" ({score}/100)",
     }
 

@@ -57,18 +57,27 @@ AGENT = Agent(
     the user is the customer, state it, and continue.
 
     ## Procedure
-    1. **Detect and score.** Call `contract_reviewer__detect_clauses` with the full text and the
-       user's role. It finds 24 clause types (limitation of liability, indemnity, IP, termination,
+    1. **Detect and score.** Call `contract_reviewer__detect_clauses` with the full text, the
+       user's role and their home state/country as `my_jurisdiction` (flags a far-away governing
+       law or venue). It finds 26 clause types (limitation of liability, indemnity, IP, termination,
        auto-renewal, non-compete, exclusivity, assignment, governing law, data protection, SLA,
        payment, price increases, audit, insurance, etc.), quotes the excerpt, and scores red flags
-       0-100 from the user's side. Missing protective clauses count as flags too.
+       0-100 from the user's side. Missing protective clauses count as flags too. It also reads
+       the liability cap (`liability_cap`: who is capped, months of fees) — feed that straight
+       into step 4 — and checks termination symmetry, data ownership and indemnity mutuality.
+       Regex detection can miss unusual drafting: still read definitions, fees, term,
+       termination, liability, indemnity and data clauses yourself (step 5).
     2. **Extract deadlines.** Call `contract_reviewer__extract_deadlines` with the text and the
        effective date. It returns every "within N days", notice period, cure period, payment term
-       and explicit date, resolved to a calendar date where possible. Never compute dates yourself.
+       and explicit date, and what each one counts from (`counts_from`). Only durations that run
+       from the effective date get a `from_effective_date`; a "90 days prior to the end of the
+       term" window gets `deadline_in_initial_term`. Never present an event-anchored duration
+       ("30 days after notice") as a calendar date. Never compute dates yourself.
     3. **Build the renewal calendar.** If the contract has a term, call
        `contract_reviewer__renewal_calendar` with effective date, initial term, notice window and
        renewal term. It returns the term end, the last day to give notice, a reminder date
-       (30 days earlier), and the next three renewal dates. Put these in the user's calendar if
+       (30 days earlier), and the next three renewal dates; if the deadline falls on a weekend
+       `weekend_note` gives the last safe business day. Put these in the user's calendar if
        Google Calendar is connected.
     4. **Quantify liability.** Call `contract_reviewer__liability_exposure` with contract value,
        the cap as written (multiple of fees or fixed amount), carve-outs, and whether consequential
@@ -168,8 +177,6 @@ CLAUSES: list[dict] = [
 # red-flag patterns evaluated on the matched excerpts / whole text, with (role → severity 1-3, message, ask)
 RED_FLAGS: list[dict] = [
     {"rx": r"unlimited|without limit|no (?:cap|limit) on|shall be liable for all", "roles": {"customer": 3, "vendor": 3}, "msg": "language suggesting unlimited liability", "ask": "mutual cap at 12 months' fees with super-cap carve-outs for confidentiality, data and IP indemnity"},
-    {"rx": r"(?:customer|client|licensee|buyer)\s+(?:shall|agrees to|will)\s+(?:defend,?\s+)?indemnify(?!.{0,200}(?:provider|vendor|supplier|licensor|company)\s+(?:shall|agrees to|will)\s+(?:defend,?\s+)?indemnify)", "roles": {"customer": 3}, "msg": "one-way (or lopsided) indemnity running from you to the vendor", "ask": "mutual indemnity: vendor covers IP infringement and data breach; you cover misuse and your content"},
-    {"rx": r"(?:provider|vendor|supplier|licensor|company|contractor)\s+(?:shall|agrees to|will)\s+(?:defend,?\s+)?indemnify(?!.{0,200}(?:customer|client|licensee)\s+(?:shall|agrees to|will)\s+(?:defend,?\s+)?indemnify)", "roles": {"vendor": 2}, "msg": "one-way indemnity running from you to the customer", "ask": "mutual indemnity limited to third-party claims, with the cap applying except for IP"},
     {"rx": r"automatically renew|auto-?renew|successive (?:renewal )?(?:terms?|periods?)", "roles": {"customer": 2, "vendor": 1}, "msg": "auto-renewal — check the notice window", "ask": "renewal only on written agreement, or notice window ≤ 30 days with a reminder obligation on the vendor"},
     {"rx": r"(?:at least|not less than|no less than|minimum of)\s+(?:ninety|one hundred twenty|one hundred eighty|9\d|1[0-9]\d|180)\s*(?:\(\d+\)\s*)?days?.{0,80}(?:notice|prior)", "roles": {"customer": 2}, "msg": "notice period of 90+ days", "ask": "30-60 days' notice"},
     {"rx": r"non-?compet\w*|shall not .{0,40}(?:develop|market|sell|offer) .{0,40}(?:compet|similar)", "roles": {"customer": 3, "vendor": 2}, "msg": "non-compete / restriction on competing products", "ask": "delete; a commercial contract should not restrict what either party builds or buys"},
@@ -225,6 +232,12 @@ def _structural_flags(text: str, role: str, my_jurisdiction: str) -> tuple[list[
         if sev:
             flags.append({"severity": sev, "flag": msg, "excerpt": excerpt(text, m) if m is not None else None, "ask_for": ask})
 
+    cust_ind = re.search(rf"{_CUSTOMER}\s+(?:shall|agrees to|will)\s+(?:defend,?\s+(?:and\s+)?)?indemnif", text, re.I)
+    vend_ind = re.search(rf"{_VENDOR}\s+(?:shall|agrees to|will)\s+(?:defend|indemnif)", text, re.I)
+    if cust_ind and not vend_ind:
+        add({"customer": 3, "vendor": 0}[role], "one-way (or lopsided) indemnity running from you to the vendor", cust_ind, "mutual indemnity: vendor covers IP infringement and data breach; you cover misuse and your content")
+    elif vend_ind and not cust_ind:
+        add({"customer": 0, "vendor": 2}[role], "one-way indemnity running from you to the customer", vend_ind, "mutual indemnity limited to third-party claims, with the cap applying except for IP")
     cap = _CAP_RX.search(text)
     if cap:
         who = cap.group("who").lower()
@@ -307,6 +320,11 @@ def detect_clauses(contract_text: str, my_role: str = "customer", my_jurisdictio
     for f in structural:
         flags.append(f)
         score += {1: 5, 2: 10, 3: 20}[f["severity"]]
+    if not any(f["flag"] == "notice period of 90+ days" for f in flags):
+        for f in flags:  # auto-renewal with a market notice window (<= 60-89 days) is a calendar item, not a negotiation point
+            if f["flag"].startswith("auto-renewal") and f["severity"] == 2:
+                f["severity"], f["flag"] = 1, "auto-renewal with a market-length notice window — put the notice deadline in the calendar"
+                score -= 5
     for mflag in missing:
         sev = 3 if mflag["key"] in ("limitation_of_liability",) else 2 if mflag["key"] in ("indemnity", "ip_ownership", "term", "governing_law", "data_protection", "termination_convenience") else 1
         flags.append({"severity": sev, "flag": "MISSING: " + mflag["flag"], "excerpt": None, "ask_for": f"add a {mflag['clause'].lower()} clause on market-standard terms"})
@@ -339,6 +357,10 @@ def _classify_ctx(ctx: str) -> str:
     c = ctx.lower()
     if re.search(r"cure|remedy", c):
         return "cure period"
+    if re.search(r"surviv", c):
+        return "confidentiality / survival"
+    if re.search(r"export|retriev|make .{0,40}available|return .{0,20}data", c):
+        return "post-termination (data export / return)"
     if re.search(r"notice|notify|terminat|non-?renew|cancel", c):
         return "notice / termination"
     if re.search(r"invoice|pay|net\b|fees|due", c):
@@ -358,6 +380,8 @@ def _classify_ctx(ctx: str) -> str:
 
 def _classify(before: str, dur_after: str) -> str:
     """Classify by the words *before* the duration first (they carry the trigger), then what follows."""
+    if re.search(r"initial term|term of (?:this|the)|for a period of|commenc\w+ on", before[-60:], re.I):
+        return "term"
     if re.search(r"successive|renewal (?:term|period)|renew(?:al|s)? for", before[-40:] + " " + dur_after[:40], re.I):
         return "renewal"
     for ctx in (before, dur_after):
@@ -365,6 +389,26 @@ def _classify(before: str, dur_after: str) -> str:
         if t != "other":
             return t
     return "other"
+
+
+def _anchor(pre: str, after: str, typ: str) -> str:
+    """What a duration counts from. Only 'effective date' / 'term' durations can be resolved from the effective date."""
+    a, b = after[:90].lower(), pre[-80:].lower()
+    if re.search(r"(?:prior to|before) (?:the )?(?:end|expir|renewal)", a):
+        return "before end of term"
+    if re.search(r"(?:after|following|of|from) (?:the )?(?:date of )?(?:termination|expiration|expiry)", a) or re.search(r"(?:upon|after|following) (?:termination|expiration)", b):
+        return "after termination / expiry"
+    if re.search(r"(?:of|after|from|following) (?:the |receipt of (?:the |an )?)?(?:invoice|date of invoice)", a):
+        return "from invoice date"
+    if re.search(r"(?:after|following|of) (?:receiving |receipt of |the date of )?(?:such |written |the )?notice|notice (?:to|from)|'?s?\s+(?:prior\s+)?(?:written\s+)?notice", a):
+        return "from notice"
+    if re.search(r"after the end of|after the close of|preceding", a):
+        return "relative to another period (see context)"
+    if typ in ("term", "renewal"):
+        return "effective date" if typ == "term" else "start of each renewal"
+    if re.search(r"effective date|commenc|signature|execution", a + " " + b):
+        return "effective date"
+    return "triggering event in context"
 
 
 @AGENT.tool
@@ -381,6 +425,8 @@ def extract_deadlines(contract_text: str, effective_date: str = "") -> dict:
     items, seen = [], set()
     for m in _DEADLINE_CTX.finditer(text):
         before, dur, after = m.group("before") or "", m.group("dur"), m.group("after") or ""
+        # classify on the whole clause up to the duration, not only the matched trigger word
+        pre = re.split(r"(?<=[a-z0-9)\"])\.\s|;", text[max(0, m.start("dur") - 160) : m.start("dur")])[-1]
         dm = DURATION_RE.search(dur)
         if not dm:
             continue
@@ -395,10 +441,14 @@ def extract_deadlines(contract_text: str, effective_date: str = "") -> dict:
             continue
         seen.add(key)
         days = duration_days(n, unit, business)
+        typ = _classify(pre or before, dur + after)
+        anchor = _anchor(pre or before, after, typ)
         resolved = None
-        if base:
-            u = unit.lower()
-            if business and u.startswith("day"):
+        u = unit.lower()
+        if base and anchor == "effective date":
+            if typ == "term" and (u.startswith("month") or u.startswith("year")):
+                resolved = _term_end(base, n if u.startswith("month") else 12 * n).isoformat()  # last day of the term
+            elif business and u.startswith("day"):
                 resolved = dates.add_business_days(base, n).isoformat()
             elif u.startswith("month"):
                 resolved = add_months(base, n).isoformat()
@@ -406,7 +456,12 @@ def extract_deadlines(contract_text: str, effective_date: str = "") -> dict:
                 resolved = add_months(base, 12 * n).isoformat()
             else:
                 resolved = (base + timedelta(days=days)).isoformat()
-        items.append({"duration": f"{n} {'business ' if business else ''}{unit.lower().rstrip('s')}{'s' if n != 1 else ''}", "days": days, "type": _classify(before, dur + after), "context": ctx[:220], "from_effective_date": resolved})
+        items.append({"duration": f"{n} {'business ' if business else ''}{u.rstrip('s')}{'s' if n != 1 else ''}", "days": days, "type": typ, "counts_from": anchor, "context": ctx[:220], "from_effective_date": resolved})
+    # a notice window "N days prior to the end of the term" resolves against the initial term end, not the effective date
+    term_item = next((i for i in items if i["type"] == "term" and i["from_effective_date"]), None)
+    for i in items:
+        if i["counts_from"] == "before end of term" and term_item and not i["duration"].split()[1].startswith(("month", "year", "business")):
+            i["deadline_in_initial_term"] = (dates.parse_date(term_item["from_effective_date"]) - timedelta(days=i["days"])).isoformat()
     explicit = []
     for m in _EXPLICIT_DATE.finditer(text):
         raw = m.group(0)
@@ -432,7 +487,10 @@ def extract_deadlines(contract_text: str, effective_date: str = "") -> dict:
         "notice_periods_days": sorted({i["days"] for i in notice}),
         "longest_notice_days": longest_notice,
         "auto_renewal_language": bool(re.search(r"automatically renew|auto-?renew|successive (?:renewal )?(?:terms?|periods?)|evergreen", text, re.I)),
+        "initial_term_ends": term_item["from_effective_date"] if term_item else None,
         "summary": f"{len(items)} duration(s), {len(explicit)} explicit date(s)" + (f"; longest notice period {longest_notice} days" if longest_notice else "") + ("; auto-renewal present — run contract_reviewer__renewal_calendar" if re.search(r"auto-?renew|automatically renew", text, re.I) else ""),
+        "how_to_read": "from_effective_date is filled only for durations that run from the Effective Date (the term shows its last day). Other durations count from the event in counts_from (notice, invoice, termination) — they are not dates yet. Notice windows before the end of the term show deadline_in_initial_term; use renewal_calendar for later cycles.",
+        "scope_note": SCOPE_NOTE,
     }
 
 
@@ -480,7 +538,9 @@ def renewal_calendar(effective_date: str, initial_term_months: int, notice_days:
             {"title": f"LAST DAY to send non-renewal notice ({notice_days}d before term end)", "date": notice_deadline.isoformat()},
             {"title": "Contract term ends" + (" (auto-renews)" if auto_renews else ""), "date": term_end.isoformat()},
         ],
+        "weekend_note": (f"The notice deadline falls on a {notice_deadline.strftime('%A')} — send notice by {(notice_deadline - timedelta(days=notice_deadline.weekday() - 4)).isoformat()} (the Friday before) so it is received in time." if notice_deadline.weekday() >= 5 else None),
         "verdict": f"Term ends {term_end.isoformat()}; notice must be received by {notice_deadline.isoformat()} — {status}.",
+        "scope_note": SCOPE_NOTE,
     }
 
 
@@ -506,7 +566,7 @@ def liability_exposure(annual_contract_value: float, cap_type: str = "months_of_
     carve = [str(c).strip().lower() for c in (carve_outs or []) if str(c).strip()]
     if ct == "months_of_fees":
         cap = acv * cv / 12
-        cap_desc = f"{cv:g} months of fees"
+        cap_desc = f"{cv:g} month{'' if cv == 1 else 's'} of fees"
     elif ct == "multiple_of_fees":
         cap = acv * cv
         cap_desc = f"{cv:g}× annual fees"
@@ -541,6 +601,8 @@ def liability_exposure(annual_contract_value: float, cap_type: str = "months_of_
     if unusual:
         findings.append(f"Unusual carve-outs (uncapped): {', '.join(unusual)} — ask for a super-cap (2-3× fees) instead of unlimited")
     uncapped_exposure = ("everything" if cap is None else (", ".join(carve) if carve else "nothing beyond the cap"))
+    if not mutual and cap is not None:
+        uncapped_exposure = "the non-capped party's entire liability, including its indemnities (if that is you: everything)" + (f"; plus carve-outs: {', '.join(carve)}" if carve else "")
     return {
         "annual_contract_value": acv,
         "total_contract_value": round(tcv),

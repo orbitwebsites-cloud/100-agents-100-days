@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from ...core import Agent, ToolError
 from ...lib import dates, text as textlib
-from ._common import SCOPE_NOTE, add_months, check_rows, check_text, money, parse_date, to_float
+from ._common import SCOPE_NOTE_GRANT as SCOPE_NOTE, add_months, check_rows, check_text, money, parse_date, to_float
 from ._common import term_end as _term_end
 
 AGENT = Agent(
@@ -63,10 +63,15 @@ AGENT = Agent(
     2. **Build the budget first.** Call `grant_writer__budget_table` with line items (category,
        description, quantity, unit cost, or salary + FTE), fringe rate, indirect rate and base
        (de minimis 15% on MTDC, negotiated rate, or funder cap), cost-share requirement and the
-       request cap. It computes personnel with fringe, MTDC (excludes equipment > $5k, tuition,
-       participant support, rent, subaward amounts above $25k), indirect, total, cost-share required
-       and provided, and flags over-cap or unallowable-looking items. The narrative must match
-       these numbers exactly.
+       request cap. For federal awards set `uniform_guidance`: "2024" for awards made on/after
+       2024-10-01 (equipment = ≥ $10,000 per unit or your lower capitalisation level; first
+       $50,000 of each subaward in MTDC; de minimis up to 15%) or "pre-2024" ($5,000 / $25,000 /
+       10%). Enter equipment as quantity × unit_cost (the test is per unit — four $1,800 laptops
+       are supplies) and give every subaward line a `subrecipient` so year-1 and year-2 lines share
+       one allowance. It computes personnel with fringe, MTDC (excludes equipment, capital
+       expenditures, tuition, participant support, rent, subaward amounts above the allowance),
+       indirect, total, cost-share required and provided, and flags over-cap or
+       unallowable-looking items. The narrative must match these numbers exactly.
     3. **Write objectives** as SMART statements and check each with the SMART lint inside
        `grant_writer__criteria_coverage` (objectives array). "Serve 120 youth (ages 14-18) in 3
        cohorts by 2027-06-30, with 80% completing ≥ 30 hours" scores; "empower young people" doesn't.
@@ -82,9 +87,10 @@ AGENT = Agent(
        (words, characters, or pages with the funder's formatting). Cut anything over — reviewers
        and portals both truncate. Aim for 90-98% of each limit: under-using space reads as thin.
     7. **Build the timeline.** Call `grant_writer__project_timeline` with start date, duration,
-       milestones and reporting cadence. It returns phase dates, report due dates (typically 30
-       days after each period; final report 90-120 days after the end date), and flags milestones
-       that fall outside the period of performance.
+       milestones and reporting cadence (pass `federal_award: true` for US federal awards — final
+       reports are due 120 days after the period ends, 2 CFR 200.344(b)). It returns phase dates,
+       report due dates (typically 30 days after each period), and flags milestones that fall
+       outside the period of performance.
     8. **Assemble** in the output format with a compliance checklist. File to Docs/Notion if
        connected; put the budget in Sheets/Airtable if connected.
 
@@ -94,7 +100,8 @@ AGENT = Agent(
     - **SMART objectives:** Specific (who/what), Measurable (number or %), Achievable (baseline
       cited), Relevant (to the funder's priority), Time-bound (date).
     - **Budget norms:** personnel + fringe typically 60-75% of direct costs for program grants;
-      evaluation 5-10%; indirect per NICRA or the 15% de minimis (2 CFR 200.414 as revised 2024);
+      evaluation 5-10%; indirect per NICRA or the de minimis rate (up to 15% of MTDC under
+      2 CFR 200.414(f) for awards made on/after 2024-10-01; 10% before);
       foundations often cap indirect at 10-15% of total or 0%.
     - **Criterion-weighted length:** a criterion worth 30% of the score should get roughly 30% of
       the narrative space. ±10 points is fine; a 30-point criterion with 10% of the text is a gap.
@@ -147,20 +154,25 @@ MTDC_EXCLUDED = {"equipment", "construction", "participant_support", "rent", "tu
 
 
 @AGENT.tool
-def budget_table(line_items: list[dict], fringe_rate_pct: float = 0.0, indirect_rate_pct: float = 0.0, indirect_base: str = "mtdc", request_cap: float = 0.0, cost_share_required_pct: float = 0.0, cost_share_provided: float = 0.0, indirect_cap_pct_of_total: float = 0.0) -> dict:
+def budget_table(line_items: list[dict], fringe_rate_pct: float = 0.0, indirect_rate_pct: float = 0.0, indirect_base: str = "mtdc", request_cap: float = 0.0, cost_share_required_pct: float = 0.0, cost_share_provided: float = 0.0, indirect_cap_pct_of_total: float = 0.0, uniform_guidance: str = "2024", capitalization_threshold: float = 0.0) -> dict:
     """Compute a grant budget: personnel × FTE, fringe, MTDC, indirect, totals, cost share, and cap checks.
 
     Args:
         line_items: List of {"category": personnel|fringe|travel|equipment|supplies|contractual|subaward|construction|
             participant_support|rent|tuition|evaluation|other, "description": str, and EITHER "amount": dollars OR
-            "salary": annual dollars + "fte": 0-1 (+ optional "months": 12) OR "quantity" + "unit_cost"}.
+            "salary": annual dollars + "fte": 0-1 (+ optional "months": 12) OR "quantity" + "unit_cost"}. Give equipment as
+            quantity + unit_cost (the equipment test is per unit). Give each subaward line a "subrecipient" name so
+            multi-year lines for the same subaward share one MTDC allowance.
         fringe_rate_pct: Fringe benefits as % of salaries (applied to personnel items; default 0). Add explicit "fringe" items instead if preferred.
         indirect_rate_pct: Indirect/F&A rate % (e.g. 15 for de minimis, or your negotiated rate).
-        indirect_base: "mtdc" (modified total direct costs — excludes equipment, construction, participant support, rent, tuition and subaward amounts over $25k), "tdc" (total direct), or "salaries" (salaries + fringe only).
+        indirect_base: "mtdc" (modified total direct costs — excludes equipment, capital expenditures, participant support, rent, tuition and the part of each subaward above $50k, or $25k under pre-2024 rules), "tdc" (total direct), or "salaries" (salaries + fringe only).
         request_cap: Maximum request allowed by the funder (0 = none).
         cost_share_required_pct: Required match as % of the request (e.g. 25 for a 1:4 match). 0 = none.
         cost_share_provided: Dollar value of match you will provide (cash + in-kind).
         indirect_cap_pct_of_total: Funder cap on indirect as % of the total award (e.g. 10). 0 = none.
+        uniform_guidance: "2024" (2 CFR 200 as revised for federal awards made on/after 2024-10-01: equipment ≥ $10,000/unit,
+            first $50,000 of each subaward in MTDC, de minimis up to 15%) or "pre-2024" ($5,000, $25,000, 10%). Default "2024".
+        capitalization_threshold: Your organisation's own capitalisation level per unit if lower than the federal threshold (0 = none).
     """
     rows = check_rows(line_items, "line_items", 300)
     fringe = to_float(fringe_rate_pct, "fringe_rate_pct", 0, 100) / 100
@@ -172,6 +184,12 @@ def budget_table(line_items: list[dict], fringe_rate_pct: float = 0.0, indirect_
     cs_pct = to_float(cost_share_required_pct, "cost_share_required_pct", 0, 1000) / 100
     cs_prov = to_float(cost_share_provided, "cost_share_provided", 0)
     ind_cap = to_float(indirect_cap_pct_of_total, "indirect_cap_pct_of_total", 0, 100) / 100
+    ug = str(uniform_guidance).strip().lower().replace("_", "-")
+    if ug not in {"2024", "pre-2024"}:
+        raise ToolError("uniform_guidance must be '2024' (awards on/after 2024-10-01) or 'pre-2024'.")
+    fed_equip, sub_limit, de_minimis = (10_000.0, 50_000.0, 15.0) if ug == "2024" else (5_000.0, 25_000.0, 10.0)
+    cap_level = to_float(capitalization_threshold, "capitalization_threshold", 0)
+    equip_threshold = min(fed_equip, cap_level) if cap_level else fed_equip
     table, by_cat, flags = [], {}, []
     salaries = 0.0
     for i, raw in enumerate(rows):
@@ -181,6 +199,7 @@ def budget_table(line_items: list[dict], fringe_rate_pct: float = 0.0, indirect_
         if cat not in CATEGORIES:
             raise ToolError(f"line_items[{i}]: unknown category {cat!r}. Use one of {', '.join(sorted(CATEGORIES))}.")
         desc = str(raw.get("description", "")).strip() or cat
+        unit_cost = None
         if raw.get("salary") is not None:
             sal = to_float(raw["salary"], f"{desc}: salary", 0)
             fte = to_float(raw.get("fte", 1), f"{desc}: fte", 0, 1)
@@ -194,14 +213,21 @@ def budget_table(line_items: list[dict], fringe_rate_pct: float = 0.0, indirect_
             uc = to_float(raw.get("unit_cost"), f"{desc}: unit_cost", 0)
             amount = q * uc
             calc = f"{q:g} × ${uc:,.2f}"
+            unit_cost = uc
         else:
             amount = to_float(raw.get("amount"), f"{desc}: amount", 0)
             calc = "lump sum"
             if cat == "personnel":
                 salaries += amount
-        if cat == "equipment" and amount < 5000:
-            flags.append(f"'{desc}' ${amount:,.0f} is under the $5,000 equipment threshold — classify as supplies (it then counts toward MTDC)")
-        table.append({"category": cat, "description": desc, "calc": calc, "amount": round(amount, 2)})
+        if cat == "equipment":
+            per_unit = unit_cost if raw.get("quantity") is not None else to_float(raw.get("unit_cost", amount), f"{desc}: unit_cost", 0)
+            if per_unit < equip_threshold:
+                cat = "supplies"
+                flags.append(f"'{desc}' is ${per_unit:,.0f} per unit — under the ${equip_threshold:,.0f} equipment threshold (2 CFR 200.1, {ug} rules), so it is supplies and counts toward MTDC; reclassified")
+        row = {"category": cat, "description": desc, "calc": calc, "amount": round(amount, 2)}
+        if cat == "subaward":
+            row["subrecipient"] = str(raw.get("subrecipient") or desc).strip()
+        table.append(row)
         by_cat[cat] = by_cat.get(cat, 0.0) + amount
     fringe_amt = salaries * fringe
     if fringe_amt:
@@ -211,8 +237,16 @@ def budget_table(line_items: list[dict], fringe_rate_pct: float = 0.0, indirect_
     # MTDC
     sub = by_cat.get("subaward", 0.0)
     sub_items = [t for t in table if t["category"] == "subaward"]
-    sub_in_mtdc = sum(min(t["amount"], 25_000) for t in sub_items)
-    excluded = sum(v for k, v in by_cat.items() if k in MTDC_EXCLUDED) + (sub - sub_in_mtdc)
+    per_sub: dict[str, float] = {}
+    for t in sub_items:  # the MTDC allowance is per subaward over the whole award, not per budget line or year
+        per_sub[t["subrecipient"].lower()] = per_sub.get(t["subrecipient"].lower(), 0.0) + t["amount"]
+    sub_in_mtdc = sum(min(v, sub_limit) for v in per_sub.values())
+    excluded_parts = {k: v for k, v in by_cat.items() if k in MTDC_EXCLUDED}
+    if sub - sub_in_mtdc:
+        excluded_parts[f"subaward amounts above ${sub_limit:,.0f} each"] = sub - sub_in_mtdc
+    excluded = sum(excluded_parts.values())
+    if base_kind == "mtdc" and ind_rate * 100 > de_minimis + 1e-9:
+        flags.append(f"{ind_rate * 100:g}% is above the {de_minimis:g}% de minimis rate ({ug} rules) — only valid with a negotiated (NICRA) rate; attach the agreement")
     mtdc = total_direct - excluded
     base_amt = {"mtdc": mtdc, "tdc": total_direct, "salaries": salaries + fringe_amt}[base_kind]
     indirect = base_amt * ind_rate
@@ -223,7 +257,12 @@ def budget_table(line_items: list[dict], fringe_rate_pct: float = 0.0, indirect_
         indirect = allowed
         total = total_direct + indirect
     if cap and total > cap:
-        flags.append(f"Total ${total:,.0f} exceeds the ${cap:,.0f} cap by ${total - cap:,.0f} — cut direct costs by ${(total - cap) / (1 + ind_rate if base_kind == 'tdc' else 1):,.0f}")
+        over = total - cap
+        if ind_rate and base_kind in ("mtdc", "salaries"):
+            eligible = "MTDC-eligible costs (salaries, fringe, travel, supplies, services)" if base_kind == "mtdc" else "salaries + fringe"
+            flags.append(f"Total ${total:,.0f} exceeds the ${cap:,.0f} cap by ${over:,.0f} — cut ${over / (1 + ind_rate):,.0f} of {eligible} (indirect falls with them), or ${over:,.0f} of costs outside the base")
+        else:
+            flags.append(f"Total ${total:,.0f} exceeds the ${cap:,.0f} cap by ${over:,.0f} — cut direct costs by ${over / (1 + ind_rate if base_kind == 'tdc' else 1):,.0f}")
     cs_required = total * cs_pct
     if cs_pct and cs_prov < cs_required:
         flags.append(f"Cost share short: required ${cs_required:,.0f} ({cs_pct * 100:g}% of request), provided ${cs_prov:,.0f} — gap ${cs_required - cs_prov:,.0f}")
@@ -239,6 +278,8 @@ def budget_table(line_items: list[dict], fringe_rate_pct: float = 0.0, indirect_
         "fringe": round(fringe_amt, 2),
         "total_direct": round(total_direct, 2),
         "mtdc": round(mtdc, 2),
+        "mtdc_exclusions": {k: round(v, 2) for k, v in excluded_parts.items()},
+        "rules": {"uniform_guidance": ug, "equipment_threshold_per_unit": equip_threshold, "subaward_mtdc_allowance": sub_limit, "de_minimis_max_pct": de_minimis},
         "indirect_base": base_kind,
         "indirect_base_amount": round(base_amt, 2),
         "indirect_rate_pct": ind_rate * 100,
@@ -305,6 +346,7 @@ def check_section_limits(sections: list[dict]) -> dict:
         "over_limit": [s["name"] for s in out if not s["fits"]],
         "thin": [s["name"] for s in out if s["fits"] and s["pct_of_limit"] < 75],
         "verdict": "All sections within limits" if not over_any else f"{len([s for s in out if not s['fits']])} section(s) over limit — cut before submitting",
+        "scope_note": SCOPE_NOTE,
     }
 
 
@@ -397,11 +439,12 @@ def criteria_coverage(sections: list[dict], criteria: list[dict], objectives: li
         "objectives_passing": sum(1 for s in smart if s["score"] >= 4),
         "verdict": (f"Weighted coverage {round(weighted_score)}/100; " + (f"{len(gaps)} criterion gap(s) — fix these first" if gaps else "criteria balanced")) + (f"; {sum(1 for s in smart if s['score'] >= 4)}/{len(smart)} objectives SMART" if smart else ""),
         "template_objective": "By <date>, <number> <population> will <observable result> (from baseline <x>), as measured by <instrument/source>.",
+        "scope_note": SCOPE_NOTE,
     }
 
 
 @AGENT.tool
-def project_timeline(start_date: str, duration_months: int, milestones: list[dict] | None = None, reporting: str = "quarterly", report_lag_days: int = 30, final_report_lag_days: int = 90) -> dict:
+def project_timeline(start_date: str, duration_months: int, milestones: list[dict] | None = None, reporting: str = "quarterly", report_lag_days: int = 30, final_report_lag_days: int = 90, federal_award: bool = False) -> dict:
     """Generate the period of performance, phase/milestone dates, and every report due date; flag milestones outside the period.
 
     Args:
@@ -410,7 +453,8 @@ def project_timeline(start_date: str, duration_months: int, milestones: list[dic
         milestones: Optional list of {"name": str, "month": integer month number from start (1 = first month)} or {"name": str, "date": "YYYY-MM-DD"}.
         reporting: "monthly", "quarterly", "semiannual", "annual" or "none".
         report_lag_days: Days after each reporting period a report is due (default 30).
-        final_report_lag_days: Days after the end date the final report is due (default 90; federal awards often 120).
+        final_report_lag_days: Days after the end date the final report is due (default 90).
+        federal_award: True for a US federal award — final reports are due 120 calendar days after the period of performance (2 CFR 200.344(b)); overrides a default 90.
     """
     start = parse_date(start_date, "start_date")
     if not isinstance(duration_months, int) or not 1 <= duration_months <= 120:
@@ -423,12 +467,14 @@ def project_timeline(start_date: str, duration_months: int, milestones: list[dic
         if not isinstance(v, int) or not 0 <= v <= 365:
             raise ToolError(f"{name} must be an integer between 0 and 365.")
     end = _term_end(start, duration_months)
+    if federal_award and final_report_lag_days == 90:
+        final_report_lag_days = 120
     reports = []
     if step:
         m = step
         n = 1
         while m < duration_months:
-            period_end = add_months(start, m) - timedelta(days=1)
+            period_end = _term_end(start, m)  # same month-end rule as the award end date
             reports.append({"report": f"{cadence.title()} report {n}", "period_end": period_end.isoformat(), "due": (period_end + timedelta(days=report_lag_days)).isoformat()})
             m += step
             n += 1
@@ -443,7 +489,7 @@ def project_timeline(start_date: str, duration_months: int, milestones: list[dic
             mo = raw.get("month")
             if not isinstance(mo, int) or mo < 1:
                 raise ToolError(f"milestones[{i}]: 'month' must be a positive integer (1 = first month).")
-            d = add_months(start, mo) - timedelta(days=1)
+            d = _term_end(start, mo)
         ok = start <= d <= end
         if not ok:
             outside.append(str(raw["name"]))
@@ -462,4 +508,5 @@ def project_timeline(start_date: str, duration_months: int, milestones: list[dic
         "reports": reports,
         "calendar_entries": [{"title": r["report"] + " due", "date": r["due"]} for r in reports] + [{"title": m["name"], "date": m["date"]} for m in ms_out],
         "verdict": f"{duration_months}-month period ending {end.isoformat()}; {len(reports)} report(s), final due {reports[-1]['due']}" + (f"; {len(outside)} milestone(s) outside the period — move them" if outside else ""),
+        "scope_note": SCOPE_NOTE,
     }

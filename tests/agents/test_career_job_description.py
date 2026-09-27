@@ -40,7 +40,8 @@ def call(tool, **kwargs):
 def test_check_inclusive_language_finds_coded_and_exclusionary_terms():
     out = call("check_inclusive_language", job_description=JD)
     assert out["lean"] == "masculine" and out["masculine_count"] == 6
-    assert {h["term"] for h in out["masculine_coded"]} == {"aggressive", "competitive", "dominate", "fast-paced", "ninja", "rockstar"}
+    assert {f for h in out["masculine_coded"] for f in h["matched"]} == {"aggressive", "competitive", "dominate", "fast-paced", "ninja", "rockstar"}
+    assert {h["term"] for h in out["masculine_coded"] if h["source"] == "GFK 2011"} == {"aggress*", "compet*", "domina*"}
     assert {h["term"] for h in out["exclusionary"]} == {"family", "he will", "native english speaker"}
     assert out["gendered_pronouns"] == 1
     assert out["score"] < 40

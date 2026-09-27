@@ -430,7 +430,7 @@ HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "tra
 
 @AGENT.tool
 def check_openapi(spec: str) -> dict:
-    """Score an OpenAPI 3 document (JSON) for completeness and SDK-readiness: operationIds, summaries, tags, 2xx/4xx responses, declared path params, request bodies, security, component reuse, pagination on list endpoints.
+    """Score an OpenAPI 3 document (JSON) for completeness and SDK-readiness: operationIds (present, unique), summaries, tags, 2xx/4xx responses, declared path params, query strings / trailing slashes in path keys, request bodies, security requirements that reference undefined schemes, duplicated or mistyped enum values, arrays without items, component reuse, pagination on list endpoints.
 
     Call when reviewing or before publishing a spec. Fix every error-level issue.
 
@@ -466,9 +466,20 @@ def check_openapi(spec: str) -> dict:
     inline_schemas = 0
     ref_count = 0
     list_ops_without_pagination = []
+    def check_security(where: str, reqs) -> None:
+        for req in reqs or []:
+            for scheme in (req or {}):
+                if scheme not in sec_schemes:
+                    add("error", where, f"security requirement '{scheme}' is not defined in components.securitySchemes.")
+
+    check_security("security", global_sec)
     for path, item in paths.items():
         if not isinstance(item, dict):
             continue
+        if "?" in path:
+            add("error", path, "query string in the path key — declare query parameters in `parameters` instead.")
+        if len(path) > 1 and path.endswith("/"):
+            add("warning", path, "path key ends with '/' — pick one form (no trailing slash) or clients 404/redirect.")
         declared_in_path = set(re.findall(r"\{([^}]+)\}", path))
         path_level_params = [_resolve(doc, p) for p in item.get("parameters", []) if isinstance(p, dict)]
         for method in HTTP_METHODS:
@@ -513,6 +524,7 @@ def check_openapi(spec: str) -> dict:
                 qnames = {str(p.get("name", "")).lower() for p in params if p.get("in") == "query"}
                 if not qnames & {"limit", "page", "page_size", "pagesize", "cursor", "offset", "after", "before", "page_token", "pagetoken", "per_page"}:
                     list_ops_without_pagination.append(where)
+            check_security(where, op.get("security"))
             if (global_sec is None and not op.get("security")) and sec_schemes:
                 add("warning", where, "no security requirement (global or per-operation).")
             for c, r in responses.items():
@@ -548,6 +560,32 @@ def check_openapi(spec: str) -> dict:
                 prop = _resolve(doc, prop)
                 if isinstance(prop, dict) and prop.get("type") == "string" and prop.get("format") in (None,) and re.search(r"(_at|_on|date|time)$", str(pname)):
                     add("info", f"components.schemas.{name}.{pname}", "looks like a timestamp but has no format: date-time.")
+    type_ok = {"string": str, "integer": int, "number": (int, float), "boolean": bool}
+
+    def walk(node, where: str, depth: int = 0) -> None:
+        if depth > 40:
+            return
+        if isinstance(node, dict):
+            enum = node.get("enum")
+            if isinstance(enum, list):
+                dupes = sorted({json.dumps(v) for v in enum if sum(1 for w in enum if w == v and type(w) is type(v)) > 1})
+                if dupes:
+                    add("error", where, f"enum has duplicated entries: {', '.join(dupes)[:80]}.")
+                t = node.get("type")
+                if t in type_ok and any(v is not None and (not isinstance(v, type_ok[t]) or (t != "boolean" and isinstance(v, bool))) for v in enum):
+                    add("error", where, f"enum values don't match type '{t}'.")
+            if node.get("type") == "array" and "items" not in node:
+                add("error", where, "type: array without `items` — generators can't type the elements.")
+            for k, v in node.items():
+                if k in ("example", "examples", "x-examples"):
+                    continue
+                walk(v, f"{where}.{k}" if where else k, depth + 1)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, f"{where}[{i}]", depth + 1)
+
+    walk(comps.get("schemas") or {}, "components.schemas")
+    walk(paths, "paths")
     counts = Counter(i["level"] for i in issues)
     score = max(0, 100 - 10 * counts["error"] - 4 * counts["warning"] - 1 * counts["info"])
     order = {"error": 0, "warning": 1, "info": 2}
@@ -606,7 +644,14 @@ def _ops(doc: dict) -> dict[str, dict]:
             op = item.get(m)
             if not isinstance(op, dict):
                 continue
-            params = {f"{p.get('in')}:{p.get('name')}": p for p in base_params + [_resolve(doc, p) for p in op.get("parameters", []) if isinstance(p, dict)]}
+            path_names = re.findall(r"\{([^}]+)\}", path)
+            params = {}
+            for p in base_params + [_resolve(doc, p) for p in op.get("parameters", []) if isinstance(p, dict)]:
+                if p.get("in") == "path" and p.get("name") in path_names:
+                    # path params are positional: renaming {orderId} → {id} is not a contract change
+                    params[f"path:#{path_names.index(p.get('name'))}"] = dict(p, _display=f"path:{p.get('name')}")
+                else:
+                    params[f"{p.get('in')}:{p.get('name')}"] = p
             req_schema = None
             rb = _resolve(doc, op.get("requestBody") or {})
             for media in (rb.get("content") or {}).values():
@@ -620,7 +665,7 @@ def _ops(doc: dict) -> dict[str, dict]:
                     if isinstance(media, dict) and media.get("schema") is not None:
                         resp_schemas[str(code)] = media["schema"]
                         break
-            ops[f"{m.upper()} {path}"] = {"params": params, "request": req_schema, "responses": resp_schemas, "codes": {str(c) for c in (op.get("responses") or {})}, "deprecated": op.get("deprecated", False)}
+            ops[f"{m.upper()} {re.sub(r'{[^}]+}', '{}', path)}"] = {"path": path, "params": params, "request": req_schema, "responses": resp_schemas, "codes": {str(c) for c in (op.get("responses") or {})}, "deprecated": op.get("deprecated", False)}
     return ops
 
 
@@ -637,29 +682,41 @@ def diff_breaking_changes(old_spec: str, new_spec: str) -> dict:
     old, new = _load_spec(old_spec, "old_spec"), _load_spec(new_spec, "new_spec")
     o_ops, n_ops = _ops(old), _ops(new)
     breaking, additive, notes = [], [], []
+    label = lambda k, ops: f"{k.split(' ', 1)[0]} {ops[k]['path']}"  # noqa: E731
     for key in sorted(set(o_ops) - set(n_ops)):
-        breaking.append({"kind": "operation removed", "where": key, "detail": "clients calling it get 404/405"})
+        breaking.append({"kind": "operation removed", "where": label(key, o_ops), "detail": "clients calling it get 404/405"})
     for key in sorted(set(n_ops) - set(o_ops)):
-        additive.append({"kind": "operation added", "where": key})
-    for key in sorted(set(o_ops) & set(n_ops)):
-        a, b = o_ops[key], n_ops[key]
+        additive.append({"kind": "operation added", "where": label(key, n_ops)})
+    for nkey in sorted(set(o_ops) & set(n_ops)):
+        a, b = o_ops[nkey], n_ops[nkey]
+        key = label(nkey, n_ops)
+        if a["path"] != b["path"]:
+            notes.append(f"{label(nkey, o_ops)} → {b['path']}: path parameter renamed — not breaking on the wire (parameters are positional); regenerate SDKs if they expose the name")
         for pk, p in a["params"].items():
             if pk not in b["params"]:
-                breaking.append({"kind": "parameter removed", "where": f"{key} {pk}", "detail": "requests sending it may be rejected or silently ignored"})
+                breaking.append({"kind": "parameter removed", "where": f"{key} {p.get('_display', pk)}", "detail": "requests sending it may be rejected or silently ignored"})
             else:
                 q = b["params"][pk]
                 if not p.get("required") and q.get("required"):
-                    breaking.append({"kind": "parameter became required", "where": f"{key} {pk}", "detail": "existing requests without it now fail"})
+                    breaking.append({"kind": "parameter became required", "where": f"{key} {q.get('_display', pk)}", "detail": "existing requests without it now fail"})
                 pt = (_resolve(new, q.get("schema") or {}) or {}).get("type")
                 ot = (_resolve(old, p.get("schema") or {}) or {}).get("type")
                 if ot and pt and ot != pt:
-                    breaking.append({"kind": "parameter type changed", "where": f"{key} {pk}", "detail": f"{ot} → {pt}"})
+                    breaking.append({"kind": "parameter type changed", "where": f"{key} {q.get('_display', pk)}", "detail": f"{ot} → {pt}"})
+                oe = (_resolve(old, p.get("schema") or {}) or {}).get("enum")
+                ne = (_resolve(new, q.get("schema") or {}) or {}).get("enum")
+                if isinstance(oe, list) and (ne is not None and isinstance(ne, list)):
+                    gone = [v for v in oe if v not in ne]
+                    if gone:
+                        breaking.append({"kind": "parameter enum value removed", "where": f"{key} {q.get('_display', pk)}", "detail": f"values no longer accepted: {gone}"})
+                elif oe is None and isinstance(ne, list):
+                    breaking.append({"kind": "parameter restricted to enum", "where": f"{key} {q.get('_display', pk)}", "detail": f"previously free-form, now only {ne[:6]}"})
         for pk, q in b["params"].items():
             if pk not in a["params"]:
                 if q.get("required"):
-                    breaking.append({"kind": "new required parameter", "where": f"{key} {pk}", "detail": "existing requests don't send it"})
+                    breaking.append({"kind": "new required parameter", "where": f"{key} {q.get('_display', pk)}", "detail": "existing requests don't send it"})
                 else:
-                    additive.append({"kind": "optional parameter added", "where": f"{key} {pk}"})
+                    additive.append({"kind": "optional parameter added", "where": f"{key} {q.get('_display', pk)}"})
         if a["request"] is not None and b["request"] is None:
             notes.append(f"{key}: request body removed — breaking if clients send one that is now rejected")
         if a["request"] is not None and b["request"] is not None:

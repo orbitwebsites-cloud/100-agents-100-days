@@ -64,11 +64,23 @@ def as_rate(value, name: str = "rate") -> Decimal:
     """Accept 7, 7.0, '7%' or 0.07 and return the decimal rate 0.07.
 
     Anything with magnitude >= 1 is treated as a percent. 0.5 is a rate (50%), not 0.5%.
+    Only for shares where a sub-1% value is implausible (gross margin, business-use %, ownership);
+    use `as_pct` for churn, growth, APR, APY and fee rates.
     """
     d = D(value, name)
     if isinstance(value, str) and "%" in value:
         return d / 100
     return d / 100 if abs(d) >= 1 else d
+
+
+def as_pct(value, name: str = "percent") -> Decimal:
+    """A value that is always a percent: 7 -> 0.07, 0.6 -> 0.006, '0.6%' -> 0.006.
+
+    Use for rates where sub-1% values are realistic (monthly churn/expansion/growth, APRs on promo
+    loans, savings APYs, fees). `as_rate`'s "below 1 means a fraction" heuristic silently turns
+    0.6% monthly expansion into 60% — never use it for those.
+    """
+    return D(value, name) / 100
 
 
 def require_positive(value: Decimal, name: str) -> Decimal:

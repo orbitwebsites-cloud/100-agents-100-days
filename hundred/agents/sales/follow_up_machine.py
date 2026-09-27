@@ -58,7 +58,9 @@ AGENT = Agent(
        and nurture, with the reasoning. Never send a breakup before 4 unanswered touches
        and never chase a prospect before a date they themselves gave you.
     2. **Schedule the cadence.** Call `follow_up_machine__cadence_dates` with the last
-       contact date and stage. It returns the dated touch plan (business days, weekends
+       contact date, stage, `today`, and `touches_done` (= touches already sent since
+       their last reply — the same number you gave the decision tool), so the plan
+       continues the sequence instead of restarting it and never dates a touch in the past. It returns the dated touch plan (business days, weekends
        and holidays skipped, gaps widening: 2-3-5-7-14 days) with the channel for each
        touch (email → call → LinkedIn → email → breakup). Put the dates on the calendar
        or in the CRM if a connector exists.
@@ -153,7 +155,7 @@ def _stage(s: str) -> str:
 
 
 @AGENT.tool
-def cadence_dates(last_contact: str, stage: str = "proposal", touches: int = 5, holidays: list[str] | None = None, promised_date: str = "") -> dict:
+def cadence_dates(last_contact: str, stage: str = "proposal", touches: int = 5, holidays: list[str] | None = None, promised_date: str = "", today: str = "", touches_done: int = 0) -> dict:
     """Compute dated follow-up touches on business days from the last contact, with widening gaps and channel rotation.
 
     Call after deciding to follow up. Gaps depend on stage (proposal: 2, 4, 7, 12 business days;
@@ -166,32 +168,47 @@ def cadence_dates(last_contact: str, stage: str = "proposal", touches: int = 5, 
         touches: Number of touches to schedule, 1-6 (default 5, the last being the breakup).
         holidays: Dates to skip, YYYY-MM-DD.
         promised_date: A date the prospect said they'd respond by (YYYY-MM-DD), if any.
+        today: As-of date YYYY-MM-DD (default today). A touch that would fall before it is moved to today (it is overdue).
+        touches_done: Unanswered touches already sent since their last reply (0-5); the plan continues the gap and channel sequence from there instead of restarting at touch 1.
     """
     last = dates.parse_date(last_contact)
     if not 1 <= touches <= 6:
         raise ToolError("touches must be 1-6.")
+    if not 0 <= touches_done <= 5:
+        raise ToolError("touches_done must be 0-5.")
+    asof = c.to_date(today)
+    if last > asof:
+        raise ToolError("last_contact is after today.")
     hols = c.parse_holidays(holidays or [])
     st = _stage(stage)
     gaps = STAGE_CADENCE[st]
     plan = []
     cursor = last
+    promised_first = False
     if promised_date:
         pd = dates.parse_date(promised_date)
-        if pd < last:
-            raise ToolError("promised_date is before last_contact.")
-        cursor = pd  # first touch = next business day after the promised date
+        if pd >= last:
+            cursor = pd  # first touch = next business day after the promised date
+            promised_first = True
+    overdue_note = None
     for i in range(touches):
-        gap = gaps[i] if i < len(gaps) else gaps[-1]
-        if i == 0 and promised_date:
+        n = touches_done + i  # 0-based position in the whole cadence
+        gap = gaps[n] if n < len(gaps) else gaps[-1]
+        if i == 0 and promised_first:
             gap = 1
         d = dates.add_business_days(cursor, gap, hols)
-        idx = min(i, len(CHANNELS) - 1)
-        is_last = i == touches - 1 and touches >= 4
+        if i == 0 and d < asof:
+            overdue_note = f"touch {n + 1} was due {d.isoformat()} — overdue, send it today"
+            d = asof
+            while d.weekday() >= 5 or d in hols:
+                d = dates.add_business_days(d, 1, hols)
+        idx = min(n, len(CHANNELS) - 1)
+        is_last = i == touches - 1 and touches_done + touches >= 4
         plan.append({
-            "touch": i + 1,
+            "touch": n + 1,
             "date": d.isoformat(),
             "weekday": d.strftime("%a"),
-            "business_days_after_previous": gap,
+            "business_days_after_previous": dates.business_days_between(cursor, d, hols),
             "calendar_days_after_last_contact": (d - last).days,
             "channel": "breakup email" if is_last else CHANNELS[idx],
             "angle": ANGLES[-1] if is_last else ANGLES[idx],
@@ -203,8 +220,9 @@ def cadence_dates(last_contact: str, stage: str = "proposal", touches: int = 5, 
         "promised_date": promised_date or None,
         "touches": plan,
         "span_calendar_days": plan[-1]["calendar_days_after_last_contact"],
+        "overdue": overdue_note,
         "stop_rule": "Any reply resets the cadence; a meeting booked ends it.",
-        "verdict": f"{touches} touches from {plan[0]['date']} to {plan[-1]['date']} ({plan[-1]['calendar_days_after_last_contact']} days), gaps {', '.join(str(p['business_days_after_previous']) for p in plan)} business days.",
+        "verdict": (overdue_note + ". " if overdue_note else "") + f"{touches} touches from {plan[0]['date']} to {plan[-1]['date']} ({plan[-1]['calendar_days_after_last_contact']} days), gaps {', '.join(str(p['business_days_after_previous']) for p in plan)} business days.",
     }
 
 
@@ -275,6 +293,7 @@ def next_touch_decision(stage: str, last_contact: str, last_reply: str = "", tou
 CHECKIN_RE = re.compile(r"\b(just (?:checking|following up|touching base|circling|wanted to|reaching out)|checking in|touching base|circling back|bumping this|bump this|following up on my|any update|per my last|as per my previous|gentle reminder|friendly reminder)\b", re.I)
 GUILT_RE = re.compile(r"\b(haven'?t heard (?:back|from you)|didn'?t hear back|no response|tried (?:to reach|reaching|several|a few|multiple) times|not sure if you (?:saw|got|received)|you may have missed|i know you'?re busy)\b", re.I)
 VALUE_RE = re.compile(r"(\d[\d,.]*\s?(%|percent|hours?|days?|weeks?|x\b|k\b|m\b)|[$£€]\s?\d|\b(case study|benchmark|example|customers? like|similar (?:team|company)|here'?s (?:the|an?|what)|attached (?:is|the)|answer(?:ed|ing)? your|you asked|you mentioned|since we spoke|saw (?:that|your|you)|noticed (?:that|your)|congrats|new (?:hire|role|funding|office|launch))\b)", re.I)
+OFFER_RE = re.compile(r"\b(happy to (?:hop on|jump on|chat|walk you|set up|send)|feel free to (?:reach out|call|book|grab)|grab (?:a|some) time|book (?:a|some) time|here'?s my calendar|my calendar link)\b", re.I)
 ASK_RE = re.compile(r"\?|\b(let me know|reply with|would (?:tuesday|wednesday|thursday|monday|friday)|does (?:this|that) work|worth|should i|shall i|can i|could i|open to|still (?:a priority|relevant|on your radar))\b", re.I)
 
 
@@ -296,7 +315,7 @@ def score_follow_up(email: str, kind: str = "follow_up") -> dict:
     if k not in ("follow_up", "breakup"):
         raise ToolError("kind must be follow_up or breakup.")
     body = re.sub(r"^\s*subject\s*:.*$", "", email, flags=re.I | re.M).strip()
-    n_words = len(text.words(body))
+    n_words = c.word_count(body)
     limit = 50 if k == "breakup" else 75
     score, fixes = 100, []
     cliches = sorted(set(m.group(0).lower() for m in CHECKIN_RE.finditer(body)))
@@ -311,14 +330,16 @@ def score_follow_up(email: str, kind: str = "follow_up") -> dict:
     if not value and k == "follow_up":
         score -= 25
         fixes.append("no new value — add a number, an answer to something they asked, a relevant change, or a simpler next step")
-    asks = ASK_RE.findall(body)
-    n_asks = body.count("?")
-    if n_asks == 0 and not asks:
+    # an "ask" is any sentence that requests something: a question, "let me know…", "happy to hop on a call"
+    ask_sentences = [s_ for s_ in text.sentences(body) if ASK_RE.search(s_) or OFFER_RE.search(s_)]
+    n_asks = len(ask_sentences)
+    n_questions = body.count("?")
+    if n_asks == 0:
         score -= 20
         fixes.append("no ask — end with one question they can answer in a line")
     elif n_asks > 1:
-        score -= 10 * (n_asks - 1)
-        fixes.append(f"{n_asks} questions — ask one")
+        score -= 10 * min(n_asks - 1, 3)
+        fixes.append(f"{n_asks} asks — keep one: " + " | ".join(a[:50] for a in ask_sentences[:3]))
     if n_words > limit * 1.5:
         score -= 20
         fixes.append(f"{n_words} words — cut to ≤ {limit}")
@@ -349,7 +370,8 @@ def score_follow_up(email: str, kind: str = "follow_up") -> dict:
         "cliches": cliches,
         "guilt_phrases": guilt,
         "value_signals": value[:5],
-        "questions": n_asks,
+        "questions": n_questions,
+        "asks": n_asks,
         "unresolved_tokens": tokens,
         "fixes": fixes,
         "verdict": f"{score}/100, {n_words} words — " + (fixes[0] if fixes else "gives them a reason to reply."),

@@ -64,7 +64,9 @@ AGENT = Agent(
        returns the missing items in impact order with the exact value to enter.
     3. **Review math.** Call `local_seo__review_stats` with the reviews (date + rating) and
        the target rating. It returns the distribution, velocity per month, the trend of the
-       last 90 days vs prior, and how many consecutive 5-star reviews reach the target. Set
+       last 90 days vs prior, and how many consecutive 5-star reviews reach the target — both
+       the true average and the (smaller) number that makes Google's one-decimal display
+       show it. Quote both; promise the true-average number. Set
        a monthly review target from that; ask every happy customer with a direct review link.
     4. **Respond to reviews.** Draft a response, then call `local_seo__review_response_lint`
        with the review, rating and response. It checks length, greeting by name, apology and
@@ -142,6 +144,19 @@ STREET_ABBR = {
     "suite": "ste", "ste.": "ste", "unit": "ste", "apt": "ste", "apartment": "ste", "#": "ste", "floor": "fl", "fl.": "fl", "building": "bldg",
     "first": "1st", "second": "2nd", "third": "3rd", "fourth": "4th", "fifth": "5th",
 }
+US_STATES = {
+    "alabama": "al", "alaska": "ak", "arizona": "az", "arkansas": "ar", "california": "ca", "colorado": "co", "connecticut": "ct",
+    "delaware": "de", "district of columbia": "dc", "florida": "fl", "georgia": "ga", "hawaii": "hi", "idaho": "id", "illinois": "il",
+    "indiana": "in", "iowa": "ia", "kansas": "ks", "kentucky": "ky", "louisiana": "la", "maine": "me", "maryland": "md",
+    "massachusetts": "ma", "michigan": "mi", "minnesota": "mn", "mississippi": "ms", "missouri": "mo", "montana": "mt", "nebraska": "ne",
+    "nevada": "nv", "new hampshire": "nh", "new jersey": "nj", "new mexico": "nm", "new york": "ny", "north carolina": "nc",
+    "north dakota": "nd", "ohio": "oh", "oklahoma": "ok", "oregon": "or", "pennsylvania": "pa", "rhode island": "ri",
+    "south carolina": "sc", "south dakota": "sd", "tennessee": "tn", "texas": "tx", "utah": "ut", "vermont": "vt", "virginia": "va",
+    "washington": "wa", "west virginia": "wv", "wisconsin": "wi", "wyoming": "wy",
+}
+# A state name only counts as the state when it sits right before the ZIP or at the end ("Washington Ave" stays a street).
+STATE_RX = re.compile(r"\b(" + "|".join(sorted(US_STATES, key=len, reverse=True)) + r")\b(?=\s+\d{5}\b|\s*$)")
+STUFF_WORDS = frozenset("best top cheap cheapest affordable near me local 24 7 emergency number 1 #1 rated certified licensed pro service services".split())
 NAME_NOISE = re.compile(r"\b(llc|inc|incorporated|ltd|limited|co|corp|corporation|the)\b\.?", re.I)
 
 
@@ -160,6 +175,9 @@ def _fmt_phone(digits: str) -> str:
 
 def _norm_address(a: str) -> str:
     s = (a or "").lower().replace(",", " ").replace(".", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    s = STATE_RX.sub(lambda m: US_STATES[m.group(1)], s)
+    s = re.sub(r"\b(usa|united states|us)$", "", s).strip()
     s = re.sub(r"#\s*", " ste ", s)
     toks = [STREET_ABBR.get(t, STREET_ABBR.get(t + ".", t)) for t in s.split()]
     s = " ".join(toks)
@@ -179,7 +197,8 @@ def nap_consistency(listings: list[dict]) -> dict:
     """Cross-check name, address and phone across listings after normalising abbreviations, suites, punctuation and phone formats; report every mismatch and the canonical value.
 
     The canonical value is the most common normalised form (ties go to the source named "gbp"/"google" or
-    "website"). Name mismatches ignore LLC/Inc/The; address mismatches ignore St/Street, Ste/#, ZIP+4.
+    "website"). Name mismatches ignore LLC/Inc/The; address mismatches ignore St/Street, Ste/#, ZIP+4
+    and spelled-out US state names (Texas = TX). Name variants carrying extra keywords are flagged as stuffed.
 
     Args:
         listings: 2-100 dicts like {"source": "gbp", "name": str, "address": str, "phone": str, "website": str}.
@@ -225,7 +244,11 @@ def nap_consistency(listings: list[dict]) -> dict:
         status = []
         if r["name"] and cn and r["_n"] != cn:
             status.append("name")
-            mismatches.append({"source": r["source"], "field": "name", "value": r["name"], "canonical": cn_raw})
+            mm = {"source": r["source"], "field": "name", "value": r["name"], "canonical": cn_raw}
+            extra = set(r["_n"].split()) - set(cn.split())
+            if extra and (STUFF_WORDS & extra or re.search(r"\s[-|–—:]\s", r["name"])):
+                mm["note"] = f"keyword-stuffed name (extra: {', '.join(sorted(extra))}) — violates Google's business-name guideline; use the real-world name"
+            mismatches.append(mm)
         elif not r["name"]:
             status.append("name missing")
         if r["address"] and ca and r["_a"] != ca:
@@ -250,14 +273,17 @@ def nap_consistency(listings: list[dict]) -> dict:
     sites = {r["website"] for r in rows if r["website"]}
     if len(sites) > 1:
         mismatches.append({"source": "multiple", "field": "website", "value": " | ".join(sorted(sites)), "canonical": "pick one (https, no www vs www consistent)"})
+    src_counts = Counter(r["source"].lower() for r in rows)
+    duplicates = [{"source": k, "listings": n, "fix": "Merge or remove the duplicate listing (duplicates split reviews and confuse Google)."} for k, n in src_counts.items() if n > 1]
     consistent = not mismatches
     return {
         "canonical": {"name": cn_raw, "address": ca_raw, "phone": _fmt_phone(cp) if cp else None, "phone_digits": cp},
         "table": table,
         "mismatches": mismatches,
         "cosmetic_variants": cosmetic,
+        "duplicate_listings": duplicates,
         "consistency_pct": round(100 * sum(1 for t in table if t["status"] == "ok") / len(table)),
-        "verdict": ("NAP is consistent across all sources." if consistent else f"{len(mismatches)} real mismatch(es) across {len({m['source'] for m in mismatches})} source(s) — update them to the canonical values.") + (f" {len(cosmetic)} field(s) differ only in formatting; align them for safety." if cosmetic else ""),
+        "verdict": ("NAP is consistent across all sources." if consistent else f"{len(mismatches)} real mismatch(es) across {len({m['source'] for m in mismatches})} source(s) — update them to the canonical values.") + (f" {len(cosmetic)} field(s) differ only in formatting; align them for safety." if cosmetic else "") + (f" Duplicate listings on: {', '.join(d['source'] for d in duplicates)}." if duplicates else ""),
     }
 
 
@@ -365,8 +391,13 @@ def review_stats(reviews: list[dict], target_rating: float = 4.5, today: str = "
         needed = None
     else:
         needed = max(0, math.ceil((tgt * n - total) / (5 - tgt) - 1e-9))
-    # displayed rating rounds to 1 decimal on Google
+    # displayed rating rounds to 1 decimal on Google: the stars show the target once avg >= target - 0.05
     displayed = round(avg + 1e-9, 1)
+    disp_floor = round(tgt, 1) - 0.05
+    if displayed >= round(tgt, 1):
+        needed_display = 0
+    else:
+        needed_display = max(0, math.ceil((disp_floor * n - total) / (5 - disp_floor) - 1e-9))
     out = {
         "count": n,
         "average": round(avg, 3),
@@ -376,6 +407,7 @@ def review_stats(reviews: list[dict], target_rating: float = 4.5, today: str = "
         "pct_1_2_star": round(100 * (dist["1"] + dist["2"]) / n, 1),
         "target_rating": tgt,
         "five_star_reviews_needed_for_target": needed,
+        "five_star_reviews_needed_for_displayed_target": needed_display,
     }
     if dated:
         dated.sort()
@@ -404,7 +436,7 @@ def review_stats(reviews: list[dict], target_rating: float = 4.5, today: str = "
     stale = out.get("days_since_last_review", 0) > 60
     verdict = f"{displayed}★ from {n} reviews."
     if needed:
-        verdict += f" {needed} consecutive 5★ reviews reach {tgt:g}★."
+        verdict += f" {needed} consecutive 5★ reviews reach a true {tgt:g}★ average ({needed_display} to make Google display {round(tgt, 1):g})."
     elif needed == 0:
         verdict += f" Already at or above {tgt:g}★ — protect it with steady velocity."
     if dated:
@@ -416,10 +448,10 @@ def review_stats(reviews: list[dict], target_rating: float = 4.5, today: str = "
     return out
 
 
-DEFENSIVE = re.compile(r"\b(you failed|you didn'?t|your fault|not our fault|you should have|never happened|(?:that|this)(?:'?s| is) not true|you are (?:wrong|lying|mistaken)|as we told you|unfortunately you|we disagree|frankly|actually,)\b", re.I)
+DEFENSIVE = re.compile(r"\b(you failed|you didn'?t|your fault|not our fault|you should have|never happened|(?:that|this)(?:'?s| is) not true|you are (?:wrong|lying|mistaken)|as we told you|unfortunately you|we disagree|frankly|our (?:staff|team|technicians?|employees) (?:are|is) always)\b|\bactually,", re.I)
 INCENTIVE = re.compile(r"\b(discount|coupon|free|refund|credit|gift card|% off|compensat|in exchange|if you (?:remove|change|update|delete) (?:the|your) review)\b", re.I)
 APOLOGY = re.compile(r"\b(sorry|apologi[sz]e|apologies|regret)\b", re.I)
-OWNERSHIP = re.compile(r"\b(we (?:fell short|missed|got it wrong|should have|let you down|dropped the ball|take (?:this|that|full) (?:seriously|responsibility))|(?:that|this)(?:'?s| is) on us|our mistake|we own)\b", re.I)
+OWNERSHIP = re.compile(r"\b(we (?:fell short|missed|got it wrong|should have|let you down|dropped the ball|take (?:this|that|full) (?:seriously|responsibility))|(?:that|this)(?:'?s| is) on us|\b(?:is|was) on us|(?<!not )our (?:mistake|fault)|we own|we messed up|i take responsibility)\b", re.I)
 OFFLINE = re.compile(r"(\bcall\b|\bemail\b|\breach (?:out|me)\b|\bcontact\b|@|\(\d{3}\)|\d{3}[-.\s]\d{3}[-.\s]\d{4}|\bdm\b|\bmessage (?:us|me)\b)", re.I)
 PII = re.compile(r"\b(invoice|order|account|patient|case) ?#?\s?\d{3,}|\b\d{1,5}\s+\w+\s+(?:st|street|ave|avenue|rd|road|dr|drive)\b|\b\d{2}/\d{2}/\d{4}\b", re.I)
 TEMPLATE_SMELL = re.compile(r"\b(valued customer|we strive to|feedback is important to us|we take all feedback seriously|thank you for your feedback)\b", re.I)

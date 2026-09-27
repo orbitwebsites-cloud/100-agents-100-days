@@ -48,14 +48,28 @@ def ambiguous_terms(s: str) -> list[str]:
     return seen
 
 
+_SUFFIX_RE = re.compile(r"(ations|ation|ings|ing|als|al|ed|es|s)$")
+
+
+def stem(w: str) -> str:
+    """Tiny consistent stemmer: approve / approved / approval / approvals → approv."""
+    if len(w) <= 4:
+        return w
+    w2 = _SUFFIX_RE.sub("", w)
+    if len(w2) < 3:
+        w2 = w
+    if len(w2) > 4 and w2.endswith("e"):
+        w2 = w2[:-1]
+    return w2
+
+
 def term_set(s: str) -> frozenset[str]:
     """Lower-cased content words of a string, stopwords removed, light stemming."""
     out = set()
     for w in text.words(s.lower()):
         if w in text.STOPWORDS or len(w) < 3:
             continue
-        w = re.sub(r"(ing|ed|es|s)$", "", w) if len(w) > 4 else w
-        out.add(w)
+        out.add(stem(w))
     return frozenset(out)
 
 

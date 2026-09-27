@@ -587,6 +587,11 @@ def explain_structure(sql: str) -> dict:
 # ── linter ───────────────────────────────────────────────────────────────────
 
 NON_SARGABLE_FUNCS = r"(LOWER|UPPER|DATE|YEAR|MONTH|DAY|TRUNC|DATE_TRUNC|CAST|CONVERT|COALESCE|SUBSTR|SUBSTRING|LEFT|RIGHT|TRIM|TO_CHAR|EXTRACT|LENGTH|ABS|ROUND|IFNULL|NVL)"
+# FUNC ( [leading 'unit' , | UNIT FROM] column [, more args] ) <op>  — on the skeleton; function names keep user case
+NON_SARGABLE_RE = re.compile(
+    r"\b(?:WHERE|AND|OR|ON|NOT)\s+" + NON_SARGABLE_FUNCS + r" \( (?:'\?' , |\w+ FROM )?([A-Za-z_][\w.]*) (?:(?:,|AS) [^)]*)?\) (?:=|<|>|<=|>=|<>|!=|IN|NOT IN|LIKE|ILIKE|BETWEEN)",
+    re.I,
+)
 
 
 def _lint_statement(st: list[dict]) -> list[dict]:
@@ -612,9 +617,13 @@ def _lint_statement(st: list[dict]) -> list[dict]:
         if t["type"] == "string" and t_i and st[t_i - 1]["upper"] in ("LIKE", "ILIKE", "NOT LIKE") and t["text"][1:2] in ("%", "_"):
             add("leading-wildcard", "high", f"LIKE {t['text'][:20]} with a leading wildcard cannot use a B-tree index (full scan).", "Anchor the pattern ('abc%'), or use a trigram/full-text index (pg_trgm, FULLTEXT).")
             break
-    m = re.search(r"\b(WHERE|AND|OR|ON)\s+" + NON_SARGABLE_FUNCS + r" \( [\w.]+ (?:,[^)]*)?\) (=|<|>|<=|>=|<>|!=|IN|LIKE|BETWEEN)", sk)
-    if m:
-        add("non-sargable", "high", f"{m.group(2)}(column) in a predicate defeats the index on that column.", "Move the function to the constant side (col >= '2026-01-01' AND col < '2026-02-01'; LOWER(col) needs an expression index).")
+    seen_ns = set()
+    for m in NON_SARGABLE_RE.finditer(sk):
+        fn, col = m.group(1).upper(), m.group(2)
+        if (fn, col) in seen_ns:
+            continue
+        seen_ns.add((fn, col))
+        add("non-sargable", "high", f"{fn}({col}) in a predicate defeats the index on {col}.", "Move the function to the constant side (col >= '2026-01-01' AND col < '2026-02-01'; LOWER(col) needs an expression index or a case-insensitive collation/citext).")
     if any(j["type"] == "COMMA JOIN" for j in a["joins"]):
         add("comma-join", "medium", "Comma-separated tables in FROM (implicit join) — easy to forget the join predicate and get a cartesian product.", "Use explicit JOIN … ON.")
     if any(j["type"] in ("CROSS JOIN",) for j in a["joins"]):
@@ -695,6 +704,7 @@ def lint_sql(sql: str) -> dict:
 # ── index advisor ────────────────────────────────────────────────────────────
 
 EQ_OPS = {"=", "IN", "IS"}
+DATE_PARTS = {"YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND", "WEEK", "QUARTER", "DOW", "DOY", "EPOCH", "ISODOW", "MILLISECOND", "MICROSECOND"}
 RANGE_OPS = {"<", ">", "<=", ">=", "BETWEEN", "LIKE", "ILIKE", "<>", "!="}
 
 
@@ -706,10 +716,23 @@ def _collect_predicates(tokens: list[dict]) -> list[tuple[str, str, bool]]:
         if t["type"] != "word" or t["kw"] or t["upper"] in AGGREGATES:
             continue
         nxt = tokens[i + 1] if i + 1 < n else None
+        if nxt is not None and nxt["upper"] == "FROM" and t["upper"] in DATE_PARTS:
+            continue  # EXTRACT(YEAR FROM col): YEAR is a unit, not a column
         prev = tokens[i - 1] if i else None
         if nxt is None:
             continue
-        wrapped = prev is not None and prev["text"] == "(" and i >= 2 and tokens[i - 2]["type"] == "word" and re.fullmatch(NON_SARGABLE_FUNCS, tokens[i - 2]["upper"] or "")
+        wrapped = False
+        depth, k = 0, i - 1
+        while k >= 0:  # find the call this column sits in, if any: FUNC( … col … )
+            tx = tokens[k]["text"]
+            if tx == ")":
+                depth += 1
+            elif tx == "(":
+                if depth == 0:
+                    wrapped = k >= 1 and tokens[k - 1]["type"] == "word" and re.fullmatch(NON_SARGABLE_FUNCS, tokens[k - 1]["upper"] or "") is not None
+                    break
+                depth -= 1
+            k -= 1
         if wrapped:
             # skip closing paren to find operator
             k = i + 1
@@ -719,7 +742,10 @@ def _collect_predicates(tokens: list[dict]) -> list[tuple[str, str, bool]]:
             if nxt is None:
                 continue
         op = nxt["upper"] if nxt["type"] in ("op", "word") else ""
-        if op in EQ_OPS or op == "NOT IN":
+        if op in ("NOT IN", "<>", "!="):
+            preds.append((t["text"], "negated", bool(wrapped)))
+            continue
+        if op in EQ_OPS:
             after = tokens[i + 2] if i + 2 < n else None
             if op == "=" and after and after["type"] == "word" and not after["kw"] and "." in after["text"]:
                 preds.append((t["text"], "join", bool(wrapped)))
@@ -757,7 +783,8 @@ def suggest_indexes(sql: str, dialect: str = "postgresql") -> dict:
         raise ToolError("No tables found in FROM/JOIN/UPDATE — nothing to index.")
     alias_to_table = {t["alias"]: t["table"] for t in a["tables"]}
     single = a["tables"][0]["table"] if len(a["tables"]) == 1 else None
-    per_table: dict[str, dict] = defaultdict(lambda: {"equality": [], "range": [], "sort": [], "join": [], "unindexable": []})
+    driving = a["tables"][0]["table"]
+    per_table: dict[str, dict] = defaultdict(lambda: {"equality": [], "range": [], "sort": [], "join": [], "unindexable": [], "negated": []})
     unassigned = []
 
     aliases = set(a.get("select_aliases", []))
@@ -800,9 +827,32 @@ def suggest_indexes(sql: str, dialect: str = "postgresql") -> dict:
                 place(t["text"], "sort", False)
 
     statements, notes = [], []
+    # semi/anti-join subqueries: [NOT] IN (SELECT x.col FROM t x …) and [NOT] EXISTS (SELECT … FROM t x WHERE x.col = outer.col)
+    sk = _skeleton(stmts[0])
+    sub_idx: list[tuple[str, str, str]] = []
+    for m in re.finditer(r"\b(NOT IN|IN) \( SELECT (?:DISTINCT )?([A-Za-z_][\w.]*) FROM ([A-Za-z_][\w.]*)", sk):
+        sub_idx.append((m.group(3), m.group(2).rsplit(".", 1)[-1], "anti-join lookup (NOT IN → NOT EXISTS)" if m.group(1) == "NOT IN" else "semi-join lookup"))
+    for m in re.finditer(r"\b(NOT EXISTS|EXISTS) \( SELECT [^()]*?FROM ([A-Za-z_][\w.]*)(?: (?:AS )?([A-Za-z_]\w*))? WHERE ([A-Za-z_][\w.]*) = ([A-Za-z_][\w.]*)", sk):
+        tb, al, lhs, rhs = m.group(2), m.group(3) or m.group(2), m.group(4), m.group(5)
+        col = lhs if lhs.split(".")[0] == al else rhs if rhs.split(".")[0] == al else lhs
+        sub_idx.append((tb, col.rsplit(".", 1)[-1], "anti-join lookup" if m.group(1) == "NOT EXISTS" else "semi-join lookup"))
+    for tb, col, why in dict.fromkeys(sub_idx):
+        if col.lower() == "id":
+            continue
+        name = f"idx_{re.sub(r'[^a-z0-9]+', '_', tb.lower())}_{re.sub(r'[^a-z0-9]+', '_', col.lower())}"[:63]
+        stmt = f"CREATE INDEX {name} ON {tb} ({col});"
+        if dialect == "postgresql":
+            stmt = stmt.replace("CREATE INDEX", "CREATE INDEX CONCURRENTLY")
+        statements.append({"table": tb, "columns": [col], "statement": stmt, "serves": f"{why} on {tb}.{col}"})
     for tb, cols in per_table.items():
+        for c in cols["negated"]:
+            notes.append(f"{tb}.{c}: negated predicate (NOT IN / <>) — not an index prefix column; it is filtered after the index scan.")
         eq = [c for c in cols["equality"] if "(" not in c and c.lower() != "id"]
         join = [c for c in cols["join"] if c not in eq and c.lower() != "id"]
+        if tb == driving and len(alias_to_table) > 1 and join and (eq or cols["sort"] or cols["range"]):
+            # the driving table is scanned by its own filters/sort; its side of the join key is probed on the *other* table
+            notes.append(f"{tb}.{', '.join(join)}: join key on the driving table — left out of its composite so the index can also serve the filter/sort; the joined table's key is what gets probed.")
+            join = []
         sort = [c for c in cols["sort"] if c not in eq and c not in join and c.lower() != "id"]
         rng = [c for c in cols["range"] if c not in eq and c not in sort and c not in join]
         for u in cols["unindexable"]:
@@ -826,6 +876,10 @@ def suggest_indexes(sql: str, dialect: str = "postgresql") -> dict:
         if rng:
             reason.append(f"range on {rng[0]}" + (f" (only the first range column benefits; {', '.join(rng[1:])} filtered after)" if len(rng) > 1 else ""))
         statements.append({"table": tb, "columns": ordered, "statement": stmt, "serves": "; ".join(reason)})
+    uniq_stmts: dict[tuple, dict] = {}
+    for st_ in statements:
+        uniq_stmts.setdefault((st_["table"], tuple(st_["columns"])), st_)
+    statements = list(uniq_stmts.values())
     if unassigned:
         notes.append("Unqualified/unknown columns not assigned to a table: " + ", ".join(sorted(set(unassigned))[:10]) + ". Qualify them (alias.col) for precise advice.")
     if dialect == "bigquery":

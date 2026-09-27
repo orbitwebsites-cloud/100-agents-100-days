@@ -55,8 +55,9 @@ AGENT = Agent(
     ## Procedure
     1. **Weighted pipeline.** Call `pipeline_forecaster__weighted_pipeline` with the open
        deals, the stage → probability map, and the period end date. It returns weighted
-       total, totals by stage and by close month, forecast categories (commit = late
-       stage with a date inside the period; best case; pipeline), and flags: deals with
+       total, the in-period open and weighted totals, totals by stage, owner and close
+       month, forecast categories (commit = late stage with a date inside the period,
+       recent activity and a next step; best case; pipeline), and flags: deals with
        close dates in the past (slipped), deals with no activity for 14+ days (stale),
        deals with amounts ≥ 3× the median (concentration risk).
     2. **Historical rates.** If closed deals are available, call
@@ -65,7 +66,8 @@ AGENT = Agent(
        deals die. Replace default stage probabilities with the measured ones and re-run
        step 1 — the biggest forecast errors come from optimistic stage weights.
     3. **Coverage.** Call `pipeline_forecaster__coverage_ratio` with quota, closed-to-date,
-       open and weighted pipeline, and the time left. It returns coverage (open ÷ gap),
+       `open_in_period` and `weighted_in_period` from step 1 (not the all-dates totals —
+       slipped and next-quarter deals can't close this period), and the time left. It returns coverage (open ÷ gap),
        the required win rate on remaining pipeline, deals needed at the average size, and
        whether the period is recoverable given cycle length (if median cycle > days left,
        new pipeline can't save this period — say so).
@@ -73,10 +75,15 @@ AGENT = Agent(
        average deal size, win rate and cycle days. It gives revenue per day and the
        sensitivity of each lever (+10%), so the recommendation is "raise win rate 5 pts"
        not "sell more".
-    5. **Calibrate.** If past forecasts and actuals exist, call
+    5. **What changed.** When the user has last week's export too, call
+       `pipeline_forecaster__pipeline_changes` with both snapshots. It lists new, won,
+       lost and removed deals, close dates pushed out of (or pulled into) the period,
+       amount changes and stage moves, and the net change in in-period pipeline — the
+       "what moved since last week" review a CRO runs before trusting the number.
+    6. **Calibrate.** If past forecasts and actuals exist, call
        `pipeline_forecaster__forecast_accuracy`. It computes MAPE, bias (systematic
        over/under), and a calibration multiplier to apply to this quarter's number.
-    6. **Write the forecast** in the output format: the number, the range, what's in
+    7. **Write the forecast** in the output format: the number, the range, what's in
        commit (deal by deal), the risks, and the gap plan with owners.
 
     ## Frameworks
@@ -115,6 +122,12 @@ AGENT = Agent(
 
     ## Gap plan
     1. <lever, expected $, owner, by date>
+
+    ## What changed since <last snapshot>
+    New $<x> · Won $<x> · Lost $<x> · Pushed out of period $<x> · Pulled in $<x> · Net in-period Δ $<x>
+
+    ## By rep
+    | Owner | Commit | Best case | Forecast |
 
     ## Calibration
     Historical bias <+x%> → adjusted forecast $<y>
@@ -220,16 +233,20 @@ def weighted_pipeline(deals: list[dict], stage_probabilities: dict | None = None
             flags.append(f"slipped {slips}× — probability halved")
         in_period = bool(close and asof <= close <= pend)
         stale = any("stale" in f for f in flags)
+        has_step = "no next step" not in flags
         if close and close < asof:
             cat = "slipped"
-        elif stage in LATE_STAGES and in_period and not stale:
+        elif stage in LATE_STAGES and in_period and not stale and has_step:
             cat = "commit"
         elif (stage in LATE_STAGES or stage in MID_STAGES) and in_period:
             cat = "best_case"
         else:
             cat = "pipeline"
         w = amt * eff_p
-        row = {"name": name, "stage": stage, "amount": c.money(amt), "probability": round(eff_p, 2), "weighted": c.money(w), "close_date": close.isoformat() if close else None, "in_period": in_period, "category": cat, "flags": flags}
+        if stage in LATE_STAGES and in_period and cat == "best_case":
+            flags.append("late stage but kept out of commit: " + ("stale" if stale else "no next step"))
+        owner = str(d.get("owner", "") or "").strip()
+        row = {"name": name, "owner": owner or None, "stage": stage, "amount": c.money(amt), "probability": round(eff_p, 3), "weighted": c.money(w), "close_date": close.isoformat() if close else None, "in_period": in_period, "category": cat, "flags": flags}
         rows.append(row)
         amounts.append(amt)
         cats[cat].append(row)
@@ -244,33 +261,54 @@ def weighted_pipeline(deals: list[dict], stage_probabilities: dict | None = None
         raise ToolError("No open deals after excluding closed won/lost.")
     total = sum(r["amount"] for r in rows)
     weighted = sum(r["weighted"] for r in rows)
+    in_period_rows = [r for r in rows if r["in_period"]]
+    open_in_period = sum(r["amount"] for r in in_period_rows)
+    weighted_in_period = sum(r["weighted"] for r in in_period_rows)
     commit = sum(r["amount"] for r in cats["commit"])
     best = sum(r["amount"] for r in cats["best_case"])
     forecast = commit + 0.5 * best
     srt = sorted(amounts)
     median = srt[len(srt) // 2] if len(srt) % 2 else (srt[len(srt) // 2 - 1] + srt[len(srt) // 2]) / 2
-    biggest = max(rows, key=lambda r: r["amount"])
-    conc = c.pct(biggest["amount"], forecast) if forecast else 0.0
+    # concentration is measured on what is actually in the forecast number (commit + 50% of best case),
+    # not on the biggest open deal overall — a slipped or next-quarter deal is not in this quarter's number
+    contrib = [(r, r["amount"] * (1.0 if r["category"] == "commit" else 0.5)) for r in cats["commit"] + cats["best_case"]]
+    biggest, biggest_contrib = max(contrib, key=lambda x: x[1]) if contrib else (None, 0.0)
+    conc = c.pct(biggest_contrib, forecast) if forecast else 0.0
     risks = []
     if cats["slipped"]:
         risks.append(f"{len(cats['slipped'])} slipped deal(s) worth ${sum(r['amount'] for r in cats['slipped']):,.0f} — re-date or move out of the forecast")
     stale_rows = [r for r in rows if any("stale" in f for f in r["flags"])]
     if stale_rows:
         risks.append(f"{len(stale_rows)} stale deal(s) worth ${sum(r['amount'] for r in stale_rows):,.0f}")
-    if forecast and conc > 30:
+    if forecast and biggest and conc > 30:
         risks.append(f"'{biggest['name']}' is {conc}% of the forecast — concentration risk")
     big = [r["name"] for r in rows if median and r["amount"] >= 3 * median]
     if big:
         risks.append(f"{len(big)} deal(s) ≥ 3× median size: {', '.join(big[:3])}")
-    no_step = [r for r in cats["commit"] if "no next step" in r["flags"]]
-    if no_step:
-        risks.append(f"{len(no_step)} commit deal(s) have no next step — they aren't commit")
+    demoted = [r for r in cats["best_case"] if any(f.startswith("late stage but kept out of commit") for f in r["flags"])]
+    if demoted:
+        risks.append(f"{len(demoted)} late-stage deal(s) kept out of commit (stale or no next step): {', '.join(r['name'] for r in demoted[:4])}")
+    by_owner: dict[str, dict] = {}
+    if any(r["owner"] for r in rows):
+        for r in rows:
+            o = by_owner.setdefault(r["owner"] or "(unassigned)", {"count": 0, "open": 0.0, "weighted": 0.0, "commit": 0.0, "best_case": 0.0})
+            o["count"] += 1
+            o["open"] += r["amount"]
+            o["weighted"] += r["weighted"]
+            if r["category"] in ("commit", "best_case"):
+                o[r["category"]] += r["amount"]
+        for o in by_owner.values():
+            o["forecast"] = c.money(o["commit"] + 0.5 * o["best_case"])
+            for k in ("open", "weighted", "commit", "best_case"):
+                o[k] = c.money(o[k])
     return {
         "as_of": asof.isoformat(),
         "period_end": pend.isoformat(),
         "deals": rows,
         "open_pipeline": c.money(total),
         "weighted_pipeline": c.money(weighted),
+        "open_in_period": c.money(open_in_period),
+        "weighted_in_period": c.money(weighted_in_period),
         "commit": c.money(commit),
         "best_case": c.money(best),
         "forecast": c.money(forecast),
@@ -278,10 +316,12 @@ def weighted_pipeline(deals: list[dict], stage_probabilities: dict | None = None
         "by_stage": {k: {"count": v["count"], "amount": c.money(v["amount"]), "weighted": c.money(v["weighted"])} for k, v in sorted(by_stage.items(), key=lambda kv: STAGE_ORDER.index(kv[0]) if kv[0] in STAGE_ORDER else 99)},
         "by_close_month": {k: {"count": v["count"], "amount": c.money(v["amount"]), "weighted": c.money(v["weighted"])} for k, v in sorted(by_month.items())},
         "category_counts": {k: len(v) for k, v in cats.items()},
+        "by_owner": by_owner,
+        "concentration": {"deal": biggest["name"], "share_of_forecast_pct": conc} if biggest else None,
         "median_deal": c.money(median),
         "unknown_stages": sorted(unknown_stages),
         "risks": risks,
-        "verdict": f"Forecast ${forecast:,.0f} (range ${commit:,.0f}–${commit + best:,.0f}); weighted ${weighted:,.0f} on ${total:,.0f} open." + (" " + risks[0] if risks else ""),
+        "verdict": f"Forecast ${forecast:,.0f} (range ${commit:,.0f}–${commit + best:,.0f}); in-period open ${open_in_period:,.0f}, weighted ${weighted_in_period:,.0f} (all open ${total:,.0f})." + (" " + risks[0] if risks else ""),
     }
 
 
@@ -366,7 +406,7 @@ def stage_conversion(closed_deals: list[dict], stages: list[str] | None = None) 
         "avg_won_deal": c.money(won_amt / won) if won else None,
         "stage_conversion": conv,
         "win_rate_from_stage": cum,
-        "measured_probabilities": {s["stage"]: round((s["win_rate_from_here_pct"] or 0) / 100, 2) for s in cum},
+        "measured_probabilities": {s: round(won / reached[s], 3) if reached[s] else 0.0 for s in order},
         "lost_at_stage": dict(lost_at.most_common()),
         "cycle_days": {"won_avg": round(sum(cycles_won) / len(cycles_won), 1) if cycles_won else None, "won_median": _med(cycles_won), "all_avg": round(sum(cycles_all) / len(cycles_all), 1) if cycles_all else None, "all_median": _med(cycles_all)},
         "avg_days_in_stage": {s: round(sum(v) / len(v), 1) for s, v in stage_days.items()},
@@ -527,4 +567,115 @@ def forecast_accuracy(forecasts: list[dict]) -> dict:
         "calibration_multiplier": round(ratio, 3),
         "grade": grade,
         "verdict": f"MAPE {mape}% ({grade}), bias {bias:+}% — {direction}. Multiply this period's forecast by {round(ratio, 3)} to calibrate.",
+    }
+
+
+def _snapshot(deals: list[dict], label: str) -> dict[str, dict]:
+    if not isinstance(deals, list) or not deals or len(deals) > 2000:
+        raise ToolError(f"{label}: give 1-2000 deals.")
+    out: dict[str, dict] = {}
+    for i, d in enumerate(deals, 1):
+        if not isinstance(d, dict):
+            raise ToolError(f"{label} deal {i} is not a dict.")
+        key = str(d.get("id") or d.get("name") or "").strip().lower()
+        if not key:
+            raise ToolError(f"{label} deal {i} needs an id or a name to match snapshots.")
+        if key in out:
+            raise ToolError(f"{label}: duplicate deal {key!r} — add an id field.")
+        close = dates.parse_date(str(d["close_date"])) if d.get("close_date") else None
+        out[key] = {"name": str(d.get("name") or d.get("id")), "stage": str(d.get("stage", "")).strip().lower(), "amount": _amount(d.get("amount"), i), "close": close}
+    return out
+
+
+def _stage_rank(stage: str) -> int | None:
+    return STAGE_ORDER.index(stage) if stage in STAGE_ORDER else None
+
+
+@AGENT.tool
+def pipeline_changes(previous: list[dict], current: list[dict], period_end: str, period_start: str = "") -> dict:
+    """Compare two pipeline snapshots (e.g. last Monday vs today): new, won, lost, removed, pushed/pulled close dates, amount and stage moves.
+
+    Call when the user has an earlier export as well as the current one. Deals are matched on
+    "id" (preferred) or "name". Fields: name, stage, amount, close_date. Closed deals may appear
+    in the current snapshot with stage "closed won" / "closed lost".
+
+    Args:
+        previous: The earlier snapshot of open deals.
+        current: The current snapshot (open deals, optionally plus deals closed since).
+        period_end: Last day of the forecast period, YYYY-MM-DD — decides "pushed out of period".
+        period_start: First day of the period (optional; default: no lower bound).
+    """
+    pend = dates.parse_date(period_end)
+    pstart = dates.parse_date(period_start) if period_start else None
+    prev, cur = _snapshot(previous, "previous"), _snapshot(current, "current")
+
+    def in_period(d: dict) -> bool:
+        return bool(d["close"] and d["close"] <= pend and (pstart is None or d["close"] >= pstart))
+
+    def is_won(st: str) -> bool:
+        return st in ("closed won", "won")
+
+    def is_lost(st: str) -> bool:
+        return st in ("closed lost", "lost")
+
+    new, won, lost, removed, pushed_out, pulled_in, date_moves, amount_moves, advanced, regressed = ([] for _ in range(10))
+    for key, c_ in cur.items():
+        p_ = prev.get(key)
+        if p_ is None:
+            if not (is_won(c_["stage"]) or is_lost(c_["stage"])):
+                new.append({"name": c_["name"], "amount": c_["amount"], "stage": c_["stage"], "in_period": in_period(c_)})
+            continue
+        if is_won(c_["stage"]) and not is_won(p_["stage"]):
+            won.append({"name": c_["name"], "amount": c_["amount"]})
+            continue
+        if is_lost(c_["stage"]) and not is_lost(p_["stage"]):
+            lost.append({"name": c_["name"], "amount": p_["amount"], "last_stage": p_["stage"]})
+            continue
+        if p_["close"] != c_["close"]:
+            mv = {"name": c_["name"], "from": p_["close"].isoformat() if p_["close"] else None, "to": c_["close"].isoformat() if c_["close"] else None, "amount": c_["amount"]}
+            date_moves.append(mv)
+            if in_period(p_) and not in_period(c_):
+                pushed_out.append(mv)
+            elif in_period(c_) and not in_period(p_):
+                pulled_in.append(mv)
+        if abs(c_["amount"] - p_["amount"]) >= 0.01:
+            amount_moves.append({"name": c_["name"], "from": p_["amount"], "to": c_["amount"], "delta": c.money(c_["amount"] - p_["amount"])})
+        ra, rb = _stage_rank(p_["stage"]), _stage_rank(c_["stage"])
+        if ra is not None and rb is not None and ra != rb:
+            (advanced if rb > ra else regressed).append({"name": c_["name"], "from": p_["stage"], "to": c_["stage"]})
+    for key, p_ in prev.items():
+        if key not in cur:
+            removed.append({"name": p_["name"], "amount": p_["amount"], "stage": p_["stage"]})
+
+    def open_in_period(snap: dict[str, dict]) -> float:
+        return sum(d["amount"] for d in snap.values() if in_period(d) and not is_won(d["stage"]) and not is_lost(d["stage"]))
+
+    before, after = open_in_period(prev), open_in_period(cur)
+    tot = lambda xs: c.money(sum(x["amount"] for x in xs))  # noqa: E731
+    summary = {
+        "new": tot(new), "won": tot(won), "lost": tot(lost), "removed_without_outcome": tot(removed),
+        "pushed_out_of_period": tot(pushed_out), "pulled_into_period": tot(pulled_in),
+        "open_in_period_before": c.money(before), "open_in_period_now": c.money(after),
+        "net_in_period_change": c.money(after - before),
+    }
+    flags = []
+    if pushed_out:
+        flags.append(f"{len(pushed_out)} deal(s) worth ${summary['pushed_out_of_period']:,.0f} pushed out of the period — ask each owner what changed")
+    if removed:
+        flags.append(f"{len(removed)} deal(s) vanished without a won/lost outcome — find out if they were deleted or merged")
+    if regressed:
+        flags.append(f"{len(regressed)} deal(s) moved backwards a stage: {', '.join(r['name'] for r in regressed[:3])}")
+    repeat = [m for m in date_moves if m["from"] and m["to"] and m["to"] > m["from"]]
+    return {
+        "period_end": pend.isoformat(),
+        "summary": summary,
+        "new": new, "won": won, "lost": lost, "removed": removed,
+        "pushed_out_of_period": pushed_out, "pulled_into_period": pulled_in,
+        "close_date_changes": date_moves, "amount_changes": amount_moves,
+        "stage_advanced": advanced, "stage_regressed": regressed,
+        "slipping_dates": len(repeat),
+        "flags": flags,
+        "verdict": f"In-period open pipeline ${before:,.0f} → ${after:,.0f} ({'+' if after >= before else '-'}${abs(after - before):,.0f}): "
+        f"won ${summary['won']:,.0f}, lost ${summary['lost']:,.0f}, new ${summary['new']:,.0f}, pushed out ${summary['pushed_out_of_period']:,.0f}, pulled in ${summary['pulled_into_period']:,.0f}."
+        + (" " + flags[0] if flags else ""),
     }

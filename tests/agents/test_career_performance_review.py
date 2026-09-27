@@ -41,7 +41,7 @@ def test_check_review_language_catches_personality_absolutes_comparison_and_rece
         "migration, cutting invoice errors 40%. In June she also led the incident review. Unlike other engineers she is very confident."
     )
     out = call("check_review_language", review=review, cycle_start="2026-01-01", cycle_end="2026-06-30")
-    assert {h["term"] for h in out["personality_terms"]} == {"helpful", "confident"}
+    assert {h["term"] for h in out["personality_terms"]} == {"helpful", "confident", "pleasure to work with"}
     assert out["absolutes"] == ["always"]
     assert out["peer_comparisons"] == 2
     assert out["recency"]["flag"] is True and out["recency"]["pct_late"] == 100.0 and out["recency"]["months_covered"] == ["2026-06"]

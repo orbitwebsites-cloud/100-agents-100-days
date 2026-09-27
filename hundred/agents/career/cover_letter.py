@@ -206,7 +206,7 @@ def extract_requirements(job_description: str, top_n: int = 3) -> dict:
 def _coverage(letter: str, requirements: list[str]) -> list[dict]:
     sents = text.sentences(letter)
     sent_terms = [(s, set(extract_skill_terms(s)) | {w.lower() for w in text.words(s) if w.lower() not in text.STOPWORDS and len(w) > 3}) for s in sents]
-    letter_skills = set(extract_skill_terms(letter))
+    letter_skills = set(extract_skill_terms(letter)).union(*(st for _, st in sent_terms)) if sent_terms else set()
     rows = []
     for i, req in enumerate(requirements, 1):
         rq_skills = set(extract_skill_terms(req))

@@ -272,6 +272,8 @@ def fit_check(piece: str, platform: str) -> dict:
     elif tag_rule in ("none", "n/a") and tags:
         flags.append(f"Hashtags don't belong on {spec['name']}.")
     links = c.links(piece)
+    if key in ("x", "x_premium"):
+        links = [{"url": u} for _, _, u in c.x_urls(piece)]
     if links and key in ("instagram", "tiktok"):
         flags.append("Links aren't clickable here — say 'link in bio' instead.")
     if links and key == "x" and not piece.rstrip().endswith(links[-1]["url"]):

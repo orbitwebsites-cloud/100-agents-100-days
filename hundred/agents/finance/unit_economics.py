@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from ...core import Agent, ToolError
-from ._common import D, ZERO, as_rate, bound_rows, money, pct, ratio_to_pct, require_nonneg, require_positive
+from ._common import D, as_pct, ZERO, as_rate, bound_rows, money, pct, ratio_to_pct, require_nonneg, require_positive
 
 AGENT = Agent(
     slug="unit-economics",
@@ -144,10 +144,10 @@ def ltv_cac(
     gm = as_rate(gross_margin_pct, "gross_margin_pct")
     if not 0 < gm <= 1:
         raise ToolError("gross_margin_pct must be between 0 and 100")
-    churn = as_rate(monthly_churn_pct, "monthly_churn_pct")
+    churn = as_pct(monthly_churn_pct, "monthly_churn_pct")
     if not 0 <= churn <= 1:
         raise ToolError("monthly_churn_pct must be between 0 and 100")
-    exp = as_rate(monthly_expansion_pct, "monthly_expansion_pct")
+    exp = as_pct(monthly_expansion_pct, "monthly_expansion_pct")
     cac_d = require_positive(D(cac, "cac"), "cac")
     seg = segment.lower().strip()
     payback_bench = {"smb": 12, "enterprise": 24}.get(seg, 18)
@@ -176,7 +176,7 @@ def ltv_cac(
         "formulas": {"ltv": "ARPA x GM% / (monthly churn - monthly expansion)", "payback": "CAC / (ARPA x GM%)"},
     }
     if annual_discount_rate_pct:
-        r = as_rate(annual_discount_rate_pct, "annual_discount_rate_pct") / 12
+        r = as_pct(annual_discount_rate_pct, "annual_discount_rate_pct") / 12
         disc_ltv = gp_month / (net_churn + r) if (net_churn + r) > 0 else ltv
         out["ltv_discounted"] = money(disc_ltv)
         out["ltv_to_cac_discounted"] = pct(disc_ltv / cac_d, 2)
@@ -326,14 +326,14 @@ def contribution_margin(price: float, variable_costs: list[dict], fixed_costs_mo
         if not isinstance(c, dict):
             raise ToolError(f"variable_costs[{i}] must be an object")
         if "pct" in c:
-            amt = p * as_rate(c["pct"], f"variable_costs[{i}].pct")
+            amt = p * as_pct(c["pct"], f"variable_costs[{i}].pct")
         else:
             amt = D(c.get("amount", 0), f"variable_costs[{i}].amount")
         amt = require_nonneg(amt, f"variable_costs[{i}]")
         total_var += amt
         lines.append({"name": str(c.get("name") or f"cost {i}"), "per_unit": money(amt), "pct_of_price": ratio_to_pct(amt / p)})
     if payment_fee_pct:
-        fee = p * as_rate(payment_fee_pct, "payment_fee_pct")
+        fee = p * as_pct(payment_fee_pct, "payment_fee_pct")
         total_var += fee
         lines.append({"name": "payment processing", "per_unit": money(fee), "pct_of_price": ratio_to_pct(fee / p)})
     contrib = p - total_var

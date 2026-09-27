@@ -131,7 +131,7 @@ CTA_CLOSE = re.compile(r"\?|\b(what would you add|agree or disagree|what's your|
 
 
 def _hook_type(h: str) -> str:
-    if re.search(r"\b(turned down|fired|failed|quit|got rejected|lost|my biggest mistake|i was wrong)\b", h, re.I):
+    if re.search(r"\b(turned down|fired|failed|quit|got rejected|lost|my (biggest|worst) (mistake|hire|decision)|worst hire|i was wrong|cost (us|me))\b", h, re.I):
         return "confession"
     if re.match(r"^\s*(stop|never|don't|most|everyone|unpopular)\b", h, re.I) or re.search(r"\b(wrong|myth)\b", h, re.I):
         return "contrarian"
@@ -200,7 +200,7 @@ def score_hook(hook: str) -> dict:
     if c.HASHTAG_RE.search(h):
         score -= 8
         reasons.append("-8 hashtag in the hook")
-    if c.URL_RE.search(h):
+    if c.links(h):
         score -= 10
         reasons.append("-10 link in the hook")
     if c.count_emoji(h) > 1:
@@ -323,7 +323,8 @@ def post_check(post: str, hashtags_expected: int = 3) -> dict:
     you_n = sum(1 for w in ws if w.lower() in ("you", "your", "you're", "you've", "yours"))
     if i_n >= 6 and you_n == 0:
         flags.append(f"'I' ×{i_n}, 'you' ×0 — hand the lesson to the reader in second person.")
-    closing = "\n".join([ln for ln in lines if ln.strip() and not c.HASHTAG_RE.fullmatch(ln.strip().replace(" ", "")) and not all(t.startswith("#") for t in ln.split())][-2:])
+    prose_lines = [c.HASHTAG_RE.sub("", ln).strip() for ln in lines]
+    closing = "\n".join([ln for ln in prose_lines if ln and not all(t.startswith("#") for t in ln.split())][-2:])
     if not CTA_CLOSE.search(closing):
         flags.append("Close has no question or stance — end with something a specific reader can answer.")
     if re.search(r"\b(thoughts\?|agree\?)\s*$", closing, re.I):
@@ -360,8 +361,8 @@ def post_check(post: str, hashtags_expected: int = 3) -> dict:
 
 
 @AGENT.tool
-def format_post(draft: str, one_sentence_per_line: bool = True) -> dict:
-    """Reformat a draft for LinkedIn: strip markdown it can't render, one sentence per line in long paragraphs, clean bullets, hashtags moved to the end, blank lines normalised.
+def format_post(draft: str, one_sentence_per_line: bool = True, unicode_bold: bool = False, max_hashtags: int = 3) -> dict:
+    """Reformat a draft for LinkedIn: strip markdown it can't render (or turn **bold** into Unicode bold), one sentence per line in long paragraphs, clean bullets, every hashtag moved to one line at the end, blank lines normalised.
 
     Call after drafting, before post_check. Returns the paste-ready text and the list of
     transformations applied.
@@ -369,13 +370,21 @@ def format_post(draft: str, one_sentence_per_line: bool = True) -> dict:
     Args:
         draft: The post draft (markdown or plain text).
         one_sentence_per_line: Break paragraphs longer than two sentences into one sentence per line (default true — how the feed reads on mobile).
+        unicode_bold: Convert **bold** to Unicode bold letters (𝗹𝗶𝗸𝗲 𝘁𝗵𝗶𝘀) instead of stripping it. Screen readers spell these out letter by letter and LinkedIn search can't match them — use for 2-4 words at most.
+        max_hashtags: Keep at most this many hashtags (0-5; default 3), in order of first appearance.
     """
     c.guard(draft, "Draft", 20000)
+    if not 0 <= max_hashtags <= 5:
+        raise ToolError("max_hashtags must be 0-5.")
     changes: list[str] = []
     s = draft.strip()
     if re.search(r"\*\*[^*\n]+\*\*|__[^_\n]+__", s):
-        s = re.sub(r"(\*\*|__)([^*_\n]{1,500}?)\1", r"\2", s)
-        changes.append("removed **bold** markers (LinkedIn shows the asterisks)")
+        if unicode_bold:
+            s = re.sub(r"(\*\*|__)([^*_\n]{1,500}?)\1", lambda m: _unicode_bold(m.group(2)), s)
+            changes.append("converted **bold** to Unicode bold (use sparingly: screen readers and search can't read it)")
+        else:
+            s = re.sub(r"(\*\*|__)([^*_\n]{1,500}?)\1", r"\2", s)
+            changes.append("removed **bold** markers (LinkedIn shows the asterisks)")
     if re.search(r"(?<!\w)[*_](?!\s)[^*_\n]{1,300}?(?<!\s)[*_](?!\w)", s):
         s = re.sub(r"(?<!\w)([*_])(?!\s)([^*_\n]{1,300}?)(?<!\s)\1(?!\w)", r"\2", s)
         changes.append("removed *italic* markers")
@@ -392,23 +401,27 @@ def format_post(draft: str, one_sentence_per_line: bool = True) -> dict:
         s = re.sub(r"^[ \t]*>[ \t]?", "", s, flags=re.M)
         changes.append("removed blockquote markers")
     s = s.replace("\r\n", "\n")
-    # pull trailing hashtags out, then re-append
-    tags = c.HASHTAG_RE.findall(s)
-    body_tags_moved = False
-    if tags:
+    # every hashtag ends up on one line at the end: tag-only lines and trailing tag runs are lifted
+    # out; a tag used as a word mid-sentence ("the #sales team") keeps the word and loses the '#'.
+    tags_found = c.HASHTAG_RE.findall(s)
+    tags: list[str] = []
+    for t in tags_found:
+        if t.lower() not in [x.lower() for x in tags]:
+            tags.append(t)
+    moved = False
+    if tags_found:
         lines_out = []
         for ln in s.split("\n"):
-            toks = ln.split()
-            if toks and all(t.startswith("#") for t in toks):
-                body_tags_moved = True
+            stripped = re.sub(r"(?:\s*#[A-Za-z]\w*)+\s*$", "", ln) if c.HASHTAG_RE.search(ln) else ln
+            if stripped != ln:
+                moved = True
+            if ln.strip() and not stripped.strip():
                 continue
-            lines_out.append(ln)
+            new_ln = c.HASHTAG_RE.sub(lambda m: m.group(1), stripped)
+            if new_ln != stripped:
+                moved = True
+            lines_out.append(new_ln.rstrip())
         s = "\n".join(lines_out).strip()
-        seen: list[str] = []
-        for t in tags:
-            if t.lower() not in [x.lower() for x in seen]:
-                seen.append(t)
-        tags = seen
     paras = c.paragraphs(s)
     out_paras = []
     split_count = 0
@@ -428,10 +441,12 @@ def format_post(draft: str, one_sentence_per_line: bool = True) -> dict:
     formatted = "\n\n".join(out_paras)
     formatted = re.sub(r"[ \t]+\n", "\n", formatted)
     formatted = re.sub(r"\n{3,}", "\n\n", formatted)
-    if tags:
-        formatted = formatted.rstrip() + "\n\n" + " ".join(f"#{t}" for t in tags[:5])
-        if body_tags_moved or len(tags) > 5:
-            changes.append(f"moved hashtags to the end{' and capped at 5' if len(tags) > 5 else ''}")
+    kept = tags[:max_hashtags]
+    if kept:
+        formatted = formatted.rstrip() + "\n\n" + " ".join(f"#{t}" for t in kept)
+    if tags and (moved or len(tags) > max_hashtags):
+        dropped = tags[max_hashtags:]
+        changes.append("moved hashtags to one line at the end" + (f"; dropped {', '.join('#' + t for t in dropped)} (cap {max_hashtags})" if dropped else ""))
     if re.search(r"\n{3,}", draft):
         changes.append("collapsed extra blank lines")
     return {
@@ -439,10 +454,25 @@ def format_post(draft: str, one_sentence_per_line: bool = True) -> dict:
         "chars": len(formatted),
         "fits_3000": len(formatted) <= MAX_CHARS,
         "lines": len([ln for ln in formatted.splitlines() if ln.strip()]),
-        "hashtags": tags[:5],
+        "hashtags": kept,
         "changes": changes or ["no changes needed"],
         "summary": f"{len(formatted)} chars, {len(changes)} formatting change(s).",
     }
+
+
+def _unicode_bold(s: str) -> str:
+    """Mathematical sans-serif bold: A-Z → U+1D5D4, a-z → U+1D5EE, 0-9 → U+1D7EC."""
+    out = []
+    for ch in s:
+        if "A" <= ch <= "Z":
+            out.append(chr(0x1D5D4 + ord(ch) - 65))
+        elif "a" <= ch <= "z":
+            out.append(chr(0x1D5EE + ord(ch) - 97))
+        elif "0" <= ch <= "9":
+            out.append(chr(0x1D7EC + ord(ch) - 48))
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 @AGENT.tool

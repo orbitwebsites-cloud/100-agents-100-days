@@ -27,6 +27,7 @@ def test_budget_table_mtdc_indirect_and_cost_share():
         indirect_base="mtdc",
         cost_share_required_pct=25,
         cost_share_provided=30000,
+        uniform_guidance="pre-2024",  # award made before 2024-10-01: $5k equipment, first $25k of each subaward, 10% de minimis
     )
     assert out["salaries"] == 100000.0 and out["fringe"] == 28000.0
     assert out["total_direct"] == 188000.0

@@ -21,6 +21,17 @@ SCOPE_NOTE = (
     "lawyer review anything high-value, cross-border, or involving IP, employment or personal data."
 )
 
+SCOPE_NOTE_PRIVACY = (
+    "Drafting aid, not legal advice and not a compliance certification. Privacy law changes often and varies by "
+    "jurisdiction and sector; thresholds are the published figures as of 2026 — verify them, and have counsel review "
+    "children's, health, biometric or large-scale data, cross-border transfers, or any enforcement risk."
+)
+SCOPE_NOTE_GRANT = (
+    "Drafting aid, not legal or financial advice. Allowable costs, indirect rates, cost share and reporting are set by "
+    "each funder's guidelines and, for US federal awards, 2 CFR 200 as incorporated in the award — confirm with the "
+    "NOFO/RFP and your finance office before submitting."
+)
+
 _NUM_WORDS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
     "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "twenty": 20, "thirty": 30,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import date, timedelta
 from typing import Literal
@@ -552,7 +553,12 @@ def plan_prep_schedule(interview_date: str, start_date: str = "", hours_per_day:
         scale = min(1.0, budget / need) if need else 1.0
         # Distribute phases over work days in order; several phases may share a day.
         day_slots: list[list[dict]] = [[] for _ in range(max(1, work_days))]
-        remaining = [hours_per_day] * max(1, work_days)
+        # With slack, spread the work instead of front-loading it and idling for days before the
+        # interview: cap each day at the smallest half-hour step that still fits everything.
+        per_day = hours_per_day
+        if scale >= 1.0 and work_days > 0:
+            per_day = min(hours_per_day, max(0.5, math.ceil(need / work_days * 2) / 2))
+        remaining = [per_day] * max(1, work_days)
         di = 0
         for name, tasks, hrs, done in phases:
             h = round(hrs * scale, 1)

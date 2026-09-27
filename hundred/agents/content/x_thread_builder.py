@@ -61,7 +61,9 @@ AGENT = Agent(
        continue) and the second biggest just before the CTA.
     3. **Count every post.** Call `x_thread_builder__count_post` on any post that might be
        long, or run `x_thread_builder__lint_thread` on the whole list — it counts with
-       X's weighted rules (URLs are 23 chars regardless of length; emoji and CJK count 2).
+       X's weighted rules (every link is 23 chars regardless of length — including a bare
+       "acme.io/pricing" with no https:// — each emoji counts 2 even when it is a flag or a
+       ZWJ family, CJK counts 2). Your own count is usually wrong on exactly these cases.
        Anything over 280 gets cut, not squeezed: remove an adjective, then a clause, then
        split into two posts.
     4. **If splitting a long text**, call `x_thread_builder__split_thread` with the source.
@@ -201,7 +203,7 @@ def score_hook(hook: str) -> dict:
     if tags:
         score -= 10 * min(3, len(tags))
         reasons.append(f"-{10 * min(3, len(tags))} hashtag(s) in the hook")
-    if c.URL_RE.search(h):
+    if c.x_urls(h):
         score -= 15
         reasons.append("-15 link in the hook (kills reach; move to last post)")
     if c.MENTION_RE.search(h):
@@ -234,7 +236,7 @@ def score_hook(hook: str) -> dict:
         fixes.append("Add tension (a mistake, a myth) or a promise (what they'll get).")
     if n > 200:
         fixes.append("Cut to under 200 chars — remove the setup, keep the claim.")
-    if tags or c.URL_RE.search(h):
+    if tags or c.x_urls(h):
         fixes.append("Remove hashtags/links from the hook.")
     return {
         "score": score,
@@ -250,7 +252,7 @@ def score_hook(hook: str) -> dict:
 
 @AGENT.tool
 def count_post(post: str) -> dict:
-    """Count a single post the way X does: URLs = 23 chars, emoji/CJK = 2, everything else 1. Returns fit, overage and what to trim.
+    """Count a single post the way X does: every link = 23 chars (bare domains like acme.io too), each emoji sequence/CJK char = 2, everything else 1. Returns fit, overage and what to trim.
 
     Call on any post that might be near the limit — the model's own count is usually off
     when links or emoji are present.
@@ -260,7 +262,7 @@ def count_post(post: str) -> dict:
     """
     c.guard(post, "Post", 10000)
     n = c.x_length(post)
-    urls = c.URL_RE.findall(post)
+    urls = c.x_urls(post)
     emoji_n = c.count_emoji(post)
     sents = text.sentences(post)
     trim_hint = ""
@@ -418,7 +420,7 @@ def lint_thread(posts: list[str], max_chars: int = 280) -> dict:
             g = [x for x in m.groups() if x]
             num = int(g[0]) if g else None
         numbers.append(num)
-        urls = c.URL_RE.findall(p)
+        urls = c.x_urls(p)
         if urls and i < len(posts):
             issues.append("link before the last post — move to the close or a reply")
         tags = c.HASHTAG_RE.findall(p)

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict, deque
 from datetime import date, timedelta
+from typing import Any
 
 from ...core import Agent, ToolError
 from ...lib import dates
@@ -54,9 +56,11 @@ AGENT = Agent(
 
     ## Procedure
     1. **Normalise the task list.** Give every task a short id (T1, T2… or the user's keys),
-       a duration in working days (milestones = 0), and a `depends_on` list. Finish-to-start
-       only; if the user describes an overlap ("design can start when spec is half done")
-       split the predecessor into two tasks. Fixed-date constraints become milestone tasks.
+       a duration in working days (milestones = 0), and a `depends_on` list. Default is
+       finish-to-start. Overlaps and waits are typed links with a lag in working days:
+       "T3 SS+2" (starts 2 days after T3 starts), "T4:FF" (finishes with T4), "T2+3" (3-day
+       wait after T2, e.g. vendor lead time), "T5-2" (2-day lead). Fixed-date constraints
+       become milestone tasks.
     2. **Run `project_planner__critical_path`** with the task list. It returns ES/EF/LS/LF,
        total float, free float, the critical path(s), near-critical tasks (float ≤ 2 days or
        ≤ 10% of project length), and it rejects cycles and unknown dependencies with the
@@ -67,10 +71,14 @@ AGENT = Agent(
        dates verbatim in the output.
     4. **Size the buffer.** For tasks on or near the critical path, get optimistic / most
        likely / pessimistic estimates (from the user, or your own: pessimistic ≈ 2× likely for
-       novel work, 1.3× for routine) and call `project_planner__pert_estimate`. Report the
-       P50 and P80 end dates; commit externally to P80, plan internally to P50. The buffer
-       is the gap between them — put it at the END of the chain (Critical Chain style), not
-       padded into each task.
+       novel work, 1.3× for routine) and call `project_planner__pert_estimate` with the same
+       `start_date`, `holidays` and `workdays`, so it returns the P50/P80/P90 calendar dates.
+       The schedule_calendar end date is built from most-likely durations — it is the
+       **plan date**, NOT the P50 (PERT skews right, so the plan date usually has well under
+       50% chance; the tool reports that probability). Report plan, P50 and P80 dates; commit
+       externally to P80, run the team to the plan dates. The buffer is P80 minus the plan
+       (`buffer_vs_plan_for_p80`) — put it at the END of the chain (Critical Chain style),
+       not padded into each task.
     5. **Stress-test.** Identify the three tasks whose slip hurts most: highest (duration ×
        number of dependent successors) with zero float. Name the mitigation for each
        (start earlier, add a person, descope, parallelise by splitting).
@@ -94,7 +102,7 @@ AGENT = Agent(
     ## Output format
     ```
     # <Project> — plan (start <YYYY-MM-DD>)
-    **End date (P50):** <date> · **Commit date (P80):** <date> · **Working days:** N · **Critical path:** T1 → T4 → T7
+    **Plan date (most-likely):** <date> (<X>% chance) · **P50:** <date> · **Commit date (P80):** <date> · **Working days:** N · **Critical path:** T1 → T4 → T7
 
     ## Schedule
     | ID | Task | Owner | Days | Start | End | Float | Critical |
@@ -108,7 +116,7 @@ AGENT = Agent(
     2. …
 
     ## Buffer
-    Chain P50 = N days, σ = X → P80 adds Y days. Buffer placed after <last task>.
+    Plan = N days, chain P50 = M days, σ = X → P80 = P days: buffer of P − N days placed after <last task>.
 
     ## Assumptions
     - <working week, holidays, estimates that are yours>
@@ -125,6 +133,8 @@ AGENT = Agent(
     - Tasks like "Backend work — 15 days". Split into deliverables; nobody can report
       progress on a blob.
     - Reporting only the P50 date to stakeholders. Give P50 and P80 and say which is which.
+    - Calling the schedule's end date "P50". It is the sum of most-likely estimates; the
+      real median is later. Use the dates pert_estimate returns.
     - Ignoring cycles or unknown dependencies the tool flagged and "fixing" them by deleting
       the dependency. Ask or reason about which direction is real.
     """,
@@ -144,7 +154,12 @@ def _normalise_tasks(tasks: list) -> list[dict]:
             raise ToolError(f"Duplicate task id {tid!r}.")
         ids.add(tid)
         dur = as_float(raw.get("duration", raw.get("days")), f"tasks[{i}].duration", lo=0, hi=3650)
-        deps = as_str_list(raw.get("depends_on", raw.get("deps", [])), f"tasks[{i}].depends_on")
+        raw_deps = raw.get("depends_on", raw.get("deps", []))
+        if isinstance(raw_deps, (str, dict)):
+            raw_deps = [raw_deps] if isinstance(raw_deps, dict) else as_str_list(raw_deps, f"tasks[{i}].depends_on")
+        if not isinstance(raw_deps, list):
+            raise ToolError(f"tasks[{i}].depends_on must be a list.")
+        deps = [d if isinstance(d, dict) else str(d).strip() for d in raw_deps[:200] if (isinstance(d, dict) or str(d).strip())]
         out.append(
             {
                 "id": tid,
@@ -156,12 +171,52 @@ def _normalise_tasks(tasks: list) -> list[dict]:
         )
     by_id = {t["id"]: t for t in out}
     for t in out:
+        links = []
         for d in t["depends_on"]:
-            if d not in by_id:
-                raise ToolError(f"Task {t['id']!r} depends on unknown task {d!r}. Known ids: {', '.join(sorted(by_id))[:300]}.")
-            if d == t["id"]:
+            link = _parse_link(d, by_id, t["id"])
+            if link["id"] == t["id"]:
                 raise ToolError(f"Task {t['id']!r} depends on itself.")
+            if any(x["id"] == link["id"] for x in links):
+                raise ToolError(f"Task {t['id']!r} lists {link['id']!r} twice — keep one link.")
+            links.append(link)
+        t["links"] = links
+        t["depends_on"] = [x["id"] for x in links]
     return out
+
+
+_LINK_RE = re.compile(r"^(.*?)[\s:]*(FS|SS|FF|SF)?\s*(?:([+-])\s*(\d+(?:\.\d+)?)\s*d?)?$", re.I)
+
+
+def _parse_link(dep: Any, by_id: dict, owner_id: str) -> dict:
+    """'T3' | 'T3 SS+2' | 'T3:FF' | 'T3+1' | {"id": "T3", "type": "SS", "lag": 2} -> {"id", "type", "lag"}."""
+    if isinstance(dep, dict):
+        did = as_str(dep.get("id") or dep.get("task"), f"{owner_id}.depends_on.id", max_len=60)
+        typ = str(dep.get("type") or "FS").upper().strip()
+        lag = as_float(dep.get("lag", 0), f"{owner_id}.depends_on[{did}].lag", lo=-3650, hi=3650, default=0.0)
+    else:
+        did, typ, lag = dep, "FS", 0.0
+        if dep not in by_id:
+            m = _LINK_RE.match(dep)
+            if m and m.group(1) in by_id and (m.group(2) or m.group(4)):
+                did, typ = m.group(1), (m.group(2) or "FS").upper()
+                lag = float(m.group(4) or 0) * (-1 if m.group(3) == "-" else 1)
+    if did not in by_id:
+        raise ToolError(f"Task {owner_id!r} depends on unknown task {did!r}. Known ids: {', '.join(sorted(by_id))[:300]}.")
+    if typ not in ("FS", "SS", "FF", "SF"):
+        raise ToolError(f"Task {owner_id!r}: dependency type {typ!r} must be FS, SS, FF or SF.")
+    return {"id": did, "type": typ, "lag": lag}
+
+
+def _link_es(link: dict, es: dict, ef: dict, dur: float) -> float:
+    """Earliest start a successor of duration `dur` may have under one precedence link."""
+    p, typ, lag = link["id"], link["type"], link["lag"]
+    return {"FS": ef[p] + lag, "SS": es[p] + lag, "FF": ef[p] + lag - dur, "SF": es[p] + lag - dur}[typ]
+
+
+def _link_lf(link: dict, succ_ls: float, succ_lf: float, dur: float) -> float:
+    """Latest finish a predecessor of duration `dur` may have given one successor's late dates."""
+    typ, lag = link["type"], link["lag"]
+    return {"FS": succ_ls - lag, "SS": succ_ls - lag + dur, "FF": succ_lf - lag, "SF": succ_lf - lag + dur}[typ]
 
 
 def _find_cycle(tasks: list[dict]) -> list[str]:
@@ -213,26 +268,35 @@ def _cpm(tasks: list[dict]) -> dict:
     if len(order) != len(tasks):
         cycle = _find_cycle(tasks)
         raise ToolError("Dependency cycle detected: " + " -> ".join(cycle) + ". Break the loop and re-run.")
+    links_in = {t["id"]: t.get("links") or [{"id": d, "type": "FS", "lag": 0.0} for d in t["depends_on"]] for t in tasks}
+    link_of = {(lk["id"], v): lk for v, lks in links_in.items() for lk in lks}
     es, ef = {}, {}
     for u in order:
-        es[u] = max((ef[d] for d in by_id[u]["depends_on"]), default=0.0)
-        ef[u] = es[u] + by_id[u]["duration"]
+        dur = by_id[u]["duration"]
+        es[u] = max([0.0] + [_link_es(lk, es, ef, dur) for lk in links_in[u]])
+        ef[u] = es[u] + dur
     project = max(ef.values(), default=0.0)
     ls, lf = {}, {}
     for u in reversed(order):
-        lf[u] = min((ls[v] for v in succ[u]), default=project)
-        ls[u] = lf[u] - by_id[u]["duration"]
+        dur = by_id[u]["duration"]
+        lf[u] = min([project] + [_link_lf(link_of[(u, v)], ls[v], lf[v], dur) for v in succ[u]])
+        ls[u] = lf[u] - dur
+
+    def slack(u: str, v: str) -> float:  # how far u can slip before it pushes v's early dates
+        lk = link_of[(u, v)]
+        return {"FS": es[v] - lk["lag"] - ef[u], "SS": es[v] - lk["lag"] - es[u], "FF": ef[v] - lk["lag"] - ef[u], "SF": ef[v] - lk["lag"] - es[u]}[lk["type"]]
+
     rows = []
     for u in order:
         tf = ls[u] - es[u]
-        ff = min((es[v] for v in succ[u]), default=project) - ef[u]
+        ff = min([slack(u, v) for v in succ[u]], default=project - ef[u])
         rows.append(
             {
                 "id": u,
                 "name": by_id[u]["name"],
                 "owner": by_id[u]["owner"] or None,
                 "duration": by_id[u]["duration"],
-                "depends_on": by_id[u]["depends_on"],
+                "depends_on": [lk["id"] + ("" if lk["type"] == "FS" and not lk["lag"] else f" {lk['type']}{lk['lag']:+g}") for lk in links_in[u]],
                 "es": es[u],
                 "ef": ef[u],
                 "ls": ls[u],
@@ -250,7 +314,7 @@ def _cpm(tasks: list[dict]) -> dict:
     def walk(u: str, path: list[str]) -> None:
         if len(paths) >= 10:
             return
-        nxt = [v for v in succ[u] if v in crit and abs(es[v] - ef[u]) < EPS]
+        nxt = [v for v in succ[u] if v in crit and abs(slack(u, v)) < EPS]
         if not nxt:
             paths.append(path)
             return
@@ -258,7 +322,7 @@ def _cpm(tasks: list[dict]) -> dict:
             walk(v, path + [v])
 
     for r in rows:
-        if r["critical"] and not any(d in crit and abs(ef[d] - es[r["id"]]) < EPS for d in r["depends_on"]):
+        if r["critical"] and not any(lk["id"] in crit and abs(slack(lk["id"], r["id"])) < EPS for lk in links_in[r["id"]]):
             walk(r["id"], [r["id"]])
     rows.sort(key=lambda r: (r["es"], -r["duration"], r["id"]))
     return {"rows": rows, "project_duration": project, "critical_paths": paths, "order": order}
@@ -268,11 +332,12 @@ def _cpm(tasks: list[dict]) -> dict:
 def critical_path(tasks: list[dict]) -> dict:
     """Run the Critical Path Method on a task list: early/late dates, float, critical path(s), cycle detection.
 
-    Durations are in working days (milestones = 0). Dependencies are finish-to-start.
+    Durations are in working days (milestones = 0). Dependencies are finish-to-start unless typed
+    (SS / FF / SF) and may carry a lag (+N) or lead (-N) in working days.
     Rejects cycles, self-references and unknown dependency ids with the offending task names.
 
     Args:
-        tasks: List of {"id": str, "name": str, "duration": working days, "depends_on": [ids], "owner": str}.
+        tasks: List of {"id": str, "name": str, "duration": working days, "depends_on": [ids], "owner": str}. A dependency may carry a type and lag: "T3 SS+2", "T4:FF", "T2+1" (FS with 1-day lag), "T5-2" (2-day lead) or {"id": "T3", "type": "SS", "lag": 2}.
     """
     norm = _normalise_tasks(tasks)
     res = _cpm(norm)
@@ -451,15 +516,20 @@ def schedule_calendar(tasks: list[dict], start_date: str, holidays: list[str] = 
 
 
 @AGENT.tool
-def pert_estimate(tasks: list[dict], unit: str = "days") -> dict:
-    """PERT three-point estimate per task and for the whole chain: expected, sigma, P50/P80/P90.
+def pert_estimate(tasks: list[dict], unit: str = "days", start_date: str = "", holidays: list[str] = [], workdays: str = "mon-fri") -> dict:
+    """PERT three-point estimate per task and for the whole chain: expected, sigma, P50/P80/P90 — as days AND calendar dates.
 
     Pass the tasks on the critical path (or any sequential chain). Chain sigma is the root of
-    summed variances, so it does not over-count uncertainty like naive summing does.
+    summed variances, so it does not over-count uncertainty like naive summing does. Also
+    reports the chance of finishing by the plan built from most-likely durations — that plan
+    date is usually well below P50, so never label it "P50".
 
     Args:
         tasks: List of {"id"/"name": str, "optimistic": n, "most_likely": n, "pessimistic": n}.
         unit: Label for the numbers ("days" default, or "hours", "weeks").
+        start_date: Optional YYYY-MM-DD the chain starts (the project start if you passed the whole critical path). With unit "days" (working days) this returns the plan/P50/P80/P90 end dates.
+        holidays: Non-working dates (YYYY-MM-DD) for the date conversion.
+        workdays: Working week for the date conversion, e.g. "mon-fri" (default) or "mon-thu".
     """
     tasks = require_list(tasks, "tasks", 500)
     rows, total_e, total_var = [], 0.0, 0.0
@@ -492,6 +562,27 @@ def pert_estimate(tasks: list[dict], unit: str = "days") -> dict:
     sigma = math.sqrt(total_var)
     p50, p80, p90 = total_e, total_e + 0.8416 * sigma, total_e + 1.2816 * sigma
     naive = sum(r["pessimistic"] for r in rows)
+    planned = sum(r["most_likely"] for r in rows)
+    p_plan = 0.5 * (1 + math.erf((planned - p50) / (sigma * math.sqrt(2)))) if sigma > 0 else (1.0 if planned >= p50 else 0.0)
+    calendar = None
+    if start_date:
+        if unit != "days":
+            raise ToolError("start_date needs unit 'days' (working days) to convert to calendar dates.")
+        st = dates.parse_date(start_date)
+        hol = {dates.parse_date(h) for h in as_str_list(holidays, "holidays", 400)}
+        wd = _parse_workdays(workdays)
+
+        def end_of(n: float) -> str:  # the chain finishes during working day ceil(n)
+            return _working_day_index(st, hol, wd, max(int(math.ceil(n - EPS)) - 1, 0)).isoformat()
+
+        calendar = {
+            "start": _working_day_index(st, hol, wd, 0).isoformat(),
+            "plan_most_likely": end_of(planned),
+            "p50": end_of(p50),
+            "p80": end_of(p80),
+            "p90": end_of(p90),
+            "rule": "N working days = finishes at the end of working day ceil(N) counted from start (weekends/holidays skipped).",
+        }
     return {
         "unit": unit,
         "tasks": rows,
@@ -503,12 +594,18 @@ def pert_estimate(tasks: list[dict], unit: str = "days") -> dict:
             "buffer_for_p80": round(p80 - p50, 2),
             "buffer_for_p80_pct": round(100 * (p80 - p50) / p50, 1) if p50 else None,
             "sum_of_pessimistic": naive,
-            "sum_of_most_likely": round(sum(r["most_likely"] for r in rows), 2),
+            "sum_of_most_likely": round(planned, 2),
+            "probability_plan_date_holds_pct": round(100 * p_plan, 1),
+            "buffer_vs_plan_for_p80": round(p80 - planned, 2),
         },
+        "calendar_dates": calendar,
         "verdict": (
             f"Chain P50 = {p50:.1f} {unit}, P80 = {p80:.1f}, P90 = {p90:.1f} (σ {sigma:.1f}). "
-            f"Commit to P80 and hold a {p80 - p50:.1f}-{unit} buffer at the end. "
+            f"Commit to P80: hold a {p80 - planned:.1f}-{unit} project buffer after the last task (P80 minus the most-likely plan). "
+            f"The most-likely plan ({planned:g} {unit}) has only a {100 * p_plan:.0f}% chance of holding; "
+            f"P80 needs {p80 - planned:.1f} {unit} of buffer beyond it. "
             f"Summing pessimistic estimates would give {naive:g} — that's padding, not planning."
+            + (f" Dates: plan {calendar['plan_most_likely']}, P50 {calendar['p50']}, P80 {calendar['p80']}, P90 {calendar['p90']}." if calendar else "")
         ),
     }
 

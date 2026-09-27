@@ -27,7 +27,7 @@ def test_metric_deltas_mom_yoy_and_flags():
     assert churn["needs_explanation"] == ["MoM"]  # +14.3% relative
     assert cust["yoy"]["display"] == "+95.0% (+152)"
     assert out["markdown_table"].splitlines()[0] == "| Metric | Sep 2026 | MoM | YoY | Note |"
-    assert "▼ +0.3 pts" in out["markdown_table"]
+    assert "▲ +0.3 pts ✗" in out["markdown_table"]  # churn went up (▲) and that is bad (✗)
     with pytest.raises(ToolError):
         call("metric_deltas", metrics=[{"name": "x"}])
 
@@ -48,7 +48,7 @@ def test_runway_line_average_burn_and_hires():
     out = call("runway_line", cash=1900000, net_burn_months=[100000, 105000, 110000], as_of="2026-09-30", hires_planned_monthly_cost=30000)
     assert out["avg_net_burn"] == 105000.0
     assert out["runway_months"] == 18.1
-    assert out["cash_out_month"] == "2028-03"
+    assert out["cash_out_month"] == "2028-04"  # Sep 30 2026 + 18.1 months = ~Apr 2 2028 (was truncated to Mar before)
     assert out["with_planned_hires"]["runway_months"] == 14.1
     assert out["burn_trend"] == "rising" and out["fundraise_flag"] is False
     short = call("runway_line", cash=500000, net_burn_months=[60000], as_of="2026-09-30")

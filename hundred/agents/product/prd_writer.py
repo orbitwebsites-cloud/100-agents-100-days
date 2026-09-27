@@ -6,7 +6,7 @@ import re
 
 from ...core import Agent, ToolError
 from ...lib import text
-from ._common import ambiguous_terms, check_rows, check_text
+from ._common import ambiguous_terms, check_rows, check_text, stem
 
 AGENT = Agent(
     slug="prd-writer",
@@ -215,7 +215,9 @@ def _section_words(body: str, rx: re.Pattern) -> int | None:
 
 _PRIORITY_RE = re.compile(r"\b(must|shall|required|must not|shall not)\b|\b(should|recommended)\b|\b(could|may|optional|nice[- ]to[- ]have)\b", re.I)
 _NFR_RE = re.compile(r"\b(latency|p9[059]|ms\b|seconds?|throughput|uptime|availability|sla|scal|secur|encrypt|gdpr|accessib|wcag|performance|load|concurren|localis|localiz|i18n|audit log|retention|backup|compliance)", re.I)
-_OBSERVABLE_RE = re.compile(r"\b(display|show|return|send|create|delete|update|allow|prevent|block|redirect|log|store|validate|reject|accept|notify|export|import|render|respond|complete|within|≤|<=|>=|at least|at most|no more than|\d)", re.I)
+_OBSERVABLE_RE = re.compile(r"\b(display|show|return|send|sent|receive|create|delete|update|allow|prevent|block|redirect|log|store|validate|reject|accept|approve|request|notify|remind|export|import|render|respond|complete|configure|assign|invite|share|upload|download|view|see|open|edit|save|search|filter|sort|generate|within|≤|<=|>=|at least|at most|no more than|\d)", re.I)
+# a second clause joined by and/or ("gets an email and can approve") = two behaviours in one requirement
+_COMPOUND_RE = re.compile(r"\b(?:and|or)\s+(?:then\s+)?(?:can|must|should|shall|will|may|could|is|are|gets?|sends?|receives?|shows?|creates?|updates?|deletes?|allows?|notif(?:y|ies))\b", re.I)
 
 
 @AGENT.tool
@@ -256,7 +258,7 @@ def number_requirements(requirements: list[str], prefix: str = "FR", start: int 
         amb = ambiguous_terms(s)
         if amb:
             issues.append(f"ambiguous: {', '.join(amb)} — replace with a number or observable behaviour")
-        if re.search(r"\band/or\b", s, re.I) or len(re.findall(r"\band\b", s, re.I)) >= 2:
+        if re.search(r"\band/or\b", s, re.I) or len(re.findall(r"\band\b", s, re.I)) >= 2 or _COMPOUND_RE.search(s):
             issues.append("compound — split into one requirement per behaviour")
         if not _OBSERVABLE_RE.search(s):
             issues.append("no observable behaviour — what would a tester see?")
@@ -317,8 +319,8 @@ def lint_user_stories(stories: list[dict]) -> dict:
             if not outcome:
                 issues.append("missing 'so that' — why does the user want this?")
             else:
-                wset = set(text.words(want.lower())) - text.STOPWORDS
-                oset = set(text.words(outcome.lower())) - text.STOPWORDS
+                wset = {stem(w) for w in text.words(want.lower()) if w not in text.STOPWORDS}
+                oset = {stem(w) for w in text.words(outcome.lower()) if w not in text.STOPWORDS}
                 if wset and oset and len(wset & oset) / len(oset) >= 0.6:
                     issues.append("'so that' restates 'I want' — state the real outcome/benefit")
             amb = ambiguous_terms(want)
@@ -343,7 +345,12 @@ def lint_user_stories(stories: list[dict]) -> dict:
     }
 
 
-_TIME_RE = re.compile(r"\b(\d+\s*(?:days?|weeks?|months?|quarters?|q[1-4]|sprints?)|by\s+\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}|end of\s+\w+|within\s+\d+)", re.I)
+_TIME_RE = re.compile(
+    r"\b(\d+\s*(?:days?|weeks?|months?|quarters?|q[1-4]|sprints?)|by\s+\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}|end of\s+\w+|within\s+\d+"
+    r"|(?:q[1-4]|h[12]|fy)\s*'?\d{2,4}"  # Q4 2026, H1 2027, FY26
+    r"|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(?:\d{1,2},?\s+)?\d{4})",  # Dec 2026, December 31, 2026
+    re.I,
+)
 _NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
 

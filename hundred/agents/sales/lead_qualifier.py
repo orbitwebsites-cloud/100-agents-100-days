@@ -59,7 +59,8 @@ AGENT = Agent(
     2. **Write the ICP as weights.** Build the criteria dict: for each attribute, the
        ideal values and a weight 1-5. Typical: industry 4, employees 4, title seniority 3,
        geography 2, tech/trigger 3. Show the ICP to the user in the output so they can
-       tune it.
+       tune it. Always include a **function** criterion (the buying functions from step 1,
+       weight 3): seniority alone lets "VP Sales Engineering" score like "VP Sales".
     3. **Score fit.** Call `lead_qualifier__icp_fit_score` with the ICP and the lead(s)
        (up to 500). It returns a 0-100 fit score, tier (A ≥ 75, B 55-74, C 35-54, D < 35),
        matched/missed criteria with points, and the ranked list. Never adjust a score by
@@ -97,7 +98,7 @@ AGENT = Agent(
     ## Output format
     ```
     ## ICP used (weights)
-    industry: <values> (w4) · size: <band> (w4) · seniority: <levels> (w3) · geo: … · tech/trigger: …
+    industry: <values> (w4) · size: <band> (w4) · seniority: <levels> (w3) · function: <buying functions> (w3) · geo: … · tech/trigger: …
 
     ## Ranked leads
     | # | Lead | Company | Fit | Tier | Intent | Route | SLA | Why |
@@ -152,11 +153,13 @@ def _parse_title(title: str) -> dict:
     t = title.strip()
     sen = next((lvl for lvl, rx in SENIORITY if rx.search(t)), "other")
     # "VP of Sales Engineering" → engineering wins over sales when both match and engineering appears last
-    funcs = [(f, m.start()) for f, rx in FUNCTION for m in [rx.search(t)] if m]
+    funcs = [(f, m.start(), len(m.group(0))) for f, rx in FUNCTION for m in [rx.search(t)] if m]
     if funcs:
         # prefer the function mentioned last (the noun the title is actually about), except exec
         non_exec = [f for f in funcs if f[0] != "exec"]
-        func = max(non_exec, key=lambda x: x[1])[0] if non_exec else "exec"
+        # prefer the function mentioned last; on a tie ("Revenue Operations" matches sales at "revenue"
+        # and ops at "revenue operations") prefer the longer, more specific match
+        func = max(non_exec, key=lambda x: (x[1], x[2]))[0] if non_exec else "exec"
     else:
         func = "exec" if sen == "c_level" else "other"
     if sen == "c_level" and func == "other":
@@ -237,6 +240,32 @@ def _parse_range(v) -> tuple[int, int] | None:
     return None
 
 
+COUNTRY_KEYS = ("country", "geo", "geography", "region", "location", "hq_country")
+_COUNTRY_ALIASES = {
+    "us": ("us", "usa", "u.s.", "u.s.a.", "united states", "united states of america", "america"),
+    "uk": ("uk", "u.k.", "united kingdom", "great britain", "gb", "britain", "england", "scotland", "wales", "northern ireland"),
+    "uae": ("uae", "united arab emirates"),
+    "de": ("de", "germany", "deutschland"),
+}
+
+
+def _country(v: str) -> str:
+    v = v.strip().lower()
+    for code, names in _COUNTRY_ALIASES.items():
+        if v in names:
+            return code
+    return v
+
+
+def _term_match(target: str, lead_value: str) -> bool:
+    """Whole-word match either way: "saas" matches "b2b saas", but "us" never matches "australia"."""
+    if not target or not lead_value:
+        return False
+    if target == lead_value:
+        return True
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(target)}(?![a-z0-9])", lead_value) or re.search(rf"(?<![a-z0-9]){re.escape(lead_value)}(?![a-z0-9])", target))
+
+
 def _score_lead(lead: dict, icp: dict) -> dict:
     total_w, got, matched, missed = 0.0, 0.0, [], []
     caps = []
@@ -287,7 +316,12 @@ def _score_lead(lead: dict, icp: dict) -> dict:
         else:
             lv = str(lead_val).strip().lower()
             lead_list = [x.strip() for x in re.split(r"[,;|/]", lv) if x.strip()] if crit in ("tech", "tech_stack", "tools", "signals", "triggers") else [lv]
-            hits = [v for v in values if any(v == x or v in x or x in v for x in lead_list)]
+            if crit in COUNTRY_KEYS:
+                values = [_country(v) for v in values]
+                lead_list = [_country(x) for x in lead_list]
+            hits = [v for v in values if any(_term_match(v, x) for x in lead_list)]
+            if not hits and crit == "function" and lv == "exec":
+                hits = ["exec (founders/C-level always count as buyers)"]
             if hits:
                 pts, reason = weight, f"{crit} matches {hits[0]}"
             else:
@@ -315,12 +349,13 @@ def icp_fit_score(icp: dict, leads: list[dict]) -> dict:
 
     Call after parsing titles. ICP: {"industry": {"values": ["saas", "fintech"], "weight": 4},
     "employees": {"values": ["51-500"], "weight": 4}, "seniority": {"values": ["vp", "director"], "weight": 3},
+    "function": {"values": ["sales", "ops"], "weight": 3},
     "country": {"values": ["us", "uk"], "weight": 2}, "tech": {"values": ["salesforce"], "weight": 3}}.
     Lead keys must match ICP keys (plus optional name, company, title, email).
 
     Args:
         icp: Criteria dict; each criterion has values (list) and weight (1-10). Optional unknown_credit (0-1, default 0.25) for missing lead fields.
-        leads: 1-500 lead dicts with the same keys as the ICP plus name/company/title/email.
+        leads: 1-500 lead dicts with the same keys as the ICP plus name/company/title/email. Seniority and function are derived from the title when the lead has no such field. Countries match on whole words and common aliases (US/USA/United States, UK/United Kingdom/England).
     """
     if not isinstance(icp, dict) or not icp:
         raise ToolError("icp must be a non-empty dict of criteria.")
@@ -331,8 +366,12 @@ def icp_fit_score(icp: dict, leads: list[dict]) -> dict:
         if not isinstance(lead, dict):
             raise ToolError(f"Lead {i} is not a dict.")
         lead = {str(k).strip().lower(): v for k, v in lead.items()}
-        if "seniority" in icp and "seniority" not in lead and lead.get("title"):
-            lead["seniority"] = _parse_title(str(lead["title"]))["seniority"]
+        if lead.get("title"):
+            parsed = _parse_title(str(lead["title"]))
+            if "seniority" in icp and "seniority" not in lead:
+                lead["seniority"] = parsed["seniority"]
+            if "function" in icp and "function" not in lead:
+                lead["function"] = parsed["function"]
         r = _score_lead(lead, icp)
         results.append({
             "n": i,

@@ -124,35 +124,61 @@ AGENT = Agent(
     """,
 )
 
-MASCULINE = {
-    "aggressive": "proactive / direct", "ambitious": "driven to grow", "assertive": "confident", "competitive": "results-focused",
-    "dominant": "leading", "dominate": "lead", "fearless": "willing to take calculated risks", "ninja": "specialist", "rockstar": "expert",
-    "guru": "expert", "superhero": "expert", "hacker": "engineer", "wizard": "specialist", "decisive": "makes clear decisions",
-    "independent": "self-directed", "outspoken": "candid", "self-reliant": "self-directed", "strong-willed": "resilient",
-    "driven": "motivated", "hard-charging": "energetic", "crush": "exceed", "crushing": "exceeding", "kill it": "excel",
-    "warrior": "advocate", "hustle": "work with urgency", "hustler": "self-starter", "boss": "lead", "headstrong": "determined",
-    "battle-tested": "proven", "assert": "state", "hierarchy": "structure", "logic": "reasoning", "objective": "evidence-based",
-    "principled": "ethical", "stubborn": "persistent", "work hard play hard": "we care about sustainable pace",
+# Gaucher, Friesen & Kay (2011), "Evidence That Gendered Wording in Job Advertisements Exists and
+# Sustains Gender Inequality", JPSP 101(1):109-128, Appendix A — the published stems ("*" = any
+# ending), as reproduced in the open-source Gender Decoder. STRONG stems describe traits and drive
+# the lean and the score; WEAK stems are on the list too but are usually functional in a job ad
+# ("lead the roadmap", "analytics", "responsibilities"), so they are reported, not penalised.
+GFK_MASCULINE_STRONG = {
+    "adventurous": "curious about new problems", "aggress*": "proactive / direct", "ambitio*": "motivated to grow / high-impact",
+    "assert*": "clear and confident in your reasoning", "athlet*": "remove unless the job is physical", "autonom*": "self-directed",
+    "boast*": "remove", "compet*": "results-focused / strong (for pay: 'market-rate')", "confident": "sure of your reasoning",
+    "courag*": "willing to take calculated risks", "decisive": "makes clear calls with the data available", "dominant": "leading",
+    "domina*": "lead / grow share in", "greedy": "remove", "headstrong": "determined", "head-strong": "determined",
+    "hierarch*": "structure / reporting lines", "hostil*": "remove", "impulsive": "remove", "intellect*": "curious / thoughtful",
+    "masculine": "remove", "outspoken": "candid", "persist": "keep going / follow through", "reckless": "remove",
+    "stubborn": "persistent", "superior": "excellent", "self-confiden*": "sure of your reasoning", "self-relian*": "self-directed",
+    "self-sufficien*": "self-directed",
+}
+GFK_MASCULINE_WEAK = {
+    "active": "", "analy*": "", "challeng*": "", "decide": "", "decision*": "", "determin*": "", "force*": "", "independen*": "",
+    "individual*": "", "lead*": "", "logic": "", "objective": "", "opinion": "", "principle*": "",
+}
+GFK_FEMININE_STRONG = {
+    "supportive": "", "affectionate": "", "cheer*": "", "communal": "", "compassion*": "", "considerate": "", "cooperat*": "", "emotiona*": "",
+    "empath*": "", "feminine": "", "flatterable": "", "gentle": "", "honest": "", "interpersonal": "", "interdependen*": "",
+    "interpersona*": "", "kinship": "", "loyal*": "", "modesty": "", "nag": "", "nurtur*": "", "pleasant*": "", "polite": "",
+    "quiet*": "", "sensitiv*": "", "submissive": "", "sympath*": "", "tender*": "", "warm*": "", "whin*": "", "yield*": "",
+}
+GFK_FEMININE_WEAK = {"child*": "", "commit*": "", "connect*": "", "depend*": "", "kind": "", "respon*": "", "support*": "", "together*": "", "trust*": "", "understand*": ""}
+# Not in GFK: tech-hiring slang and pace clichés that code masculine (Gender Decoder additions + common usage).
+MASCULINE_SLANG = {
+    "fearless": "willing to take calculated risks", "driven": "motivated", "battle-tested": "proven", "fight*": "advocate / work for",
+    "ninja": "specialist", "rockstar": "expert", "guru": "expert", "superhero": "expert", "hacker": "engineer", "wizard": "specialist",
+    "crush": "exceed", "crushing": "exceeding", "kill it": "excel", "warrior": "advocate", "hustle": "work with urgency",
+    "hustler": "self-starter", "boss": "lead", "hard-charging": "energetic", "work hard play hard": "we care about sustainable pace",
     "fast-paced": "we ship every two weeks (say what fast means)", "high-pressure": "describe the actual demands",
 }
-FEMININE = {
-    "collaborative": "works closely with…", "supportive": "helps teammates…", "nurture": "develop", "nurturing": "developing",
-    "empathetic": "understands customers", "compassionate": "considerate", "interpersonal": "communication", "loyal": "committed",
-    "pleasant": "friendly", "polite": "respectful", "sensitive": "attentive", "warm": "approachable", "yield": "adapt", "gentle": "considerate",
-    "cheerful": "positive", "committed": "committed", "dependable": "reliable", "honest": "honest", "kind": "kind", "modest": "humble",
-    "understanding": "understanding", "cooperative": "cooperative", "connected": "connected", "sympathetic": "considerate",
-    "trust": "trust", "communal": "team-oriented", "together": "together", "sharing": "sharing", "considerate": "considerate",
+MASCULINE = {**GFK_MASCULINE_STRONG, **MASCULINE_SLANG}
+FEMININE = dict(GFK_FEMININE_STRONG)
+WEAK_CODED = {**{k: "masculine (GFK, often functional)" for k in GFK_MASCULINE_WEAK}, **{k: "feminine (GFK, often functional)" for k in GFK_FEMININE_WEAK}}
+FEMININE_NOTE = "no swap needed — GFK found feminine wording does not reduce men's interest; keep it if it's accurate"
+CODED_SKIP = {
+    "compet*": re.compile(r"competen"),  # competency / competent are not the trait "competitive"
+    "kind": re.compile(r"kind of\b|kinds?\s+of"),
+    "lead*": re.compile(r"lead(?:s)?\s+(?:generation|gen|time)"),
+    "force*": re.compile(r"forces?\b"),
+    "support*": re.compile(r"supportive"),  # the trait form is scored as strong feminine
 }
 EXCLUSIONARY = {
     "native english speaker": "'fluent/professional English' — national-origin discrimination risk",
-    "native speaker": "'fluent/professional proficiency' — national-origin discrimination risk",
-    "digital native": "'comfortable with modern tools' — age-coded",
-    "recent graduate": "'early-career' or state the actual skill — age-coded",
-    "recent grad": "'early-career' — age-coded",
+    "native speaker*": "'fluent/professional proficiency' — national-origin discrimination risk",
+    "digital native*": "'comfortable with modern tools' — age-coded",
+    "recent grad*": "'early-career' — age-coded",
     "young": "remove — age-coded",
     "youthful": "remove — age-coded",
     "energetic": "'brings momentum to projects' — age-coded",
-    "mature": "'experienced' — age-coded",
+    "mature": "'experienced' — age-coded (product/market uses are skipped)",
     "culture fit": "'values alignment: <named behaviours>' — invites bias",
     "cultural fit": "'values alignment: <named behaviours>' — invites bias",
     "able-bodied": "remove; state the essential physical function if any — disability discrimination risk",
@@ -172,7 +198,16 @@ EXCLUSIONARY = {
     "salesman": "salesperson",
     "guys": "team / everyone",
     "brotherhood": "community",
-    "family": "team (if used as 'we're a family' — signals boundary issues)",
+    "family": "team (if used as 'we're a family' — signals boundary issues; benefit uses like 'family leave' are skipped)",
+    "high energy": "'brings momentum to projects' — age-coded",
+    "high-energy": "'brings momentum to projects' — age-coded",
+    "overqualified": "remove — age-coded screening",
+    "new grad*": "'early-career' — age-coded",
+    "physically fit": "state the essential physical function, 'with or without reasonable accommodation'",
+    "english as a first language": "'fluent/professional English' — national-origin risk",
+    "mother tongue": "'fluent/professional proficiency' — national-origin risk",
+    "citizens only": "state the actual work-authorization requirement; citizenship limits need a legal basis",
+    "no criminal record": "follow fair-chance hiring laws; assess individually after an offer where required",
     "work hard, play hard": "state the actual pace and hours",
     "ivy league": "state the capability, not the pedigree",
     "top-tier university": "state the capability, not the pedigree",
@@ -185,6 +220,11 @@ EXCLUSIONARY = {
     "whitelist": "allowlist",
     "blacklist": "blocklist",
     "master/slave": "primary/replica",
+}
+EXCL_SKIP = {
+    "family": re.compile(r"family\s+(?:leave|medical|planning|members?|friendly|coverage|health|plan|care|building|business|office|dollar)"),
+    "mature": re.compile(r"mature\s+(?:product|market|codebase|platform|company|business|technology|process|processes|stack|industry|org|organi[sz]ation)"),
+    "young": re.compile(r"young\s+(?:company|startup|product|team of products|brand)"),
 }
 JARGON = {
     "synergy": "say what the collaboration produces", "leverage": "use", "utilize": "use", "best-in-class": "cut", "world-class": "cut",
@@ -206,25 +246,35 @@ def check_inclusive_language(job_description: str) -> dict:
         job_description: The full posting text.
     """
     require_text(job_description, "job_description", max_chars=60_000)
-    masc = scan_lexicon(job_description, MASCULINE)
-    fem = scan_lexicon(job_description, FEMININE)
-    excl = scan_lexicon(job_description, EXCLUSIONARY)
+    masc = scan_lexicon(job_description, MASCULINE, CODED_SKIP)
+    fem = scan_lexicon(job_description, FEMININE, CODED_SKIP)
+    weak = scan_lexicon(job_description, WEAK_CODED, CODED_SKIP)
+    excl = scan_lexicon(job_description, EXCLUSIONARY, EXCL_SKIP)
     jargon = scan_lexicon(job_description, JARGON)
+    for h in masc:
+        h["source"] = "industry slang (not in GFK)" if h["term"] in MASCULINE_SLANG else "GFK 2011"
+    for h in fem:
+        h["source"], h["suggestion"] = "GFK 2011", FEMININE_NOTE
     m_n, f_n = sum(h["count"] for h in masc), sum(h["count"] for h in fem)
-    if m_n == 0 and f_n == 0:
-        lean = "neutral"
-    elif m_n > f_n * 1.5 and m_n >= 2:
-        lean = "masculine"
-    elif f_n > m_n * 1.5 and f_n >= 2:
-        lean = "feminine"
-    else:
-        lean = "neutral"
+
+    def _lean(m: int, f: int) -> str:
+        if m > f * 1.5 and m >= 2:
+            return "masculine"
+        if f > m * 1.5 and f >= 2:
+            return "feminine"
+        return "neutral"
+
+    lean = _lean(m_n, f_n)
+    wm = sum(h["count"] for h in weak if h["suggestion"].startswith("masculine"))
+    wf = sum(h["count"] for h in weak if h["suggestion"].startswith("feminine"))
+    gfk_m = sum(h["count"] for h in masc if h["source"] == "GFK 2011") + wm
+    full_lean = _lean(gfk_m, f_n + wf)
     pronouns = len(re.findall(r"\b(he|his|him|she|her|hers)\b", job_description, re.I))
     you = len(re.findall(r"\byou(?:'ll|r|)\b", job_description, re.I))
     cand = len(re.findall(r"\b(the (?:ideal |successful |right )?candidate|the applicant|the successful applicant)\b", job_description, re.I))
     score = 100 - 6 * m_n - 12 * sum(h["count"] for h in excl) - 3 * sum(h["count"] for h in jargon) - 4 * pronouns
     score = max(0, min(100, score))
-    fixes = [f"'{h['term']}' → {h['suggestion']}" for h in excl] + [f"'{h['term']}' → {h['suggestion']}" for h in masc[:8]] + [f"'{h['term']}' → {h['suggestion']}" for h in jargon[:5]]
+    fixes = [f"'{'/'.join(h['matched'])}' → {h['suggestion']}" for h in excl] + [f"'{'/'.join(h['matched'])}' → {h['suggestion']}" for h in masc[:8]] + [f"'{h['term']}' → {h['suggestion']}" for h in jargon[:5]]
     if cand > you:
         fixes.append("write in second person ('you will') instead of 'the candidate' — reads warmer and tests better")
     if pronouns:
@@ -236,6 +286,8 @@ def check_inclusive_language(job_description: str) -> dict:
         "feminine_coded": fem,
         "masculine_count": m_n,
         "feminine_count": f_n,
+        "weak_coded": weak,
+        "gfk_full_list_lean": {"lean": full_lean, "masculine": gfk_m, "feminine": f_n + wf, "note": "all GFK stems incl. functional ones (lead*, analy*, respon*) — how the Gender Decoder counts; informational"},
         "exclusionary": excl,
         "jargon": jargon,
         "gendered_pronouns": pronouns,
@@ -392,6 +444,12 @@ def audit_requirements(requirements: list[str], role_level: str = "") -> dict:
             flags.append("generic soft-skill line — cut or make it observable ('has presented to executives')")
         if re.search(r"\b(passion(ate)?|rockstar|ninja|guru|self-starter|team player|culture fit)\b", r, re.I):
             flags.append("buzzword — cut")
+        excl_hits = scan_lexicon(r, EXCLUSIONARY, EXCL_SKIP)
+        if excl_hits:
+            flags.append("exclusionary: " + ", ".join(f"'{'/'.join(h['matched'])}' ({h['suggestion']})" for h in excl_hits))
+        trait_hits = [h for h in scan_lexicon(r, MASCULINE, CODED_SKIP) if h["term"] in GFK_MASCULINE_STRONG]
+        if trait_hits:
+            flags.append("personality trait, not a capability (masculine-coded, GFK): " + ", ".join("/".join(h["matched"]) for h in trait_hits) + " — name the behaviour or cut")
         if dup:
             flags.append(f"duplicates #{dup}")
         if len(text.words(r)) > 25:
@@ -402,7 +460,8 @@ def audit_requirements(requirements: list[str], role_level: str = "") -> dict:
     over = max(0, len(must) - 7)
     # Recommend demotions: flagged/generic must-haves first, then the last ones listed.
     demote = sorted(must, key=lambda r: (-len(r["flags"]), -r["n"]))[:over] if over else []
-    cut_ids = [r["n"] for r in rows if any("duplicates" in f or "buzzword" in f for f in r["flags"])]
+    cut_ids = [r["n"] for r in rows if any("duplicates" in f or "buzzword" in f or f.startswith("personality trait") for f in r["flags"])]
+    rewrite_ids = [r["n"] for r in rows if r["n"] not in cut_ids and any(f.startswith("exclusionary") for f in r["flags"])]
     return {
         "count": len(rows),
         "must_have": len(must),
@@ -411,10 +470,11 @@ def audit_requirements(requirements: list[str], role_level: str = "") -> dict:
         "requirements": rows,
         "recommend_demote": [r["n"] for r in demote],
         "recommend_cut": cut_ids,
+        "recommend_rewrite": rewrite_ids,
         "years_proxies": sum(1 for r in rows if r["years"] is not None),
         "degree_requirements": sum(1 for r in rows if r["degree"]),
         "verdict": f"{len(must)} must-haves ({'ok' if not over else f'{over} over the limit of 7'}), {len(nice)} nice-to-haves; "
-        f"{sum(1 for r in rows if r['years'] is not None)} years-proxies, {sum(1 for r in rows if r['degree'])} degree lines, {len(cut_ids)} to cut.",
+        f"{sum(1 for r in rows if r['years'] is not None)} years-proxies, {sum(1 for r in rows if r['degree'])} degree lines, {len(cut_ids)} to cut, {len(rewrite_ids)} to rewrite (exclusionary wording).",
     }
 
 

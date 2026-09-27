@@ -102,3 +102,32 @@ def test_slip_report_working_day_slip_and_rag():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("critical_path").call({"tasks": "A, B, C"})
+
+
+def test_typed_links_ss_ff_and_lag():
+    tasks = [
+        {"id": "A", "duration": 3},
+        {"id": "B", "duration": 5, "depends_on": ["A"]},
+        {"id": "C", "duration": 4, "depends_on": ["B SS+2"]},  # starts 2 days after B starts
+        {"id": "D", "duration": 2, "depends_on": ["C:FF+1"]},  # finishes 1 day after C finishes
+        {"id": "E", "duration": 1, "depends_on": ["B+2", {"id": "D", "type": "FS", "lag": 0}]},  # 2-day wait after B
+    ]
+    out = A.get_tool("critical_path").call({"tasks": tasks})
+    t = {r["id"]: r for r in out["tasks"]}
+    assert (t["C"]["es"], t["C"]["ef"]) == (5, 9)
+    assert (t["D"]["es"], t["D"]["ef"]) == (8, 10)
+    assert t["E"]["es"] == 10 and out["project_duration_days"] == 11
+    assert t["B"]["total_float"] == 0 and t["B"]["free_float"] == 0  # B drives C via SS
+    assert out["critical_path"] == ["A", "B", "C", "D", "E"]
+
+
+def test_pert_returns_calendar_dates_and_plan_probability():
+    out = A.get_tool("pert_estimate").call({
+        "tasks": [{"id": "X", "optimistic": 6, "most_likely": 8, "pessimistic": 14}, {"id": "Y", "optimistic": 3, "most_likely": 5, "pessimistic": 10}],
+        "start_date": "2026-11-23", "holidays": ["2026-11-26", "2026-11-27"],
+    })
+    c = out["chain"]
+    assert c["sum_of_most_likely"] == 13 and c["expected_p50"] == 14.17
+    assert c["probability_plan_date_holds_pct"] < 50  # the most-likely plan is not the median
+    cal = out["calendar_dates"]
+    assert cal["plan_most_likely"] == "2026-12-11" and cal["p50"] == "2026-12-15"  # 14.17 wd -> ends during working day 15

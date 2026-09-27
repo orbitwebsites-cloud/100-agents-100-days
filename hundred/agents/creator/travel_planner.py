@@ -56,9 +56,15 @@ AGENT = Agent(
        `travel_planner__flight_time_and_jetlag`. It gives the true duration, time zones
        crossed, direction, an arrival-day plan (what to do in the first 24 h based on arrival
        hour) and the days needed to adjust. Use its `arrival_day_advice` when writing day 1.
+       With a connection, jet lag comes from the whole journey, not the last leg (Chicago →
+       San Francisco → Tokyo is 10 zones for the body, not the 8 from SFO): pass
+       `body_clock_tz` = the origin's timezone on the long leg, and also call once with the
+       first departure and the final arrival to quote the door-to-door journey time.
     2. **Check every connection** with `travel_planner__connection_check` — same ticket or
-       separate, domestic or international, bags or not. If it says risky, propose the next
-       flight or a ticket change before building the itinerary on it.
+       separate, domestic or international, bags or not. Its thresholds are comfort buffers,
+       not the airport's official minimum connection time: on one ticket a "tight" connection
+       is protected (the airline rebooks), on separate tickets it is the traveller's loss. If it
+       says risky on separate tickets, propose a later flight before building on it.
     3. **Build the day skeleton** with `travel_planner__day_planner`: dates, stops with
        nights, arrival/departure times and pace. It returns each day's usable hours and the
        maximum sensible number of activities, and flags 1-night stops, over-heavy transfer
@@ -128,14 +134,20 @@ AGENT = Agent(
 
 
 @AGENT.tool
-def flight_time_and_jetlag(depart_local: str, depart_tz: str, arrive_local: str, arrive_tz: str) -> dict:
+def flight_time_and_jetlag(depart_local: str, depart_tz: str, arrive_local: str, arrive_tz: str, body_clock_tz: str = "") -> dict:
     """Compute a flight's true duration, time zones crossed, jet-lag recovery days and a first-24-hours plan from local times.
+
+    Durations use each airport's real UTC offset on that date (DST and the date line included).
+    For a connecting itinerary, jet lag depends on where the body clock started, not on the
+    connecting airport: pass body_clock_tz = the journey's origin timezone on the long leg, or
+    call once with the first departure and the final arrival for the whole journey.
 
     Args:
         depart_local: Departure date and time in the departure city's local time, e.g. "2026-11-03 21:35".
         depart_tz: IANA timezone of the departure airport, e.g. "Europe/London".
         arrive_local: Arrival date and time in the arrival city's local time, e.g. "2026-11-04 17:50".
         arrive_tz: IANA timezone of the arrival airport, e.g. "Asia/Singapore".
+        body_clock_tz: Optional IANA timezone the traveller's body clock is on (the trip's origin) when this flight is a connecting leg; default = depart_tz.
     """
     dep = parse_local_datetime(depart_local, depart_tz)
     arr = parse_local_datetime(arrive_local, arrive_tz)
@@ -145,7 +157,8 @@ def flight_time_and_jetlag(depart_local: str, depart_tz: str, arrive_local: str,
         raise ToolError("Arrival is not after departure once timezones are applied — check the dates/times.")
     if minutes > 40 * 60:
         raise ToolError("Duration over 40 hours — check the dates; multi-leg trips should be entered per flight.")
-    dep_off = dep.utcoffset().total_seconds() / 3600
+    body_zone = body_clock_tz.strip() or depart_tz
+    dep_off = dep.astimezone(tz(body_zone)).utcoffset().total_seconds() / 3600
     arr_off = arr.utcoffset().total_seconds() / 3600
     shift = arr_off - dep_off
     if shift > 12:
@@ -189,6 +202,7 @@ def flight_time_and_jetlag(depart_local: str, depart_tz: str, arrive_local: str,
         "arrival_local_hour": arr_hour,
         "arrival_weekday": arr.strftime("%A"),
         "days_to_adjust": recovery_days,
+        "jet_lag_basis": f"body clock on {body_zone} → {arrive_tz}",
         "calendar_days_elapsed": (arr.date() - dep.date()).days,
         "arrival_day_advice": advice.strip(),
         "summary": f"{minutes // 60}h {minutes % 60:02d}m flight, {zones:g} zones {direction}; ~{recovery_days:g} day(s) to adjust; arrive {arr.strftime('%a %H:%M')} local.",
@@ -273,7 +287,7 @@ def day_planner(
     day_n += 1
     buffer = 3 if international_departure else 2
     usable = max(0.0, (dh + dm / 60) - buffer - 8)
-    rows.append({"day": day_n, "date": d.isoformat(), "weekday": d.strftime("%a"), "city": parsed[-1][0], "type": "departure", "usable_hours": round(usable, 1), "max_anchors": min(anchors, int(usable // (full_hours / anchors))) if usable > 0 else 0, "notes": [f"Leave for the airport by {int(dh + dm / 60 - buffer):02d}:{dm:02d}."]})
+    rows.append({"day": day_n, "date": d.isoformat(), "weekday": d.strftime("%a"), "city": parsed[-1][0], "type": "departure", "usable_hours": round(usable, 1), "max_anchors": min(anchors, int(usable // (full_hours / anchors))) if usable > 0 else 0, "notes": [f"Be at the airport by {int(dh + dm / 60 - buffer):02d}:{dm:02d}; leave earlier by the transfer time to the airport."]})
     full_days = sum(1 for r in rows if r["type"] == "full")
     partial = len(rows) - full_days
     if partial / len(rows) > 0.4 and len(rows) >= 4:
@@ -410,7 +424,7 @@ def connection_check(
             base = 90
         if international_arrival and international_departure:
             base = 120
-        reasons = [f"same-ticket {'international' if base >= 90 else 'domestic'} connection: {base} min baseline"]
+        reasons = [f"same-ticket {'international' if base >= 90 else 'domestic'} connection: {base} min comfort baseline"]
         if terminal_change:
             base += 30
             reasons.append("+30 terminal change")
@@ -433,10 +447,14 @@ def connection_check(
             base += 30
             reasons.append("+30 terminal change")
     margin = layover - base
-    if margin < 0:
-        verdict, risk = f"Too short: {layover} min vs {base} min minimum. Book the next departure or a single ticket.", "high"
+    if margin < 0 and same_ticket:
+        verdict, risk = (f"Tight: {layover} min vs our {base} min comfort buffer. The airline sold it on one ticket, so it meets the airport's "
+                         "official minimum connection time and they must rebook you if you miss it — fine if arriving hours later is acceptable; "
+                         "otherwise choose a longer connection."), "high"
+    elif margin < 0:
+        verdict, risk = f"Too short: {layover} min vs {base} min needed on separate tickets, with no protection if the first flight is late. Book a later second flight or a single ticket.", "high"
     elif margin < 30:
-        verdict, risk = f"Legal but tight: {layover} min vs {base} min minimum; any delay over {margin} min breaks it.", "medium"
+        verdict, risk = f"Workable but tight: {layover} min vs {base} min comfort buffer; any delay over {margin} min puts it at risk." + (" One ticket: the airline rebooks you if it breaks." if same_ticket else ""), "medium"
     elif layover > 6 * 60:
         verdict, risk = f"Long layover ({layover // 60}h {layover % 60:02d}m): safe; consider leaving the airport if entry rules allow.", "low"
     else:
@@ -447,6 +465,7 @@ def connection_check(
         "layover_minutes": layover,
         "layover": f"{layover // 60}h {layover % 60:02d}m",
         "minimum_required_minutes": base,
+        "basis": "Rule-of-thumb comfort buffers, not the airport's published minimum connection time (MCT); airlines only sell same-ticket connections at or above MCT.",
         "margin_minutes": margin,
         "risk": risk,
         "rules_applied": reasons,

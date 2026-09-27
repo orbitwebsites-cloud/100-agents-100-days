@@ -70,7 +70,9 @@ AGENT = Agent(
     4. **After each review session,** when the learner reports card grades (0-5), call
        `study_coach__sm2_review`. It updates ease factor, interval and repetitions with the
        exact SM-2 rules and returns the next due date per card. Never approximate this: an
-       LLM guessing "review in about a week" defeats the algorithm.
+       LLM guessing "review in about a week" defeats the algorithm. Pass `exam_date` when
+       there is one: SM-2 happily schedules a card for after the exam, and the tool adds a
+       `review_before_exam` date for those. Tell the learner to re-drill `redrill_today` now.
     5. **Build the session.** For a study day, call `study_coach__pomodoro_plan` with the
        start time, available minutes and the tasks. It packs work/break blocks with clock
        times, alternates topics for interleaving, and reports what did not fit. Each block
@@ -79,8 +81,10 @@ AGENT = Agent(
        card file to Anki (via file) if connected.
 
     ## Frameworks
-    - **SM-2:** grade 0-5; < 3 resets repetitions and interval to 1 day; interval sequence
-      1 → 6 → previous × ease; ease' = ease + 0.1 − (5 − q)(0.08 + (5 − q) × 0.02), floor 1.3.
+    - **SM-2 (Wozniak, 1990):** grade 0-5; < 3 resets repetitions and interval to 1 day and
+      leaves ease unchanged; interval sequence 1 → 6 → previous × ease, rounded up;
+      ease' = ease + 0.1 − (5 − q)(0.08 + (5 − q) × 0.02), floor 1.3; anything graded < 4 is
+      re-drilled the same day until it scores 4+.
     - **Spacing schedule for new material:** 1, 3, 7, 14, 30 days, then monthly. Reviews are
       retrieval attempts, not re-reads: cover the answer, produce it, check.
     - **Interleaving:** alternate 2-3 topics within a session rather than blocking one; it
@@ -129,20 +133,29 @@ AGENT = Agent(
 
 
 @AGENT.tool
-def sm2_review(cards: list[dict], review_date: str = "") -> dict:
+def sm2_review(cards: list[dict], review_date: str = "", exam_date: str = "") -> dict:
     """Apply the SM-2 spaced-repetition algorithm to graded cards and return each card's new ease, interval and due date.
 
+    Follows Wozniak's published SM-2: I(1)=1, I(2)=6, I(n)=I(n-1)×EF rounded up; EF' = EF + 0.1 −
+    (5−q)(0.08 + (5−q)×0.02), floor 1.3; a grade below 3 restarts the repetitions WITHOUT changing
+    EF; cards graded below 4 are re-drilled the same day until they score 4+.
+
     Grades: 5 perfect, 4 correct after hesitation, 3 correct with difficulty, 2 wrong but
-    recognised, 1 wrong but familiar, 0 blackout. Below 3 resets the card to a 1-day interval.
+    recognised, 1 wrong but familiar, 0 blackout.
 
     Args:
         cards: List of {"id": "card-1", "quality": 4, "repetitions": 2, "interval_days": 6, "ease": 2.5}; repetitions/interval_days/ease default to 0/0/2.5 for new cards.
         review_date: Date of the review as YYYY-MM-DD (default today).
+        exam_date: Optional exam date YYYY-MM-DD; cards whose SM-2 due date falls on/after it also get a review_before_exam date 2 days before.
     """
     if not cards or len(cards) > 5000:
         raise ToolError("Give 1-5000 cards")
     base = dates.parse_date(review_date) if review_date else date.today()
+    exam = dates.parse_date(exam_date) if exam_date else None
+    if exam and exam <= base:
+        raise ToolError("exam_date must be after review_date")
     out, due_counter = [], Counter()
+    redrill, pre_exam = [], []
     lapses = 0
     for i, c in enumerate(cards, 1):
         if not isinstance(c, dict) or "quality" not in c:
@@ -155,29 +168,40 @@ def sm2_review(cards: list[dict], review_date: str = "") -> dict:
         ease = c.get("ease", 2.5)
         if not isinstance(reps, int) or reps < 0 or not isinstance(interval, (int, float)) or interval < 0 or not isinstance(ease, (int, float)) or ease < 1.3:
             raise ToolError(f"card #{i}: repetitions ≥ 0, interval_days ≥ 0, ease ≥ 1.3")
-        ease_new = max(1.3, ease + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
         if q < 3:
+            # SM-2: "start repetitions for the item from the beginning without changing the E-Factor"
+            ease_new = float(ease)
             reps_new, interval_new = 0, 1
             lapses += 1
         else:
+            ease_new = max(1.3, ease + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
             reps_new = reps + 1
             if reps_new == 1:
                 interval_new = 1
             elif reps_new == 2:
                 interval_new = 6
             else:
-                interval_new = int(round(interval * ease_new))
+                interval_new = math.ceil(interval * ease_new - 1e-9)  # SM-2 rounds fractional intervals up
         interval_new = max(1, interval_new)
         due = base + timedelta(days=interval_new)
         due_counter[due.isoformat()] += 1
+        cid = c.get("id", f"card-{i}")
+        if q < 4:
+            redrill.append(cid)
+        row_extra = {}
+        if exam and due >= exam:
+            before = max(base + timedelta(days=1), exam - timedelta(days=2))
+            row_extra["review_before_exam"] = before.isoformat()
+            pre_exam.append(cid)
         out.append({
-            "id": c.get("id", f"card-{i}"),
+            "id": cid,
             "quality": q,
             "repetitions": reps_new,
             "interval_days": interval_new,
             "ease": round(ease_new, 2),
             "due": due.isoformat(),
             "status": "relearn" if q < 3 else "learning" if reps_new < 3 else "review",
+            **row_extra,
         })
     return {
         "review_date": base.isoformat(),
@@ -186,7 +210,11 @@ def sm2_review(cards: list[dict], review_date: str = "") -> dict:
         "lapse_rate_pct": round(100 * lapses / len(out), 1),
         "due_by_date": dict(sorted(due_counter.items())),
         "next_review_date": min(due_counter) if due_counter else None,
-        "summary": f"{len(out)} cards graded, {lapses} lapse(s) ({100 * lapses / len(out):.0f}%); next review {min(due_counter)}." + (" Lapse rate over 20%: cards are too big or reviews too sparse." if lapses / len(out) > 0.2 else ""),
+        "redrill_today": redrill,
+        "due_after_exam": pre_exam,
+        "summary": f"{len(out)} cards graded, {lapses} lapse(s) ({100 * lapses / len(out):.0f}%); next review {min(due_counter)}."
+        + (f" Re-drill {len(redrill)} card(s) graded below 4 again today until they score 4+." if redrill else "")
+        + (f" {len(pre_exam)} card(s) fall due after the exam — give them one extra review before it." if pre_exam else "") + (" Lapse rate over 20%: cards are too big or reviews too sparse." if lapses / len(out) > 0.2 else ""),
     }
 
 
@@ -230,8 +258,11 @@ def review_calendar(topics: list[dict], exam_date: str = "", intervals: list[int
                 by_day[final.isoformat()].append(f"{t['topic']} (final pass)")
         per_topic.append({"topic": str(t["topic"]), "learned_on": learned.isoformat(), "reviews": [d.isoformat() for d in reviews], "review_count": len(reviews)})
     calendar = [{"date": d, "weekday": dates.parse_date(d).strftime("%a"), "reviews": v, "load": len(v)} for d, v in sorted(by_day.items())]
-    overloaded = [c for c in calendar if c["load"] > max_reviews_per_day]
+    # The final pass is one mixed practice session by design, so it doesn't count toward overload.
+    overloaded = [c for c in calendar if sum(1 for r in c["reviews"] if not r.endswith("(final pass)")) > max_reviews_per_day]
     flags = [f"{c['date']} has {c['load']} reviews (> {max_reviews_per_day}). Stagger first-learn dates or split the session." for c in overloaded[:10]]
+    if exam:
+        flags.append(f"{(exam - timedelta(days=2)).isoformat()} is the final pass for every topic — run it as one mixed, timed practice test, not {len(per_topic)} separate reviews.")
     if exam:
         late = [t for t in per_topic if (exam - dates.parse_date(t["learned_on"])).days < 7]
         if late:
@@ -293,7 +324,8 @@ def anki_export(cards: list[dict], deck: str = "Study", separator: str = "tab") 
             card_issues.append(f"back is {bw} words — over 15; split into several cards or use cloze")
         if YES_NO_RE.match(front) and "?" in front:
             card_issues.append("yes/no question — rewrite as 'what/why/how' so the answer must be produced")
-        if LIST_RE.search(back) and bw >= 6:
+        items = [x for x in re.split(r",|;|\band\b|&|\n", back) if x.strip()]
+        if len(items) >= 3 or (LIST_RE.search(back) and bw >= 6):
             card_issues.append("answer is a list — make one cloze card per item ({{c1::…}}) instead")
         key = re.sub(r"\W+", " ", front.lower()).strip()
         if key in seen:
@@ -302,7 +334,8 @@ def anki_export(cards: list[dict], deck: str = "Study", separator: str = "tab") 
             seen[key] = i
         if not front.rstrip().endswith("?") and not re.search(r"\{\{c\d+::", front) and fw <= 3:
             card_issues.append("front is a bare term — 'What is X?' or a cloze sentence gives the recall a cue")
-        writer.writerow([front.replace("\n", "<br>"), back.replace("\n", "<br>"), " ".join(str(t).replace(" ", "_") for t in tags)])
+        # #html:false means Anki shows "<br>" literally; keep real newlines inside a quoted field instead.
+        writer.writerow([front, back, " ".join(str(t).replace(" ", "_") for t in tags)])
         if card_issues:
             issues.append({"card": i, "type": "quality", "detail": "; ".join(card_issues)})
         else:
@@ -315,7 +348,7 @@ def anki_export(cards: list[dict], deck: str = "Study", separator: str = "tab") 
         "issues": issues,
         "file_name": f"{re.sub(r'[^A-Za-z0-9_-]+', '_', deck)}.txt",
         "file_content": buf.getvalue(),
-        "import_steps": "Anki → File → Import → choose the .txt; the header lines set separator, deck and the tags column automatically; field 1 = Front, field 2 = Back.",
+        "import_steps": "Create the deck in Anki first (the #deck header only preselects a deck that already exists), then File → Import → choose the .txt; the headers set separator and tags column; field 1 = Front, field 2 = Back.",
         "verdict": f"{exported} cards exported, {clean} clean, {len(issues)} with issues." + (" Fix the flagged cards first — bad cards get reviewed forever." if issues else ""),
     }
 
@@ -381,9 +414,13 @@ def pomodoro_plan(
         if not still or elapsed + work_minutes > available_minutes:
             break
         br = long_break if block_n % blocks_per_cycle == 0 else short_break
-        if br and elapsed + br + work_minutes <= available_minutes:
+        if br and elapsed + br + work_minutes > available_minutes and short_break and elapsed + short_break + work_minutes <= available_minutes:
+            br = short_break  # a long break that doesn't fit shrinks to a short one; never zero rest between blocks
+        if br and elapsed + br + work_minutes > available_minutes:
+            break
+        if br:
             end = clock + timedelta(minutes=br)
-            schedule.append({"block": block_n, "start": clock.strftime("%H:%M"), "end": end.strftime("%H:%M"), "type": "long break" if br == long_break and block_n % blocks_per_cycle == 0 else "break", "task": "", "note": "away from the desk; no screens"})
+            schedule.append({"block": block_n, "start": clock.strftime("%H:%M"), "end": end.strftime("%H:%M"), "type": "long break" if br == long_break and br != short_break and block_n % blocks_per_cycle == 0 else "break", "task": "", "note": "away from the desk; no screens"})
             clock, elapsed = end, elapsed + br
     unfinished = [{"name": t["name"], "blocks_left": t["blocks_left"], "minutes_left": t["blocks_left"] * work_minutes} for t in queue if t["blocks_left"] > 0]
     work_total = sum(work_minutes for s in schedule if s["type"] == "work")

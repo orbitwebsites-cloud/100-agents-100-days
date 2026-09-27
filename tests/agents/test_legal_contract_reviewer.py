@@ -52,8 +52,11 @@ def test_detect_clauses_rejects_bad_role():
 def test_extract_deadlines_resolves_durations_and_dates():
     out = call("extract_deadlines", contract_text=SAAS, effective_date="2026-10-01")
     by = {d["duration"]: d for d in out["durations"]}
-    assert by["12 months"]["from_effective_date"] == "2027-10-01" and by["12 months"]["type"] == "term"
-    assert by["90 days"]["from_effective_date"] == "2026-12-30" and by["90 days"]["type"] == "notice / termination"
+    # the term resolves to its last day; the 90-day window counts back from term end, never forward from the effective date
+    assert by["12 months"]["from_effective_date"] == "2027-09-30" and by["12 months"]["type"] == "term"
+    assert by["90 days"]["type"] == "notice / termination" and by["90 days"]["counts_from"] == "before end of term"
+    assert by["90 days"]["from_effective_date"] is None and by["90 days"]["deadline_in_initial_term"] == "2027-07-02"
+    assert out["initial_term_ends"] == "2027-09-30" and "scope_note" in out
     assert by["60 days"]["type"] == "payment"
     assert by["10 days"]["type"] == "cure period"
     assert "twelve (12) monthstwelve" not in by["12 months"]["context"]

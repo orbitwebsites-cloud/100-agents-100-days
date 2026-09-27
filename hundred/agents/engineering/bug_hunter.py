@@ -60,12 +60,17 @@ AGENT = Agent(
     1. **Parse the trace.** If there is a stack trace, call `bug_hunter__parse_stack_trace`
        with the raw text. Read the `blame_frame` (innermost frame in the user's own code), the
        exception chain (`Caused by` / "During handling..."), and the `hint` for the exception
-       type. The blame frame is where you *look first*, not necessarily the bug — the bug is
+       type. Chains differ: Java `Caused by` and Python "The above exception was the direct
+       cause" put the root cause *first*; Python "During handling of the above exception"
+       (`chain_kind: implicit`) means the handler itself blew up — the *last* exception is
+       the bug, the first is usually an expected miss. The blame frame is where you *look first*, not necessarily the bug — the bug is
        usually where the bad value was produced, one or more frames up the data flow.
     2. **Cluster the logs.** If there are logs (>30 lines), call `bug_hunter__cluster_logs`.
        Look at: the top error templates by count, the first-seen time of the dominant error
        versus the first-seen of surrounding warnings (what happened *just before*), and the
-       busiest minute. Sequence beats volume: the earliest new template is the lead.
+       busiest minute. Sequence beats volume: the earliest new template is the lead, and
+       `changes_before_first_problem` (deploys, restarts, config/flag changes logged before
+       the first error) is the first suspect to rule in or out.
     3. **Diff working vs broken.** For "works here, not there" problems, gather versions,
        env vars, OS, locale, timezone, feature flags from both and call
        `bug_hunter__compare_environments`. A difference in a runtime, dependency or locale is
@@ -134,7 +139,7 @@ AGENT = Agent(
 
 PY_FRAME = re.compile(r'^\s*File "(?P<file>[^"]+)", line (?P<line>\d+)(?:, in (?P<fn>\S+))?')
 PY_EXC = re.compile(r"^(?P<type>[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Warning|Fault|Timeout|Denied|Found|Stop\w*)?)(?:: (?P<msg>.*))?$")
-JS_FRAME = re.compile(r"^\s*at (?:(?P<fn>[^\s(]+(?: \[as \w+\])?) \()?(?P<file>[^():]+?):(?P<line>\d+)(?::(?P<col>\d+))?\)?\s*$")
+JS_FRAME = re.compile(r"^\s*at (?:async )?(?:new )?(?:(?P<fn>[^()]+?) \()?(?P<file>(?:node:|file://)?[^():]+?):(?P<line>\d+)(?::(?P<col>\d+))?\)?\s*$")
 JS_EXC = re.compile(r"^(?:Uncaught )?(?P<type>[A-Z][\w.$]*(?:Error|Exception|Rejection)?)(?:\s*\[(?P<code>[A-Z_]+)\])?: (?P<msg>.*)$")
 JAVA_FRAME = re.compile(r"^\s*at (?P<fn>[\w$.<>]+)\((?P<file>[^:)]+)(?::(?P<line>\d+))?\)")
 JAVA_EXC = re.compile(r"^(?:Exception in thread \"[^\"]*\" )?(?:Caused by: )?(?P<type>[a-z][\w.]*\.[A-Z][\w$]*(?:Exception|Error|Throwable)?)(?:: (?P<msg>.*))?$")
@@ -183,7 +188,16 @@ HINTS = {
 }
 
 
+MESSAGE_HINTS = [
+    (re.compile(r"Cannot read propert(y|ies) of (undefined|null)|undefined is not an object|null is not an object|is not a function", re.I),
+     "A value is undefined/null where an object was expected. Find the producer: a missing field in an API/DB response, an un-awaited promise, a wrong destructuring, or an optional chain that should have been a validation error."),
+]
+
+
 def _hint(exc_type: str, message: str) -> str:
+    for rx, h in MESSAGE_HINTS:
+        if rx.search(message or ""):
+            return h
     short = exc_type.rsplit(".", 1)[-1]
     if short in HINTS:
         return HINTS[short]
@@ -229,6 +243,7 @@ def parse_stack_trace(trace: str) -> dict:
 
     if language == "python":
         segments = re.split(r"\n(?=(?:During handling of the above exception|The above exception was the direct cause))", trace)
+        links = re.findall(r"^(During handling of the above exception|The above exception was the direct cause)", trace, re.M)
         for seg in segments:
             seg_frames, cur_type, cur_msg = [], "", ""
             seg_lines = seg.splitlines()
@@ -314,7 +329,18 @@ def parse_stack_trace(trace: str) -> dict:
     notes = []
     if origin and not origin["in_user_code"]:
         notes.append(f"Threw inside a library ({origin['file']}); the bad input came from your frame {blame['file']}:{blame['line']} — start there." if blame else "Threw inside a library and no user-code frame found: likely a config/env/dependency issue, not application code.")
-    if len(chain) > 1:
+    chain_kind = None
+    if language == "python" and len(chain) > 1:
+        chain_kind = "implicit" if links and all(l.startswith("During handling") for l in links) else "explicit"
+    if chain_kind == "implicit":
+        root = chain[-1]
+        root_blame = next((f for f in root["frames"] if f["in_user_code"]), None)
+        notes.append(
+            f"Implicit chain of {len(chain)} ('During handling of the above exception…'): `{chain[0]['type']}` was being handled when "
+            f"`{exc_type}` was raised inside the handler. The final exception is the bug to fix; the first is context "
+            "(often an expected miss/fallback) — check whether the fallback path itself is what's broken."
+        )
+    elif len(chain) > 1:
         notes.append(f"Exception chain of {len(chain)}: the root cause is `{root['type']}: {root['message'][:120]}`; fix that, not the outer one.")
     if exc_type and "NoneType" in exc_msg:
         notes.append("'NoneType' in the message: something returned None. Find that producer, not the consumer.")
@@ -329,6 +355,7 @@ def parse_stack_trace(trace: str) -> dict:
         "blame_frame": blame,
         "chain": [{"type": c["type"], "message": c["message"][:200], "frames": len(c["frames"]), "blame_frame": next((f for f in c["frames"] if f["in_user_code"]), None)} for c in chain],
         "root_cause_exception": {"type": root["type"], "message": root["message"][:200], "blame_frame": root_blame} if chain else None,
+        "chain_kind": chain_kind,
         "hint": _hint(exc_type, exc_msg),
         "notes": notes,
         "verdict": (
@@ -358,6 +385,9 @@ MASKS = [
     (re.compile(r"(?<=[=:/#\[(])\s?[\w-]*\d[\w-]*"), "<id>"),
     (re.compile(r"(?<![\w<])[-+]?\d+(?:\.\d+)?(?:ms|s|us|µs|KB|MB|GB|%)?\b"), "<n>"),
 ]
+
+
+CHANGE_RE = re.compile(r"\b(deploy(ed|ing|ment)?|released?|rollout|rolled out|upgraded?|migrat\w*|config(uration)? (reload(ed)?|change[d]?|update[d]?)|feature[ _-]?flag|flag (enabled|disabled|flipped)|restart(ed|ing)?|failover)\b", re.I)
 
 
 def _normalise_line(line: str) -> str:
@@ -415,6 +445,13 @@ def cluster_logs(logs: str, max_clusters: int = 25) -> dict:
         c["share_pct"] = round(100 * c["count"] / total, 1)
     error_clusters = [c for c in ordered if c["level"] in ("ERROR", "CRITICAL", "FATAL", "PANIC")]
     by_first = sorted((c for c in ordered if c["level"] in ("ERROR", "CRITICAL", "FATAL", "PANIC", "WARN")), key=lambda c: c["first_line"])
+    first_problem_line = by_first[0]["first_line"] if by_first else None
+    changes = [
+        {"line": c["first_line"], "first_seen": c["first_seen"], "event": c["example"][:200]}
+        for c in sorted(clusters.values(), key=lambda c: c["first_line"])
+        if c["level"] not in ("ERROR", "CRITICAL", "FATAL", "PANIC", "WARN") and CHANGE_RE.search(c["example"])
+        and (first_problem_line is None or c["first_line"] <= first_problem_line)
+    ][-5:]
     busiest = per_minute.most_common(1)[0] if per_minute else None
     busiest_err = error_per_minute.most_common(1)[0] if error_per_minute else None
     n_err = sum(levels[k] for k in ("ERROR", "CRITICAL", "FATAL", "PANIC"))
@@ -423,6 +460,8 @@ def cluster_logs(logs: str, max_clusters: int = 25) -> dict:
         verdict += f" Top error: \"{error_clusters[0]['template'][:90]}\" ×{error_clusters[0]['count']}."
     if by_first:
         verdict += f" First problem template appears at line {by_first[0]['first_line']}: \"{by_first[0]['template'][:80]}\"."
+    if changes and by_first:
+        verdict += f" Change just before it (line {changes[-1]['line']}): \"{changes[-1]['event'][:90]}\" — prime suspect."
     return {
         "total_lines": total,
         "unique_templates": len(clusters),
@@ -431,6 +470,7 @@ def cluster_logs(logs: str, max_clusters: int = 25) -> dict:
         "clusters": ordered[:max_clusters],
         "error_clusters": error_clusters[:max_clusters],
         "first_problems_in_order": [{"line": c["first_line"], "first_seen": c["first_seen"], "level": c["level"], "template": c["template"], "count": c["count"]} for c in by_first[:10]],
+        "changes_before_first_problem": changes,
         "busiest_minute": {"minute": busiest[0], "lines": busiest[1]} if busiest else None,
         "busiest_error_minute": {"minute": busiest_err[0], "errors": busiest_err[1]} if busiest_err else None,
         "verdict": verdict,

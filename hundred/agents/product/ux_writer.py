@@ -65,9 +65,12 @@ AGENT = Agent(
        OK / Okay / Got it), casing drift for the same term, mixed punctuation habits, and reports
        the majority form so you can standardise. One concept = one word.
     4. **Estimate localisation fit** with `ux_writer__localization_expansion` for any string in a
-       fixed-width component. It applies established expansion factors (German +35%, French +20%,
-       Finnish +30%, Russian +15%, Japanese −10%, etc.; short strings expand more) and tells you
-       which locales overflow the container width in characters.
+       fixed-width component. It applies long-text expansion factors (German +35%, French +20%,
+       Finnish +30%, Russian +15%, Japanese −10%, etc.) with a short-string uplift for the typical
+       length, plus a conservative budget from the W3C/IBM length bands (a 10-char label can reach
+       200-300% of its English length). Report `overflow` locales as defects and `at_risk` locales
+       as "verify with a real translation". The typical estimate alone under-called real German/
+       French/Finnish UI translations about half the time in our checks — never promise a fit from it.
     5. **Write the copy.** Buttons: verb + object ("Save changes", not "OK"); labels: nouns; empty
        states: what this is + why it's empty + one action; confirmations: name the consequence
        ("Delete 12 files?" / "Delete" not "Are you sure?" / "Yes"); success: confirm what changed.
@@ -102,7 +105,7 @@ AGENT = Agent(
     - "Log in" (3) / "Sign in" (9) → standardise on "Sign in"
 
     ## Localisation risks
-    - checkout.cta "Continue to payment" (19 ch) → de +35% = 26 ch; container 24 ch → overflow. Suggest "Pay now".
+    - checkout.cta "Continue to payment" (19 ch) → de typical 28 ch / budget 37 ch; container 24 ch → overflow. Suggest "Pay now".
 
     ## Open decisions
     - <tone/terminology decision the team must make>
@@ -141,7 +144,7 @@ COMPONENT_LIMITS: dict[str, dict] = {
     "onboarding_step": {"chars": 160, "words": 28, "punct": True},
 }
 JARGON = re.compile(r"\b(null|undefined|exception|token|payload|backend|endpoint|api|sync failed|invalid input|parameter|instance|config|auth|cache|session expired|timeout|error code|stack|latency|deprecated|entity|record|object|abort(?:ed)?|terminate[ds]?|execute[ds]?|initiali[sz]e[ds]?|utili[sz]e)\b", re.I)
-BLAME = re.compile(r"\b(you (?:entered|typed|provided|submitted|gave|made)|your (?:input|entry|mistake)|invalid|illegal|forbidden|not allowed|wrong|bad|failure|you failed|you must|you need to)\b", re.I)
+BLAME = re.compile(r"\b(you (?:entered|typed|provided|submitted|gave|made)|your (?:input|entry|mistake)|invalid|illegal|forbidden|not allowed|wrong (?:password|email|code|format|number|value|details)|bad (?:input|request|format|password)|failure|you failed|you must|you need to)\b", re.I)
 VAGUE = re.compile(r"\b(something went wrong|an error (?:has )?occurred|unknown error|oops|whoops|unexpected error|try again later|problem occurred|unable to process)\b", re.I)
 ACTION_VERB = re.compile(r"\b(try|retry|check|reconnect|refresh|reload|sign in|log in|contact|update|enter|choose|select|remove|add|wait|upgrade|verify|confirm|use|switch|turn on|enable|allow|go to|open|change|reset|resend|shorten|pick|fix|review)\b", re.I)
 
@@ -150,10 +153,15 @@ def _casing(s: str) -> str:
     ws = [w for w in text.words(s) if w.isalpha()]
     if len(ws) < 2:
         return "n/a"
-    caps = sum(1 for w in ws[1:] if w[0].isupper() and len(w) > 3)
     if s.isupper():
         return "ALL CAPS"
-    return "Title Case" if caps >= max(1, (len(ws) - 1) * 0.6) else "sentence case"
+    # judge only non-initial words of each sentence ("New here? Create an account" is sentence case);
+    # short particles count too ("Log In", "Sign Up"); all-caps acronyms (PDF, API) are ignored
+    later = [w for sent in (text.sentences(s) or [s]) for w in [x for x in text.words(sent) if x.isalpha()][1:] if not (w.isupper() and len(w) > 1)]
+    if not later:
+        return "n/a"
+    caps = sum(1 for w in later if w[0].isupper())
+    return "Title Case" if caps >= max(1, len(later) * 0.6) else "sentence case"
 
 
 @AGENT.tool
@@ -204,6 +212,10 @@ def check_microcopy(strings: list[dict], target_grade: float = 6.0, localised: b
             issues.append("mixed straight and curly quotes")
         if comp == "button" and re.match(r"^(ok|okay|yes|no|submit|click here|continue)$", s, re.I):
             issues.append("generic button — use verb + object (e.g. 'Save changes')")
+        if comp in {"button", "link", "menu_item"} and re.match(r"^(login|logout|signin|signout|signup|setup|checkout|backup)$", s.strip(), re.I):
+            issues.append("noun used as a verb — buttons take the verb form ('Log out', 'Sign up', 'Set up'), not 'Logout'")
+        if comp in {"dialog_title", "heading"} and re.match(r"^(are you sure|confirm|warning|attention)\b", s, re.I):
+            issues.append("vague confirmation — name the action and object: 'Delete account?'")
         if comp == "button" and re.match(r"^(click|tap|press)\b", s, re.I):
             issues.append("starts with 'click/tap' — the user knows it's a button")
         j = sorted({m.group(0).lower() for m in JARGON.finditer(s)})
@@ -234,7 +246,7 @@ def lint_error_message(message: str, has_action_button: bool = False) -> dict:
     s = check_text(message, "message", 2000).strip()
     sents = text.sentences(s) or [s]
     score, issues, parts = 100, [], {"what": False, "why": False, "how": False}
-    if re.search(r"\b(couldn'?t|can'?t|didn'?t|failed to|unable to|isn'?t|wasn'?t|not (?:saved|sent|found|available)|no (?:connection|internet|results)|too (?:large|long|many)|expired|already|missing|doesn'?t)\b", s, re.I):
+    if re.search(r"\b(couldn'?t|can'?t|didn'?t|failed to|unable to|isn'?t|wasn'?t|not (?:saved|sent|found|available)|no (?:connection|internet|results)|too (?:large|long|many)|expired|already|missing|doesn'?t|locked|declined|suspended|blocked|(?:has|have) been \w+(?:ed|en)|(?:was|were) \w+(?:ed|en))\b", s, re.I):
         parts["what"] = True
     if re.search(r"\b(because|since|as|due to|you'?re offline|is full|too large|expired|doesn'?t (?:exist|match)|already (?:exists|in use|taken)|must be|needs to be|has to be|over the|limit)\b", s, re.I):
         parts["why"] = True
@@ -249,7 +261,9 @@ def lint_error_message(message: str, has_action_button: bool = False) -> dict:
     if VAGUE.search(s) and not parts["how"]:
         score -= 10
         issues.append("vague phrase with no next step")
-    codes = re.findall(r"\b(?:error|err|code)?\s?[#:]?\s?(?:[0-9]{3,5}|0x[0-9a-f]+|E[A-Z]{2,}[0-9]*)\b", s, re.I)
+    # a code needs a prefix ("Error 401", "code: 5003", "#4012"), a hex value, or an ERRNO-style token (ENOENT);
+    # bare numbers ("under 100 MB") and ordinary words ("expired") are not codes
+    codes = re.findall(r"(?:\b(?:error|err|code|status)\s*[#:]?\s*[A-Z]*-?\d{2,5}\b|#\d{3,6}\b|\b0x[0-9a-f]+\b|(?-i:\bE[A-Z]{3,}\d*\b))", s, re.I)
     if codes and not re.search(r"\(.*(?:code|ref).*\)\s*$", s, re.I):
         score -= 10
         issues.append("error code in the main text — move to the end in parentheses, or drop it")
@@ -300,10 +314,10 @@ SYNONYM_GROUPS: list[list[str]] = [
     ["delete", "remove", "trash", "erase"],
     ["cancel", "dismiss", "close", "never mind"],
     ["ok", "okay", "got it", "done", "understood"],
-    ["save", "apply", "update", "submit"],
+    ["save", "apply", "submit"],
     ["edit", "modify", "change"],
     ["settings", "preferences", "options", "configuration"],
-    ["email", "e-mail", "email address", "mail"],
+    ["email", "e-mail", "mail"],
     ["phone", "mobile", "cell", "telephone"],
     ["search", "find", "look up"],
     ["next", "continue", "proceed"],
@@ -328,16 +342,39 @@ def check_consistency(strings: list[str]) -> dict:
     if not lowered:
         raise ToolError("strings contains no non-empty text.")
     conflicts = []
+
+    def term_rx(term: str) -> re.Pattern:
+        # whole term with inflections (delete → deletes/deleted/deleting); a hyphen counts as part of the
+        # word, so "mail" never matches inside "e-mail"
+        if term.endswith("e") and " " not in term:
+            base = re.escape(term[:-1]) + r"(?:e|es|ed|ing)"
+        else:
+            base = re.escape(term) + r"(?:s|es|ed|ing)?"
+        return re.compile(r"(?<![\w-])" + base + r"(?![\w-])", re.I)
+
+    chosen: dict[str, str] = {}
     for group in SYNONYM_GROUPS:
         found: dict[str, int] = {}
-        for term in group:
-            rx = re.compile(r"\b" + re.escape(term) + r"\b", re.I)
-            n = sum(1 for s in lowered if rx.search(s))
+        masked = list(lowered)
+        # longest variants first; a span claimed by "log in" can't also be counted again by a shorter variant
+        for term in sorted(group, key=len, reverse=True):
+            rx = term_rx(term)
+            n = 0
+            for idx in range(len(masked)):
+                if rx.search(masked[idx]):
+                    n += 1
+                    masked[idx] = rx.sub(" ", masked[idx])
             if n:
                 found[term] = n
+        if found:
+            chosen[group[0]] = max(found.items(), key=lambda kv: (kv[1], -group.index(kv[0])))[0]
         if len(found) > 1:
-            majority = max(found.items(), key=lambda kv: (kv[1], -group.index(kv[0])))[0]
-            conflicts.append({"concept": group[0], "variants": found, "standardise_on": majority, "affected": sum(found.values())})
+            conflicts.append({"concept": group[0], "variants": found, "standardise_on": chosen[group[0]], "affected": sum(found.values())})
+    # paired terms must share a verb: "Sign in" pairs with "Sign out", "Log in" with "Log out"
+    fam = lambda t: "log" if t.startswith("log") else "sign"  # noqa: E731
+    if "sign in" in chosen and "sign out" in chosen and fam(chosen["sign in"]) != fam(chosen["sign out"]):
+        want = fam(chosen["sign in"])
+        conflicts.append({"concept": "sign in / sign out pair", "variants": {chosen["sign in"]: 1, chosen["sign out"]: 1}, "standardise_on": f"{want} in / {want} out", "affected": 2})
     # casing drift: same lowercase term appearing with different capitalisation (mid-string)
     forms: dict[str, set] = defaultdict(set)
     for s in lowered:
@@ -365,7 +402,8 @@ def check_consistency(strings: list[str]) -> dict:
     }
 
 
-# Expansion factors vs English, from widely published localisation guidance (IBM/W3C). Short strings expand more.
+# Long-text expansion factors vs English (common localisation rules of thumb). Short strings expand more —
+# see the W3C/IBM length bands applied in localization_expansion.
 EXPANSION: dict[str, float] = {
     "de": 1.35, "fr": 1.20, "es": 1.25, "it": 1.20, "pt": 1.25, "nl": 1.30, "sv": 1.15, "da": 1.15,
     "fi": 1.30, "pl": 1.25, "ru": 1.15, "uk": 1.20, "hu": 1.30, "cs": 1.20, "el": 1.25, "tr": 1.20,
@@ -375,9 +413,14 @@ EXPANSION: dict[str, float] = {
 
 @AGENT.tool
 def localization_expansion(text_value: str, container_chars: int, locales: list[str] | None = None) -> dict:
-    """Estimate translated string length per locale and flag which ones overflow a container width.
+    """Estimate translated string length per locale (typical and worst-case budget) and flag overflow.
 
-    Uses published expansion factors plus the short-string penalty (strings under 10 chars expand up to +100%).
+    Two numbers per locale. `estimated_chars` is the typical length (long-text language factor with a
+    modest short-string uplift). `budget_chars` is the conservative layout budget from IBM's length
+    bands as published by W3C ("Text size in translation": ~200-300% of English up to 10 chars,
+    180-200% for 11-20, 160-180% for 21-30, 140-160% for 31-50, 151-170% for 51-70, ~130% above 70),
+    scaled per language. A string whose typical length overflows is `overflow`; one that fits typically
+    but not within the budget is `at_risk` — check it against a real translation before shipping.
 
     Args:
         text_value: The English source string.
@@ -392,25 +435,36 @@ def localization_expansion(text_value: str, container_chars: int, locales: list[
     if unknown:
         raise ToolError(f"Unknown locale(s): {', '.join(unknown)}. Supported: {', '.join(sorted(EXPANSION))}.")
     n = len(s)
-    # IBM guidance: <=10 chars → up to +200% ... use graded factors
-    short_bonus = 1.6 if n <= 10 else 1.3 if n <= 20 else 1.1 if n <= 30 else 1.0
-    rows, overflow = [], []
+    typical_uplift = 1.6 if n <= 10 else 1.3 if n <= 20 else 1.1 if n <= 30 else 1.0
+    # IBM/W3C band (lower end of each published range), each language scaled relative to the >70-char band (1.30)
+    band = 2.0 if n <= 10 else 1.8 if n <= 20 else 1.6 if n <= 30 else 1.4 if n <= 50 else 1.51 if n <= 70 else 1.3
+    budget_uplift = (band - 1) / 0.30
+    rows, overflow, at_risk = [], [], []
     for loc in locs:
-        factor = EXPANSION[loc]
-        if factor > 1:
-            factor = 1 + (factor - 1) * short_bonus
-        est = max(1, round(n * factor))
+        base = EXPANSION[loc]
+        typ = 1 + (base - 1) * typical_uplift if base > 1 else base
+        bud = 1 + (base - 1) * budget_uplift if base > 1 else base
+        est, budget = max(1, round(n * typ)), max(1, round(n * bud))
         fits = est <= container_chars
-        rows.append({"locale": loc, "factor": round(factor, 2), "estimated_chars": est, "fits": fits})
+        rows.append({"locale": loc, "factor": round(typ, 2), "estimated_chars": est, "budget_factor": round(bud, 2), "budget_chars": budget, "fits": fits, "fits_budget": budget <= container_chars})
         if not fits:
             overflow.append(loc)
-    worst = max(rows, key=lambda r: r["estimated_chars"])
-    safe_source = int(container_chars / worst["factor"])
+        elif budget > container_chars:
+            at_risk.append(loc)
+    worst = max(rows, key=lambda r: r["budget_chars"])
+    safe_source = int(container_chars / worst["budget_factor"])
+    if overflow:
+        verdict = f"Overflows in {', '.join(overflow)}" + (f"; at risk in {', '.join(at_risk)}" if at_risk else "") + f" — shorten source to ≤ {safe_source} chars or widen the container to {worst['budget_chars']}"
+    elif at_risk:
+        verdict = f"Fits typically; at risk in {', '.join(at_risk)} under the W3C/IBM budget — verify with a real translation or allow {worst['budget_chars']} chars"
+    else:
+        verdict = "Fits in all checked locales, even at the W3C/IBM budget"
     return {
         "source_chars": n,
         "container_chars": container_chars,
         "locales": rows,
         "overflow": overflow,
+        "at_risk": at_risk,
         "safe_source_length": safe_source,
-        "verdict": ("Fits in all checked locales" if not overflow else f"Overflows in {', '.join(overflow)} — shorten source to ≤ {safe_source} chars or widen the container to {worst['estimated_chars']}"),
+        "verdict": verdict,
     }

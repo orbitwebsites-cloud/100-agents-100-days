@@ -153,6 +153,7 @@ _COND = re.compile(r"^\s*(if|when|in case|should)\b", re.I)
 _ELSE = re.compile(r"\b(otherwise|else|if not|if no|if yes|in all other cases)\b", re.I)
 _VERIFY = re.compile(r"\b(verify|confirm|check that|check the|ensure|validate|double-check|review that|inspect)\b", re.I)
 _IRREVERSIBLE = re.compile(r"\b(send|delete|remove|pay|refund|deploy|publish|submit|approve|charge|wire|transfer|release|terminate|cancel|purge|drop|overwrite)\b", re.I)
+_IRREVERSIBLE_PHRASE = re.compile(r"^(issue|process|make|execute|initiate|trigger|run|push|post|file|sign)\s+(the\s+|a\s+|an\s+)?(\w+\s+)?(refund|payment|payout|transfer|wire|charge|deploy(ment)?|release|deletion|migration|payroll|invoice|contract)\b", re.I)
 _SYSTEM = re.compile(r"\b(in|on|via|using|open|from)\s+[A-Z][\w-]+|<[^>]+>", re.I)
 _ROLE_TOKEN = re.compile(r"\b([A-Z][a-z]+(?: [A-Z][a-z]+)?)\s*:")
 _ACTION_VERBS = {"send", "email", "click", "open", "update", "save", "export", "notify", "create", "delete", "close", "submit", "record", "log", "check", "verify", "attach", "upload", "download", "file", "forward", "call", "review", "approve", "assign", "add", "remove", "enter", "select", "print", "copy", "paste", "move", "mark", "set", "run", "start", "stop", "restart", "archive", "escalate", "post", "reply", "confirm", "schedule", "book", "cancel", "refund", "charge", "pay", "ship", "deploy", "merge", "tag", "label", "flag", "import", "sync", "scan", "sign"}
@@ -216,7 +217,7 @@ def lint_steps(steps: list[str], roles: list[str] = []) -> dict:
             issues.append("'should/may/try' — SOPs say 'do' or give the condition")
         if _VERIFY.search(body):
             has_verify = True
-        if _IRREVERSIBLE.match(body):  # leading verb only — "Open the refund request" is not a refund
+        if _IRREVERSIBLE.match(body) or _IRREVERSIBLE_PHRASE.match(body):  # leading verb/verb phrase only — "Open the refund request" is not a refund
             has_irreversible = True
             nxt = steps[i] if i < len(steps) else ""
             if not (_VERIFY.search(nxt) or _VERIFY.search(body)):
@@ -322,7 +323,7 @@ def cycle_time(steps: list[dict]) -> dict:
     """Compute lead time, touch time, process cycle efficiency, handoffs, the biggest wait and per-role load for a process.
 
     Args:
-        steps: Ordered list of {"step": str, "touch_minutes": number (hands-on work), "wait_minutes": number (queue/waiting before or after), "role": str}.
+        steps: Ordered list of {"step": str, "touch_minutes": number (hands-on work), "wait_minutes": number (elapsed clock minutes of queue/waiting before or after — 1 day = 1440), "role": str}.
     """
     steps = require_list(steps, "steps", 200)
     rows, touch_total, wait_total = [], 0.0, 0.0
@@ -364,9 +365,9 @@ def cycle_time(steps: list[dict]) -> dict:
     if not recs:
         recs.append("Process is lean for its type; keep measuring.")
 
-    def fmt(m: float) -> str:
-        if m >= 60 * 8:
-            return f"{m / 60 / 8:.1f} workdays"
+    def fmt(m: float) -> str:  # minutes are elapsed clock time, so a day is 1440 min, not an 8-h workday
+        if m >= 24 * 60:
+            return f"{m / 60 / 24:.1f} days"
         if m >= 60:
             return f"{m / 60:.1f} h"
         return f"{m:g} min"

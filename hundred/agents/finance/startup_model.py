@@ -7,7 +7,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
 from ...core import Agent, ToolError
-from ._common import D, ZERO, add_months, as_rate, bound_rows, cagr, money, month_label, parse_iso, pct, ratio_to_pct, require_nonneg, require_positive
+from ._common import D, as_pct, ZERO, add_months, as_rate, bound_rows, cagr, money, month_label, parse_iso, pct, ratio_to_pct, require_nonneg, require_positive
 
 AGENT = Agent(
     slug="startup-model",
@@ -138,15 +138,15 @@ def mrr_projection(
         churn_pct: Monthly gross revenue churn (incl. contraction), e.g. 3 for 3%.
         expansion_pct: Monthly expansion as a percent of opening MRR, e.g. 1.
         target_mrr: Optional target; the tool reports the first month at or above it.
-        start_month: YYYY-MM-DD anchor for calendar labels; defaults to today.
+        start_month: YYYY-MM-DD in the first projected month (month 1 is labelled with this month); defaults to today.
     """
     mrr = require_nonneg(D(starting_mrr, "starting_mrr"), "starting_mrr")
     if not 1 <= months <= 60:
         raise ToolError("months must be 1-60")
     new = require_nonneg(D(new_mrr_monthly, "new_mrr_monthly"), "new_mrr_monthly")
-    g = as_rate(new_mrr_growth_pct, "new_mrr_growth_pct")
-    churn = as_rate(churn_pct, "churn_pct")
-    exp = as_rate(expansion_pct, "expansion_pct")
+    g = as_pct(new_mrr_growth_pct, "new_mrr_growth_pct")
+    churn = as_pct(churn_pct, "churn_pct")
+    exp = as_pct(expansion_pct, "expansion_pct")
     if not 0 <= churn <= 1 or not 0 <= exp <= 1 or g < Decimal("-0.9") or g > 1:
         raise ToolError("churn_pct and expansion_pct must be 0-100; new_mrr_growth_pct between -90 and 100")
     tgt = D(target_mrr, "target_mrr") if target_mrr else ZERO
@@ -161,13 +161,13 @@ def mrr_projection(
         tot_new += cur_new
         tot_exp += expanded
         tot_churn += churned
-        rows.append({"month": m, "label": month_label(add_months(start, m)), "opening": money(cur), "new": money(cur_new), "expansion": money(expanded), "churn": money(-churned), "ending_mrr": money(ending), "arr": money(ending * 12), "mom_growth_pct": ratio_to_pct((ending - cur) / cur) if cur else None})
+        rows.append({"month": m, "label": month_label(add_months(start, m - 1)), "opening": money(cur), "new": money(cur_new), "expansion": money(expanded), "churn": money(-churned), "ending_mrr": money(ending), "arr": money(ending * 12), "mom_growth_pct": ratio_to_pct((ending - cur) / cur) if cur else None})
         if tgt and target_month is None and ending >= tgt:
             target_month = m
         cur = ending
         cur_new = cur_new * (1 + g)
     cm = cagr(mrr, cur, Decimal(months)) if mrr > 0 else None
-    steady_state = (cur_new / churn) if churn > 0 and exp < churn else None  # where MRR converges if new MRR stops growing
+    steady_state = (cur_new / (churn - exp)) if exp < churn else None  # MRR converges to N / (churn - expansion) if new MRR stops growing
     return {
         "starting_mrr": money(mrr),
         "ending_mrr": money(cur),
@@ -202,7 +202,7 @@ def hiring_plan_burn(hires: list[dict], months: int, load_factor: float = 1.3, e
         existing_monthly_costs: Current non-payroll monthly costs (rent, software, hosting, marketing).
         existing_headcount: People already on payroll.
         existing_payroll_monthly: Current fully loaded monthly payroll for existing staff.
-        start_month: YYYY-MM-DD anchor for labels; defaults to today.
+        start_month: YYYY-MM-DD in month 1 of the horizon (labels month 1 with this month); defaults to today.
     """
     rows = bound_rows(hires, "hires", limit=200)
     if not 1 <= months <= 60:
@@ -240,7 +240,7 @@ def hiring_plan_burn(hires: list[dict], months: int, load_factor: float = 1.3, e
         cum += total
         if prev_payroll > 0 and payroll > prev_payroll * Decimal("1.25"):
             flags.append(f"month {m}: payroll steps up {ratio_to_pct(payroll / prev_payroll - 1)}% — stagger starts if cash is tight")
-        table.append({"month": m, "label": month_label(add_months(start, m)), "headcount": hc, "payroll": money(payroll), "other_costs": money(other), "total_burn": money(total), "starts": [p["role"] for p in plan if p["start_month"] == m]})
+        table.append({"month": m, "label": month_label(add_months(start, m - 1)), "headcount": hc, "payroll": money(payroll), "other_costs": money(other), "total_burn": money(total), "starts": [p["role"] for p in plan if p["start_month"] == m]})
         prev_payroll = payroll
     for p in plan:
         p.pop("_m")
@@ -273,7 +273,7 @@ def runway_projection(cash: float, monthly_revenue: list[float], monthly_costs: 
         monthly_costs: Total cash costs per month (e.g. burn_series from hiring_plan_burn).
         gross_margin_pct: If monthly_costs exclude cost of revenue, pass the gross margin so revenue is net of COGS. Default 100 (costs already include COGS).
         milestone_month: The month you need to reach (next raise or break-even) — the tool checks for milestone + 6 months buffer.
-        start_month: YYYY-MM-DD anchor; defaults to today.
+        start_month: YYYY-MM-DD in month 1 (use the same start_month as mrr_projection and hiring_plan_burn); defaults to today.
     """
     c = D(cash, "cash")
     if not monthly_revenue and not monthly_costs:
@@ -301,7 +301,7 @@ def runway_projection(cash: float, monthly_revenue: list[float], monthly_costs: 
             zero_m = m
         if be_m is None and net >= 0 and m > 1:
             be_m = m
-        rows.append({"month": m, "label": month_label(add_months(start, m)), "revenue": money(rev[m - 1]), "costs": money(cost[m - 1]), "net_burn": money(-net), "cash": money(bal)})
+        rows.append({"month": m, "label": month_label(add_months(start, m - 1)), "revenue": money(rev[m - 1]), "costs": money(cost[m - 1]), "net_burn": money(-net), "cash": money(bal)})
     needed = money(-low[1]) if low[1] < 0 else 0.0
     ok_milestone = None
     if milestone_month:
@@ -351,14 +351,14 @@ def fundraise_sizing(
         runway_months_target: Months of runway the raise must fund (18-24 typical).
         buffer_months: Extra months for the next raise process (3-6 typical).
         pre_money_valuation: Agreed or expected pre-money (0 to skip dilution math).
-        option_pool_pct: Post-money option pool investors require, e.g. 10.
+        option_pool_pct: NEW post-money option pool investors require, e.g. 10 (treated as entirely new shares from the pre-money; subtract any existing unallocated pool first).
         founder_ownership_pct: Founders' combined ownership before the round, e.g. 80.
         burn_growth_pct_monthly: If burn grows each month (hiring), e.g. 3 for 3% MoM.
     """
     burn = require_positive(D(monthly_burn, "monthly_burn"), "monthly_burn")
     if not 1 <= runway_months_target <= 60 or not 0 <= buffer_months <= 24:
         raise ToolError("runway_months_target must be 1-60 and buffer_months 0-24")
-    g = as_rate(burn_growth_pct_monthly, "burn_growth_pct_monthly")
+    g = as_pct(burn_growth_pct_monthly, "burn_growth_pct_monthly")
     if not -Decimal("0.5") <= g <= Decimal("0.5"):
         raise ToolError("burn_growth_pct_monthly must be between -50 and 50")
     total_months = runway_months_target + buffer_months

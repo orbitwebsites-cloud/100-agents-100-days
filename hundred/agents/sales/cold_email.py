@@ -79,8 +79,11 @@ AGENT = Agent(
        dates that skip weekends and holidays and land Tue-Thu where possible. Reply
        handling: any reply stops the sequence.
     6. **Size the campaign.** When the user has a target (meetings, pipeline), call
-       `cold_email__estimate_outreach` with their reply/meeting rates (defaults are the
-       well-established medians: 1-3% positive reply, ~50% of positive replies book).
+       `cold_email__estimate_outreach` with their reply/meeting rates (tool defaults:
+       2% of prospects reply, half of replies are positive — i.e. ~1% positive reply —
+       and 60% of positives book; replace with the user's own history when they have it).
+       Pass `sequence_span_days` = the `total_span_days` from step 5, otherwise the answer
+       is a steady-state send rate and the last cohorts finish after the deadline.
        It returns the number of prospects, sends, mailboxes and days needed — mailboxes
        matter because sending > 50/day from one warmed address torches deliverability.
     7. **Deliver** in the output format below. Include the score numbers; the user should
@@ -257,8 +260,8 @@ def audit_email_body(body: str, step: int = 1) -> dict:
         raise ToolError("Body over 20k chars — a cold email is under 1,000.")
     if step < 1 or step > 12:
         raise ToolError("step must be between 1 and 12.")
-    ws = text.words(body)
-    n_words = len(ws)
+    # count like a person does: a URL is one word, "30-minute" is one word (text.words splits both)
+    n_words = c.word_count(body)
     read = text.readability(body)
     ratio = c.you_i_ratio(body)
     ctas = CTA_RE.findall(body)
@@ -271,7 +274,7 @@ def audit_email_body(body: str, step: int = 1) -> dict:
     exclam = body.count("!")
     questions = body.count("?")
     paragraphs = [p for p in re.split(r"\n\s*\n", body.strip()) if p.strip()]
-    longest_para = max((len(text.words(p)) for p in paragraphs), default=n_words)
+    longest_para = max((c.word_count(p) for p in paragraphs), default=n_words)
     first_line = paragraphs[0].strip().splitlines()[0] if paragraphs else ""
     score = 100
     fixes: list[str] = []
@@ -498,6 +501,7 @@ def estimate_outreach(
     daily_limit_per_mailbox: int = 50,
     days_available: int = 20,
     bounce_rate_pct: float = 3.0,
+    sequence_span_days: int = 0,
 ) -> dict:
     """Work backwards from a meeting target to prospects, sends, mailboxes and days needed.
 
@@ -513,6 +517,7 @@ def estimate_outreach(
         daily_limit_per_mailbox: Max sends per mailbox per day, 50 is the safe ceiling for a warmed domain.
         days_available: Business days the campaign can run (default 20 = one month).
         bounce_rate_pct: Expected bounce rate; lists with > 5% bounce damage sender reputation.
+        sequence_span_days: Calendar days from step 1 to the last step (total_span_days from schedule_sequence). When given, prospects are enrolled early enough that every step lands inside the window, and mailboxes are sized for that peak (0 = steady-state estimate only).
     """
     if target_meetings < 1 or target_meetings > 10_000:
         raise ToolError("target_meetings must be 1-10000.")
@@ -521,6 +526,8 @@ def estimate_outreach(
             raise ToolError(f"{name} must be between 0 and {hi}.")
     if steps < 1 or steps > 12 or daily_limit_per_mailbox < 1 or days_available < 1:
         raise ToolError("steps 1-12, daily_limit_per_mailbox ≥ 1, days_available ≥ 1.")
+    if not 0 <= sequence_span_days <= 180:
+        raise ToolError("sequence_span_days must be 0-180.")
     p_meet = (reply_rate_pct / 100) * (positive_share_pct / 100) * (meeting_rate_pct / 100)
     prospects_needed = math.ceil(target_meetings / p_meet)
     list_size = math.ceil(prospects_needed / (1 - bounce_rate_pct / 100))
@@ -532,6 +539,28 @@ def estimate_outreach(
     mailboxes = math.ceil(total_sends / capacity_per_mailbox)
     daily_new_prospects = math.ceil(prospects_needed / days_available)
     warnings = []
+    window: dict | None = None
+    if sequence_span_days:
+        span_bd = max(1, round(sequence_span_days * 5 / 7))
+        enrol_days = days_available - span_bd
+        if enrol_days < 1:
+            warnings.append(f"a {sequence_span_days}-day sequence ({span_bd} business days) does not fit in {days_available} business days — later steps (and most replies) land after the window")
+            enrol_days = 1
+        per_day_new = math.ceil(prospects_needed / enrol_days)
+        # at peak, every step of the sequence is being sent for a different cohort on the same day
+        peak_sends = per_day_new * steps
+        window = {
+            "sequence_span_business_days": span_bd,
+            "enrol_all_prospects_within_business_days": enrol_days,
+            "new_prospects_per_day": per_day_new,
+            "peak_sends_per_day": peak_sends,
+            "mailboxes_needed": math.ceil(peak_sends / daily_limit_per_mailbox),
+        }
+        if window["mailboxes_needed"] > math.ceil(total_sends / capacity_per_mailbox):
+            warnings.append(
+                f"to finish every step inside {days_available} business days, enrol all prospects in the first {enrol_days} "
+                f"({per_day_new}/day) — peak {peak_sends} sends/day = {window['mailboxes_needed']} mailboxes, not {mailboxes}"
+            )
     if bounce_rate_pct > 5:
         warnings.append("bounce rate > 5% — verify the list (email validation) before sending or the domain gets flagged")
     if reply_rate_pct > 10:
@@ -550,6 +579,8 @@ def estimate_outreach(
         "new_prospects_per_day": daily_new_prospects,
         "mailboxes_needed": mailboxes,
         "days_available": days_available,
+        "finish_inside_window": window,
         "warnings": warnings,
-        "verdict": f"{target_meetings} meetings needs ~{prospects_needed:,} prospects ({list_size:,} raw) → {total_sends:,} sends over {days_available} days = {mailboxes} mailbox(es) at ≤ {daily_limit_per_mailbox}/day.",
+        "verdict": f"{target_meetings} meetings needs ~{prospects_needed:,} prospects ({list_size:,} raw) → {total_sends:,} sends at ~{math.ceil(total_sends / days_available)}/day = {mailboxes} mailbox(es) at ≤ {daily_limit_per_mailbox}/day"
+        + (f"; to land every step inside {days_available} business days: {window['mailboxes_needed']} mailboxes." if window else " (steady state; prospects enrolled late finish their sequence after the window — pass sequence_span_days to size for that)."),
     }

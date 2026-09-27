@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from ...core import Agent, ToolError
 from ...lib import dates
-from ._common import SCOPE_NOTE, check_text, excerpt, parse_date
+from ._common import NUMBER_RE, SCOPE_NOTE, check_text, excerpt, parse_date, parse_number
 from ._common import term_end as _term_end
 
 AGENT = Agent(
@@ -65,7 +65,8 @@ AGENT = Agent(
        survival period and return/destroy window. It returns the agreement expiry, the date
        confidentiality obligations end for ordinary information, the trade-secret note (perpetual
        while it remains a trade secret), the return/destroy deadline after termination, and the
-       disclosure cut-off. Never compute these in your head.
+       disclosure cut-off. For an incoming NDA with no early-termination clause pass
+       `early_termination_allowed: false`. Never compute these in your head.
     3. **Draft.** Call `nda_drafter__build_nda` with parties, purpose, type, dates, governing law
        and options (non-solicit, residuals, marking requirement, injunctive relief, no-licence,
        feedback clause). It assembles numbered clauses from the market-standard library with defined
@@ -136,7 +137,7 @@ AGENT = Agent(
 
 
 @AGENT.tool
-def calculate_terms(effective_date: str, term_months: int = 24, survival_months: int = 36, return_within_days: int = 30, termination_notice_days: int = 30, trade_secrets_perpetual: bool = True) -> dict:
+def calculate_terms(effective_date: str, term_months: int = 24, survival_months: int = 36, return_within_days: int = 30, termination_notice_days: int = 30, trade_secrets_perpetual: bool = True, early_termination_allowed: bool = True) -> dict:
     """Compute the NDA's key dates: term end, confidentiality end for ordinary information, return/destroy and notice deadlines.
 
     Args:
@@ -146,6 +147,7 @@ def calculate_terms(effective_date: str, term_months: int = 24, survival_months:
         return_within_days: Days after termination/request to return or destroy materials (default 30).
         termination_notice_days: Notice needed to terminate early (default 30).
         trade_secrets_perpetual: Whether trade secrets stay protected while they remain trade secrets (default true, market standard).
+        early_termination_allowed: False if the NDA gives no right to terminate early (common in incoming NDAs) — then no early-termination date is shown.
     """
     start = parse_date(effective_date, "effective_date")
     for name, v, lo, hi in (("term_months", term_months, 1, 120), ("survival_months", survival_months, 0, 240), ("return_within_days", return_within_days, 1, 180), ("termination_notice_days", termination_notice_days, 0, 180)):
@@ -157,7 +159,7 @@ def calculate_terms(effective_date: str, term_months: int = 24, survival_months:
     early_term_earliest = start + timedelta(days=termination_notice_days)
     total_years = round((obligations_end - start).days / 365.25, 1)
     notes = []
-    if total_years > 7 and survival_months:
+    if total_years > 7:
         notes.append(f"Obligations run {total_years} years in total — longer than the usual 3-5; some courts read very long terms as unreasonable for non-trade-secret information")
     if survival_months and survival_months < 12:
         notes.append("Survival under 12 months is short for a discloser; 2-5 years is market")
@@ -170,7 +172,7 @@ def calculate_terms(effective_date: str, term_months: int = 24, survival_months:
         "obligations_end_ordinary_information": dates.fmt(obligations_end),
         "trade_secrets": "perpetual — for as long as the information qualifies as a trade secret under applicable law" if trade_secrets_perpetual else "same as ordinary information",
         "return_or_destroy_by": dates.fmt(return_deadline),
-        "earliest_early_termination": dates.fmt(early_term_earliest),
+        "earliest_early_termination": dates.fmt(early_term_earliest) if early_termination_allowed else "no early-termination right — obligations run the full term",
         "total_protection_years": total_years,
         "calendar_entries": [
             {"title": "NDA term ends — stop disclosing under this NDA", "date": term_end.isoformat()},
@@ -179,6 +181,7 @@ def calculate_terms(effective_date: str, term_months: int = 24, survival_months:
         ],
         "notes": notes,
         "verdict": f"Term ends {term_end.isoformat()}; obligations survive to {obligations_end.isoformat()}" + ("; trade secrets perpetual" if trade_secrets_perpetual else ""),
+        "scope_note": SCOPE_NOTE,
     }
 
 
@@ -295,9 +298,9 @@ def build_nda(party_a: dict, party_b: dict, purpose: str, effective_date: str, m
 
 NDA_CHECKS: list[dict] = [
     {"key": "exclusion_public", "label": "Exclusion: publicly available", "rx": r"public(?:ly)? (?:available|known|domain)|becomes? (?:generally )?(?:available|known) to the public", "missing_sev": {"recipient": 3, "discloser": 1, "both": 2}, "market": "all five standard exclusions", "ask": "add: information that is or becomes public through no breach"},
-    {"key": "exclusion_known", "label": "Exclusion: already known", "rx": r"(?:already|previously|rightfully) (?:known|in (?:its|the) possession)|known to .{0,40}(?:prior to|before) (?:disclosure|receipt)", "missing_sev": {"recipient": 3, "discloser": 1, "both": 2}, "market": "standard", "ask": "add: information rightfully known before disclosure"},
+    {"key": "exclusion_known", "label": "Exclusion: already known", "rx": r"(?:already|previously|rightfully) (?:known|in (?:its|the|[\w-]+'s) possession)|known to .{0,40}(?:prior to|before) (?:disclosure|receipt)|possession[^.;]{0,60}(?:prior to|before) (?:the )?(?:disclosure|receipt)", "missing_sev": {"recipient": 3, "discloser": 1, "both": 2}, "market": "standard", "ask": "add: information rightfully known before disclosure"},
     {"key": "exclusion_independent", "label": "Exclusion: independently developed", "rx": r"independently developed|independent development", "missing_sev": {"recipient": 3, "discloser": 1, "both": 2}, "market": "standard", "ask": "add: independently developed without use of the Confidential Information"},
-    {"key": "exclusion_third_party", "label": "Exclusion: received from third party", "rx": r"(?:received|obtained) from a third party|third party .{0,40}without (?:restriction|breach|obligation)", "missing_sev": {"recipient": 2, "discloser": 1, "both": 2}, "market": "standard", "ask": "add: rightfully received from a third party without restriction"},
+    {"key": "exclusion_third_party", "label": "Exclusion: received from third party", "rx": r"(?:received|obtained|disclosed)[^.;]{0,40}from (?:a |any )?third part(?:y|ies)|third part(?:y|ies)[^.;]{0,60}(?:without|not under|no|free of) (?:any |an )?(?:restriction|breach|obligation|duty)", "missing_sev": {"recipient": 2, "discloser": 1, "both": 2}, "market": "standard", "ask": "add: rightfully received from a third party without restriction"},
     {"key": "compelled", "label": "Compelled disclosure carve-out (law / court order) with notice", "rx": r"required by law|court order|subpoena|compelled|legal process|governmental (?:authority|order)", "missing_sev": {"recipient": 3, "discloser": 1, "both": 2}, "market": "standard: notice, cooperate, disclose only what is required", "ask": "add compelled-disclosure clause with prompt notice and minimum disclosure"},
     {"key": "standard_of_care", "label": "Standard of care (reasonable care / same as own)", "rx": r"reasonable care|same degree of care|reasonable (?:measures|steps|precautions)|degree of care", "missing_sev": {"recipient": 1, "discloser": 2, "both": 2}, "market": "at least reasonable care and no less than own information", "ask": "add an objective standard of care"},
     {"key": "representatives", "label": "Disclosure to employees/advisers with need to know", "rx": r"need[- ]to[- ]know|representatives|employees,? (?:officers|agents|advis[eo]rs)|affiliates .{0,40}(?:bound|subject)", "missing_sev": {"recipient": 2, "discloser": 0, "both": 1}, "market": "need-to-know representatives bound by equivalent obligations", "ask": "add representatives clause"},
@@ -314,13 +317,13 @@ NDA_RED_FLAGS: list[dict] = [
     {"rx": r"perpetual|in perpetuity|indefinitely|no expiration|without limitation (?:as to|of) time|survive indefinitely", "sev": {"discloser": 0, "recipient": 2, "both": 1}, "flag": "Perpetual obligations for all information", "ask": "survival of 2-5 years for ordinary information; perpetual only for trade secrets"},
     {"rx": r"all information(?! .{0,80}(?:marked|designated|reasonably|confidential))|any and all information|regardless of whether .{0,40}(?:marked|confidential)", "sev": {"discloser": 0, "recipient": 2, "both": 1}, "flag": "Confidential Information defined as all information without limit", "ask": "'marked or reasonably understood to be confidential', with the five standard exclusions"},
     {"rx": r"liquidated damages|penalt(?:y|ies) of|shall pay .{0,40}(?:\$|usd|eur|£)\s?[\d,]+ (?:per|for each) (?:breach|disclosure)", "sev": {"discloser": 0, "recipient": 3, "both": 2}, "flag": "Liquidated damages / penalty for breach", "ask": "delete; actual damages plus injunctive relief is market"},
-    {"rx": r"assign(?:ment|s)? .{0,60}(?:hereby|all rights|inventions|improvements|derivative)|work (?:made )?for hire|shall (?:own|be the owner of) .{0,40}(?:improvements|derivatives|developments)", "sev": {"discloser": 0, "recipient": 3, "both": 2}, "flag": "IP assignment / ownership of improvements inside an NDA", "ask": "delete; IP terms belong in the commercial agreement; NDA should say 'no licence granted' only"},
+    {"rx": r"assign(?:ment|s)?\b[^.]{0,120}(?:hereby|all rights?\b|inventions|improvements|derivative|suggestions|feedback)|hereby assigns?|work (?:made )?for hire|shall (?:own|be the owner of) .{0,40}(?:improvements|derivatives|developments)", "sev": {"discloser": 0, "recipient": 3, "both": 2}, "flag": "IP assignment / ownership of improvements inside an NDA", "ask": "delete; IP terms belong in the commercial agreement; NDA should say 'no licence granted' only"},
     {"rx": r"attorneys?'? fees|legal fees|costs of enforcement", "sev": {"discloser": 0, "recipient": 1, "both": 1}, "flag": "One-way attorneys' fees", "ask": "make it prevailing-party (mutual) or delete"},
     {"rx": r"(?:sole|absolute) discretion", "sev": {"discloser": 1, "recipient": 2, "both": 1}, "flag": "'Sole discretion' standard", "ask": "'reasonable' or objective test"},
     {"rx": r"indemnif|hold harmless", "sev": {"discloser": 0, "recipient": 2, "both": 2}, "flag": "Indemnity in an NDA", "ask": "delete; NDAs normally rely on damages and injunctive relief, not indemnities"},
     {"rx": r"(?:notify|notice) .{0,40}within (?:twenty-four|24|forty-eight|48) hours", "sev": {"discloser": 0, "recipient": 1, "both": 1}, "flag": "Breach notification within 24-48 hours", "ask": "'promptly' or within 5 business days of becoming aware"},
-    {"rx": r"exclusiv(?:e|ity)|shall not .{0,40}(?:negotiate|discuss) with (?:any )?(?:other|third)", "sev": {"discloser": 1, "recipient": 2, "both": 2}, "flag": "Exclusivity / no-shop obligation", "ask": "delete or move to a separate, time-limited exclusivity letter"},
-    {"rx": r"post(?:ing)? (?:a |of )?bond|security for", "sev": {"discloser": 1, "recipient": 0, "both": 0}, "flag": "Bond required before injunctive relief", "ask": "as discloser: 'without the need to post a bond'"},
+    {"rx": r"\bexclusivity\b|exclusive (?:dealing|negotiat\w*|arrangement|relationship|supplier|provider|partner)|no-?shop|shall not .{0,40}(?:negotiate|discuss) with (?:any )?(?:other|third)", "sev": {"discloser": 1, "recipient": 2, "both": 2}, "flag": "Exclusivity / no-shop obligation", "ask": "delete or move to a separate, time-limited exclusivity letter"},
+    {"rx": r"(?<!without the need to )(?<!without the requirement to )(?<!without )(?<!need to )(?<!not )post(?:s|ing)? (?:of )?(?:a )?bond|security for (?:costs|damages)","sev": {"discloser": 1, "recipient": 0, "both": 0}, "flag": "Bond required before injunctive relief", "ask": "as discloser: 'without the need to post a bond'"},
 ]
 
 
@@ -363,17 +366,28 @@ def review_nda(nda_text: str, my_role: str = "both") -> dict:
     if title_mutual and recv_mentions and disc_mentions and re.search(r"\b(?:company|customer|client|licensor)\b\s+(?:shall|may|will)\s+(?:not )?(?:be entitled|have the right|own)", lower):
         findings.append({"severity": 2, "clause": "Mutuality", "issue": "titled mutual but some obligations/rights are written for a named party only", "market_position": "true mutuality", "ask": "make every obligation run to 'the Receiving Party' and every right to 'the Disclosing Party'"})
         score += 8
-    dur = re.search(r"(\d+|one|two|three|four|five|ten)\s*(?:\(\d+\)\s*)?(years?|months?)", lower)
+    # term/survival: look at every years/months duration, skip ones belonging to non-solicits, keep the longest
+    term_years, term_txt = None, None
+    for dm in re.finditer(rf"\b({NUMBER_RE})\s*(years?|months?)\b", lower):
+        ctx = lower[max(0, dm.start() - 160) : dm.start()]
+        ctx = re.split(r"(?<=[a-z0-9)])\.\s", ctx)[-1]
+        if re.search(r"solicit|hire|employ", ctx) or not re.search(r"term|in effect|surviv|period of|obligations|expire|confidential", ctx):
+            continue
+        n = parse_number(dm.group(1))
+        if n is None:
+            continue
+        years = n if dm.group(2).startswith("year") else n / 12
+        if term_years is None or years > term_years:
+            term_years, term_txt = years, f"{n} {dm.group(2)}"
     term_note = None
-    if dur:
-        n = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10}.get(dur.group(1)) or int(dur.group(1))
-        years = n if dur.group(2).startswith("year") else n / 12
-        term_note = f"term/survival language found: {n} {dur.group(2)}"
-        if years > 5 and role != "discloser":
-            findings.append({"severity": 1, "clause": "Term length", "issue": f"{n} {dur.group(2)} — over the usual 2-5 years for ordinary information", "market_position": "2-5 years; perpetual for trade secrets only", "ask": "reduce to 3 years survival with trade-secret carve-out"})
-            score += 4
-        if years < 1 and role != "recipient":
-            findings.append({"severity": 2, "clause": "Term length", "issue": f"{n} {dur.group(2)} — short for a discloser", "market_position": "2-5 years survival", "ask": "3 years survival"})
+    if term_years is not None:
+        term_note = f"term/survival language found: {term_txt}"
+        if term_years > 5 and role != "discloser":
+            sev = 2 if role == "recipient" else 1
+            findings.append({"severity": sev, "clause": "Term length", "issue": f"{term_txt} — over the usual 2-5 years for ordinary information", "market_position": "2-5 years; perpetual for trade secrets only", "ask": "reduce to 2-3 years (plus up to 3 years' survival) with a trade-secret carve-out"})
+            score += {1: 4, 2: 8}[sev]
+        if term_years < 1 and role != "recipient":
+            findings.append({"severity": 2, "clause": "Term length", "issue": f"{term_txt} — short for a discloser", "market_position": "2-5 years survival", "ask": "3 years survival"})
             score += 8
     dtsa = bool(re.search(r"1833|defend trade secrets act|whistleblower", lower))
     findings.sort(key=lambda f: -f["severity"])

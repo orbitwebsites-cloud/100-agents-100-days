@@ -16,12 +16,16 @@ def test_unit_economics_full_pnl():
     assert out["gross_margin_pct"] == 69.0
     assert out["markup_pct"] == 222.5
     assert out["lines"]["payment_fees"] == round(39.99 * 0.029 + 0.30, 2)  # 1.46
-    # CM1 = 39.99 − 12.40 − 6.10 − 0.80 − 1.46 = 19.23 ; returns = 0.08 × (19.23 + 9) = 2.26
+    # CM1 = 39.99 − 12.40 − 6.10 − 0.80 − 1.46 = 19.23
+    # a return refunds the price, restocks the unit, but outbound ship + box + payment fee are sunk:
+    # loss per return = 19.23 + (6.10 + 0.80 + 1.46) + 9 = 36.59 ; × 8% = 2.93 → CM2 16.30
     assert out["contribution_before_returns"] == 19.23
-    assert out["contribution_margin"] == 16.97
-    assert out["breakeven_roas"] == round(39.99 / 16.97, 2)
-    assert out["max_cpa_first_order"] == 16.97
-    assert 31 < out["floor_price_at_min_margin"] < 32
+    assert out["return_loss_per_returned_order"] == 36.59
+    assert out["contribution_margin"] == 16.3
+    assert out["breakeven_roas"] == round(39.99 / 16.30309, 2)
+    assert out["max_cpa_first_order"] == 16.3
+    # floor: (0.92·12.40 + 6.10 + 0.80 + 0.30 + 0.08·9) ÷ (0.92 − 0.029 − 0.30) = 19.328 ÷ 0.591 = 32.70
+    assert out["floor_price_at_min_margin"] == 32.7
 
 
 def test_unit_economics_marketplace_fees_apply_to_price_and_negative_margin():

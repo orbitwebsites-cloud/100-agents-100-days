@@ -68,8 +68,10 @@ AGENT = Agent(
        seeing anyone else's.
     3. **Score.** After the loop, call `hiring_scorecard__score_candidates` with all ratings.
        Read: weighted score, must-have bar failures, competencies where raters disagree by
-       > 1.5 points, and interviewer leniency. Disagreement is not averaged away — it is the
-       debrief agenda.
+       > 1.5 points, and interviewer leniency (measured against the median interviewer, so one
+       harsh outlier doesn't make everyone else look lenient). Read `decision_hinges_on`: if
+       removing one interviewer's ratings flips the decision, their evidence is debated first.
+       Disagreement is not averaged away — it is the debrief agenda.
     4. **Audit the feedback.** Before the debrief, call `hiring_scorecard__check_feedback_bias`
        on each written feedback. Anything flagged non-job-related is struck from the record;
        opinion-heavy feedback goes back to the interviewer with the tool's rewrite prompt.
@@ -155,7 +157,38 @@ PROTECTED_PROXIES = {
     "family": "family status — remove",
     "kids": "family status — remove",
     "children": "family status — remove",
-    "pregnan": "protected — remove",
+    "pregnan*": "pregnancy — protected; remove",
+    "maternity": "pregnancy/family status — protected; remove",
+    "paternity": "family status — remove",
+    "childcare": "family status — remove",
+    "age": "age — protected; remove",
+    "years old": "age — protected; remove",
+    "older": "age — protected; remove",
+    "too old": "age — protected; remove",
+    "overqualified": "often an age proxy — name the job-related concern or drop it",
+    "male": "sex — protected; remove",
+    "female": "sex — protected; remove",
+    "man": "sex — protected; remove",
+    "woman": "sex — protected; remove",
+    "men": "sex — protected; remove",
+    "women": "sex — protected; remove",
+    "masculine": "sex stereotype — describe the behaviour",
+    "feminine": "sex stereotype — describe the behaviour",
+    "religio*": "religion — protected; remove",
+    "christian": "religion — protected; remove",
+    "muslim": "religion — protected; remove",
+    "jewish": "religion — protected; remove",
+    "hindu": "religion — protected; remove",
+    "catholic": "religion — protected; remove",
+    "disabled": "disability — protected; remove; accommodations go through HR",
+    "wheelchair": "disability — protected; remove",
+    "sexual orientation": "protected — remove",
+    "gay": "sexual orientation — protected; remove",
+    "ethnicity": "protected — remove",
+    "national origin": "protected — remove",
+    "veteran status": "protected — remove",
+    "marital": "marital status — remove",
+    "genetic": "genetic information — protected; remove",
     "married": "marital status — remove",
     "accent": "national origin — remove; rate content, not delivery",
     "native speaker": "national origin — use 'communicates clearly in English'",
@@ -164,7 +197,7 @@ PROTECTED_PROXIES = {
     "disability": "protected — remove; discuss accommodations with HR only",
     "health": "protected — remove",
     "nationality": "protected — remove",
-    "race": "protected — remove",
+    "race": "protected — remove (\'race condition\' is skipped)",
     "ethnic": "protected — remove",
     "gender": "protected — remove",
     "pedigree": "class proxy — rate the skill, not the school",
@@ -178,6 +211,13 @@ PROTECTED_PROXIES = {
     "nice": "vague/affinity — remove",
     "nervous": "rate content, not nerves",
     "confident": "delivery, not competence — rate the content",
+}
+# Job-related uses that share a word with a protected term.
+PROXY_SKIP = {
+    "race": re.compile(r"race\s+conditions?"),
+    "age": re.compile(r"age\s+(?:of|out|pipeline|verification)"),
+    "health": re.compile(r"health\s*(?:check|score|metric|care product|dashboard)"),
+    "man": re.compile(r"man-hours?|man\s+page"),
 }
 COMPETENCY_BANK = {
     "ownership": ["Tell me about a project you drove end to end. What did you personally decide?", "Describe something that broke that wasn't your fault. What did you do?"],
@@ -214,12 +254,12 @@ def build_scorecard(role: str, competencies: list[dict], interviewers: list[str]
 
     Args:
         role: The role title, e.g. "Senior Data Analyst".
-        competencies: 3-8 items: {"name": str, "weight": number, "must_have": bool, "description": str (what good looks like)}.
+        competencies: 3-8 job-related items (up to 16 accepted; items that proxy for protected characteristics are refused and listed in `rejected`): {"name": str, "weight": number, "must_have": bool, "description": str (what good looks like)}.
         interviewers: Names of the panel (2-8).
         minutes_per_interview: Length of each interview in minutes (30-90).
     """
     require_text(role, "role", max_chars=200)
-    require_list(competencies, "competencies", max_items=8, min_items=3)
+    require_list(competencies, "competencies", max_items=16, min_items=3)
     require_list(interviewers, "interviewers", max_items=8, min_items=2)
     if not 30 <= minutes_per_interview <= 90:
         raise ToolError("minutes_per_interview must be 30-90.")
@@ -232,9 +272,10 @@ def build_scorecard(role: str, competencies: list[dict], interviewers: list[str]
             raise ToolError(f"competency #{i} needs a 'name'.")
         name = str(c["name"]).strip()
         desc = str(c.get("description", "")).strip()
-        hits = scan_lexicon(f"{name} {desc}", PROTECTED_PROXIES)
-        if hits:
-            rejected.append({"name": name, "reason": f"'{hits[0]['term']}': {hits[0]['suggestion']}"})
+        hits = scan_lexicon(f"{name} {desc}", PROTECTED_PROXIES, PROXY_SKIP)
+        if hits or re.search(r"\b(?:under|over)\s+\d{2}\b", f"{name} {desc}", re.I):
+            reason = f"'{'/'.join(hits[0]['matched'])}': {hits[0]['suggestion']}" if hits else "age threshold — protected; remove"
+            rejected.append({"name": name, "reason": reason, "refused": True})
             continue
         try:
             w = float(c.get("weight", 0))
@@ -243,6 +284,8 @@ def build_scorecard(role: str, competencies: list[dict], interviewers: list[str]
         if w < 0:
             raise ToolError(f"competency '{name}': weight can't be negative.")
         comps.append({"name": name, "weight": w, "must_have": bool(c.get("must_have", False)), "description": desc})
+    if len(comps) > 8:
+        raise ToolError(f"{len(comps)} job-related competencies after screening; max 8 — a 45-minute loop can't rate more. Merge or drop the lowest-weighted.")
     if len(comps) < 3:
         raise ToolError("Fewer than 3 usable competencies after removing non-job-related items: " + "; ".join(r["reason"] for r in rejected))
     total_w = sum(c["weight"] for c in comps)
@@ -304,6 +347,39 @@ def build_scorecard(role: str, competencies: list[dict], interviewers: list[str]
     }
 
 
+def _score_one(per_comp: dict, w: dict, musts: list[str], bar: float, scale_max: int) -> dict:
+    comp_rows, weighted, covered_w = {}, 0.0, 0.0
+    disagreements, must_fail, uncovered = [], [], []
+    for comp, wt in w.items():
+        pairs = per_comp.get(comp, [])
+        vals = [v for _, v in pairs]
+        if not vals:
+            uncovered.append(comp)
+            comp_rows[comp] = {"mean": None, "raters": 0, "spread": None}
+            continue
+        mean = statistics.mean(vals)
+        spread = max(vals) - min(vals)
+        comp_rows[comp] = {"mean": round(mean, 2), "raters": len(vals), "spread": spread, "scores": vals, "by_rater": dict(pairs)}
+        weighted += wt * mean
+        covered_w += wt
+        if spread >= 1.5:
+            disagreements.append({"competency": comp, "scores": vals, "by_rater": dict(pairs), "spread": spread})
+        if comp in musts and mean < bar:
+            must_fail.append({"competency": comp, "mean": round(mean, 2), "bar": bar})
+    score = round(100 * weighted / (covered_w * scale_max), 1) if covered_w else 0.0
+    if must_fail:
+        decision = "no hire (must-have below bar)"
+    elif score >= 80:
+        decision = "strong hire"
+    elif score >= 65:
+        decision = "hire"
+    elif score >= 50:
+        decision = "no hire unless a must-have is a 4 and the gap is coachable"
+    else:
+        decision = "no hire"
+    return {"score": score, "decision": decision, "comp_rows": comp_rows, "disagreements": disagreements, "must_fail": must_fail, "uncovered": uncovered, "covered_w": covered_w}
+
+
 @AGENT.tool
 def score_candidates(candidates: list[dict], weights: dict, must_haves: list[str] | None = None, scale_max: int = 4) -> dict:
     """Compute weighted candidate scores (0-100), must-have bar failures, inter-rater disagreement and interviewer leniency, then rank and decide.
@@ -337,7 +413,7 @@ def score_candidates(candidates: list[dict], weights: dict, must_haves: list[str
         if not isinstance(c, dict) or not isinstance(c.get("ratings"), dict) or not c["ratings"]:
             raise ToolError(f"candidate #{i} needs 'ratings' as {{interviewer: {{competency: score}}}}.")
         name = str(c.get("name") or f"Candidate {i}")
-        per_comp: dict[str, list[float]] = defaultdict(list)
+        per_comp: dict[str, list[tuple[str, float]]] = defaultdict(list)
         for rater, scores in c["ratings"].items():
             if not isinstance(scores, dict):
                 raise ToolError(f"{name}: ratings for {rater} must be {{competency: score}}.")
@@ -350,50 +426,52 @@ def score_candidates(candidates: list[dict], weights: dict, must_haves: list[str
                     raise ToolError(f"{name}/{rater}/{comp}: score must be a number.") from None
                 if not 1 <= sv <= scale_max:
                     raise ToolError(f"{name}/{rater}/{comp}: score {s} outside 1-{scale_max}.")
-                per_comp[comp].append(sv)
+                per_comp[comp].append((str(rater), sv))
                 rater_scores[str(rater)].append(sv)
-        comp_rows, weighted, covered_w = {}, 0.0, 0.0
-        disagreements, must_fail, uncovered = [], [], []
-        for comp, wt in w.items():
-            vals = per_comp.get(comp, [])
-            if not vals:
-                uncovered.append(comp)
-                comp_rows[comp] = {"mean": None, "raters": 0, "spread": None}
-                continue
-            mean = statistics.mean(vals)
-            spread = max(vals) - min(vals)
-            comp_rows[comp] = {"mean": round(mean, 2), "raters": len(vals), "spread": spread, "scores": vals}
-            weighted += wt * mean
-            covered_w += wt
-            if spread >= 1.5:
-                disagreements.append({"competency": comp, "scores": vals, "spread": spread})
-            if comp in musts and mean < bar:
-                must_fail.append({"competency": comp, "mean": round(mean, 2), "bar": bar})
-        score = round(100 * weighted / (covered_w * scale_max), 1) if covered_w else 0.0
-        if must_fail:
-            decision = "no hire (must-have below bar)"
-        elif score >= 80:
-            decision = "strong hire"
-        elif score >= 65:
-            decision = "hire"
-        elif score >= 50:
-            decision = "no hire unless a must-have is a 4 and the gap is coachable"
-        else:
-            decision = "no hire"
-        single = [k for k, v in comp_rows.items() if v["raters"] == 1]
-        rows.append({"name": name, "weighted_score": score, "decision": decision, "by_competency": comp_rows, "must_have_failures": must_fail, "disagreements": disagreements, "uncovered": uncovered, "single_rater": single, "coverage_pct": pct(covered_w, tot_w)})
+        res = _score_one(per_comp, w, musts, bar, scale_max)
+        # Sensitivity: does the decision hinge on one interviewer? Recompute without each rater.
+        sensitivity = []
+        for rater in c["ratings"]:
+            sub = {k: [(r, v) for r, v in vals if r != str(rater)] for k, vals in per_comp.items()}
+            alt = _score_one(sub, w, musts, bar, scale_max)
+            sensitivity.append({"without": str(rater), "weighted_score": alt["score"], "decision": alt["decision"], "flips": alt["decision"] != res["decision"]})
+        single = [k for k, v in res["comp_rows"].items() if v["raters"] == 1]
+        rows.append(
+            {
+                "name": name,
+                "weighted_score": res["score"],
+                "decision": res["decision"],
+                "by_competency": res["comp_rows"],
+                "must_have_failures": res["must_fail"],
+                "disagreements": res["disagreements"],
+                "uncovered": res["uncovered"],
+                "single_rater": single,
+                "coverage_pct": pct(res["covered_w"], tot_w),
+                "rater_sensitivity": sensitivity,
+                "decision_hinges_on": [x["without"] for x in sensitivity if x["flips"]],
+            }
+        )
     overall_mean = statistics.mean([s for v in rater_scores.values() for s in v]) if rater_scores else 0
-    leniency = {r: {"mean": round(statistics.mean(v), 2), "delta_vs_panel": round(statistics.mean(v) - overall_mean, 2), "n": len(v)} for r, v in rater_scores.items()}
-    lenient = [r for r, v in leniency.items() if abs(v["delta_vs_panel"]) >= 0.5 and v["n"] >= 3]
+    # Leniency is judged against the MEDIAN interviewer: one harsh outlier drags the panel mean
+    # down and would otherwise make every normal rater look lenient.
+    rater_means = {r: statistics.mean(v) for r, v in rater_scores.items()}
+    median_rater = statistics.median(rater_means.values()) if rater_means else 0
+    leniency = {
+        r: {"mean": round(m, 2), "delta_vs_panel": round(m - overall_mean, 2), "delta_vs_median_rater": round(m - median_rater, 2), "n": len(rater_scores[r])}
+        for r, m in rater_means.items()
+    }
+    lenient = [r for r, v in leniency.items() if abs(v["delta_vs_median_rater"]) >= 0.5 and v["n"] >= 3] if len(rater_means) >= 3 else []
     ranked = sorted(rows, key=lambda r: (bool(r["must_have_failures"]), -r["weighted_score"]))
     agenda = []
     for r in rows:
         for f in r["must_have_failures"]:
             agenda.append(f"{r['name']}: must-have '{f['competency']}' averaged {f['mean']} (< {bar}) — no hire unless the panel names contrary evidence")
         for d in r["disagreements"]:
-            agenda.append(f"{r['name']}: '{d['competency']}' rated {d['scores']} — each rater states the evidence, then re-rate")
+            agenda.append(f"{r['name']}: '{d['competency']}' rated " + ", ".join(f"{k} {v:g}" for k, v in d["by_rater"].items()) + " — each rater states the evidence, then re-rate")
+        if r["decision_hinges_on"]:
+            agenda.append(f"{r['name']}: decision ({r['decision']}) changes if {', '.join(r['decision_hinges_on'])}'s ratings are removed — settle their evidence first")
     if lenient:
-        agenda.append("rater calibration: " + ", ".join(f"{r} averages {leniency[r]['delta_vs_panel']:+.2f} vs panel" for r in lenient))
+        agenda.append("rater calibration: " + ", ".join(f"{r} averages {leniency[r]['delta_vs_median_rater']:+.2f} vs the median interviewer" for r in lenient))
     top = ranked[0]
     return {
         "scale_max": scale_max,
@@ -427,9 +505,10 @@ def check_feedback_bias(feedback: str, interviewer: str = "") -> dict:
     require_text(feedback, "feedback", max_chars=30_000)
     sents = text.sentences(feedback)
     n = len(sents) or 1
-    evidence = [s for s in sents if EVIDENCE_RE.search(s)]
+    # A sentence that reports a protected fact ("she mentioned she has two kids") is not job evidence.
+    evidence = [s for s in sents if EVIDENCE_RE.search(s) and not scan_lexicon(s, PROTECTED_PROXIES, PROXY_SKIP)]
     opinion_only = [s for s in sents if OPINION_RE.search(s) and not EVIDENCE_RE.search(s)]
-    protected = scan_lexicon(feedback, PROTECTED_PROXIES)
+    protected = scan_lexicon(feedback, PROTECTED_PROXIES, PROXY_SKIP)
     vague = scan_lexicon(feedback, VAGUE)
     rating_mentions = re.findall(r"\b([1-5])\s*(?:/\s*[45]|out of [45])\b|\b(?:rating|score|rate)\D{0,10}([1-5])\b", feedback, re.I)
     ev_ratio = pct(len(evidence), n)

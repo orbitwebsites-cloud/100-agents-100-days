@@ -6,7 +6,7 @@ import re
 
 from ...core import Agent, ToolError
 from ...lib import text as textlib
-from ._common import SCOPE_NOTE, check_rows, check_text, to_float
+from ._common import SCOPE_NOTE_PRIVACY as SCOPE_NOTE, check_rows, check_text, to_float
 
 AGENT = Agent(
     slug="privacy-policy",
@@ -65,10 +65,14 @@ AGENT = Agent(
        precise geolocation, sale/sharing for ads).
     2. **Determine applicable laws.** Call `privacy_policy__check_applicability` with company
        location, user locations, revenue, consumer counts, data-sale/share status, and audience age.
-       It applies the thresholds (CCPA: > $25M revenue as adjusted, or 100k+ consumers/households,
-       or ≥ 50% revenue from selling/sharing PI; GDPR: EU establishment or offering to / monitoring
+       It applies the thresholds (CCPA: > $26,625,000 revenue as CPI-adjusted for 2025-26, or
+       buying/selling/sharing the PI of 100k+ consumers/households — collecting alone does not
+       count — or ≥ 50% revenue from selling/sharing PI; CalOPPA: any commercial site collecting
+       PII from Californians, no threshold; GDPR: EU establishment or offering to / monitoring
        EU residents; COPPA: directed to or actual knowledge of under-13s; other US states at their
-       consumer thresholds) and returns the regimes in force, with what each one adds.
+       consumer thresholds) and returns the regimes in force, with what each one adds, plus
+       `not_triggered_notes` explaining near-misses. Say plainly which laws do NOT apply and why —
+       over-applying CCPA to a small startup is as wrong as missing GDPR.
     3. **Generate the section checklist.** Call `privacy_policy__required_sections` with the
        regimes and inventory flags (children, sensitive data, sale/share, automated decisions,
        international transfers). It returns every required disclosure per regime with the source
@@ -97,6 +101,11 @@ AGENT = Agent(
       purposes, whether sold/shared, retention per category, rights (know, delete, correct, opt-out
       of sale/sharing, limit use of sensitive PI, non-discrimination), "Do Not Sell or Share" link,
       GPC signal honouring, 12-month lookback, metrics for large businesses.
+    - **CalOPPA (Cal. Bus. & Prof. Code §22575):** categories of PII and third parties, how users
+      review/request changes, how changes are notified, effective date, how you respond to Do Not
+      Track signals, and whether third parties track users across sites.
+    - **Cookies (EU/UK):** non-essential analytics/ad cookies and SDKs need prior opt-in consent
+      (ePrivacy Art. 5(3) / PECR), so "legitimate interests" is not the basis for them.
     - **COPPA:** verifiable parental consent, what is collected from children, parental rights;
       no behavioural ads to under-13s.
     - **Lawful basis heuristic:** account/service delivery → contract; security/fraud/analytics
@@ -144,7 +153,8 @@ AGENT = Agent(
 DATA_CATEGORIES: list[tuple[str, str, bool, bool]] = [
     # key, regex, gdpr_special, cpra_sensitive
     ("government_id", r"ssn|social security|passport|driver'?s? licen[cs]e|national id|tax id|ein\b", False, True),
-    ("financial", r"credit card|debit card|card number|bank account|iban|routing|payment (?:details|information|info)|billing|stripe|paypal|transaction", False, True),
+    ("financial_account", r"(?<!last 4 digits of )(?:full )?(?:credit|debit) card numbers?|card number(?!s? (?:is|are) not)|bank account|iban|routing number|account number|cvv|cvc", False, True),
+    ("payment_transaction", r"payment (?:details|information|info)|billing|stripe|paypal|transaction|card brand|last (?:4|four) digits|invoice", False, False),
     ("precise_location", r"gps|precise (?:geo)?location|lat(?:itude)?/?long|coordinates|geolocation", False, True),
     ("coarse_location", r"\blocation\b|city|country|postal code|zip code|region|time ?zone", False, False),
     ("health", r"health|medical|diagnos|prescription|symptom|fitness data|heart rate|mental|disability|pregnan", True, True),
@@ -157,8 +167,8 @@ DATA_CATEGORIES: list[tuple[str, str, bool, bool]] = [
     ("credentials", r"password|passcode|pin\b|security question|login credentials|account credentials", False, True),
     ("communications_content", r"messages?|chat|emails? content|contents? of (?:mail|messages)|dm|conversation|call recording", False, True),
     ("children", r"child|children|minor|under (?:13|16|18)|kid|student|parent", False, False),
-    ("contact", r"\bemail\b|e-mail|phone|mobile number|telephone|address|contact", False, False),
-    ("identity", r"\bname\b|first name|last name|username|user ?name|date of birth|dob|birthday|age|gender|photo|avatar|profile picture", False, False),
+    ("contact", r"\bemail\b|e-mail|phone|mobile number|telephone|(?<!ip )(?<!mac )\baddress|contact", False, False),
+    ("identity", r"\bname\b|first name|last name|username|user ?name|date of birth|\bdob\b|birthday|\bage\b|gender|photo|avatar|profile picture", False, False),
     ("device_network", r"ip address|\bip\b|device id|idfa|gaid|advertising id|mac address|user agent|browser|operating system|device (?:type|model|information)", False, False),
     ("usage_analytics", r"analytics|usage|events?|clicks?|page views?|session|telemetry|crash|logs?|behavio(?:u)?r|interactions?|features? used", False, False),
     ("cookies_tracking", r"cookie|pixel|tracking|beacon|tag manager|fingerprint(?:ing)?|local storage", False, False),
@@ -170,7 +180,7 @@ PURPOSE_BASIS: list[tuple[str, str, str]] = [
     (r"account|login|sign ?in|authenticat|deliver|provide|service|order|fulfil|support|billing|payment", "contract (Art. 6(1)(b))", "necessary to provide the service you asked for"),
     (r"fraud|security|abuse|protect|safety|debug|crash|reliab", "legitimate interests (Art. 6(1)(f)) — security", "keeping the service secure"),
     (r"analytics|improve|product research|usage|measure|performance", "legitimate interests (Art. 6(1)(f)) — product improvement; consent if via third-party cookies/SDKs", "understanding how the service is used"),
-    (r"marketing|newsletter|promot|advertis|ads?\b|retarget|personali[sz]ed offers", "consent (Art. 6(1)(a)) — and CPRA opt-out of sale/sharing", "marketing"),
+    (r"marketing|newsletter|promot|advertis|ads?\b|retarget|personali[sz]ed offers", "consent (Art. 6(1)(a)) for marketing email (legitimate interests only for the ePrivacy 'soft opt-in' to existing customers); ad-network targeting is also CPRA 'sharing'", "marketing"),
     (r"tax|legal|regulat|comply|record[- ]?keeping|kyc|aml", "legal obligation (Art. 6(1)(c))", "meeting legal requirements"),
     (r"recruit|hiring|employ|payroll", "contract / legal obligation (employment context)", "employment administration"),
 ]
@@ -198,7 +208,12 @@ def classify_data_inventory(data_items: list[dict]) -> dict:
         if not cats:
             cats = ["other"]
         gdpr_special = any(sp for k, _, sp, _ in DATA_CATEGORIES if k in cats)
-        cpra_sens = any(cs for k, _, _, cs in DATA_CATEGORIES if k in cats)
+        sens_cats = [k for k, _, _, cs in DATA_CATEGORIES if cs and k in cats]
+        item_notes = []
+        if "communications_content" in sens_cats and re.search(r"support|sent to us|to us\b|contact form|feedback|to the company", d + " " + purpose, re.I):
+            sens_cats.remove("communications_content")  # CPRA: message contents are sensitive only when the business is NOT the intended recipient
+            item_notes.append("messages addressed to you are not CPRA 'sensitive' (you are the intended recipient); user-to-user messages would be")
+        cpra_sens = bool(sens_cats)
         bases = []
         for rx, basis, plain in PURPOSE_BASIS:
             if re.search(rx, purpose, re.I):
@@ -216,6 +231,8 @@ def classify_data_inventory(data_items: list[dict]) -> dict:
             sensitive.append(d)
         if "children" in cats:
             item_flags.append("children's data — COPPA (under 13) / GDPR Art. 8 age of consent (13-16 by member state); parental consent flow")
+        if "cookies_tracking" in cats or re.search(r"google analytics|mixpanel|meta pixel|facebook pixel|hotjar|segment|amplitude", d + " " + shared, re.I):
+            item_flags.append("non-essential cookies/SDKs — prior opt-in consent for EU/UK users (ePrivacy Art. 5(3) / PECR) via a consent banner; list them in a cookie notice")
         if "precise_location" in cats:
             item_flags.append("precise geolocation — just-in-time prompt and opt-in required on mobile platforms")
         if "biometric" in cats:
@@ -230,7 +247,7 @@ def classify_data_inventory(data_items: list[dict]) -> dict:
                 if r.strip():
                     recipients.add(r.strip())
         flags.update(item_flags)
-        out.append({"data": d, "categories": cats, "gdpr_special_category": gdpr_special, "cpra_sensitive": cpra_sens, "lawful_bases": bases, "shared_with": shared or None, "retention": retention or None, "flags": item_flags})
+        out.append({"data": d, "categories": cats, "gdpr_special_category": gdpr_special, "cpra_sensitive": cpra_sens, "lawful_bases": bases, "shared_with": shared or None, "retention": retention or None, "flags": item_flags, "notes": item_notes})
     needs_dpia = bool(special) or any("children" in o["categories"] or "precise_location" in o["categories"] for o in out) or len(out) >= 15
     return {
         "items": out,
@@ -263,18 +280,19 @@ EU_EEA = {"eu", "eea", "europe", "european union", "germany", "france", "spain",
 
 
 @AGENT.tool
-def check_applicability(company_country: str, user_regions: list[str], annual_revenue_usd: float = 0, consumers_per_year: int = 0, sells_or_shares_data: bool = False, revenue_pct_from_data_sales: float = 0, audience: str = "general", processes_sensitive_data: bool = False) -> dict:
+def check_applicability(company_country: str, user_regions: list[str], annual_revenue_usd: float = 0, consumers_per_year: int = 0, sells_or_shares_data: bool = False, revenue_pct_from_data_sales: float = 0, audience: str = "general", processes_sensitive_data: bool = False, buys_personal_data: bool = False) -> dict:
     """Decide which privacy laws apply (GDPR/UK GDPR, CCPA/CPRA + other US states, COPPA, PIPEDA, LGPD, etc.) from real thresholds.
 
     Args:
         company_country: Where the company is established, e.g. "US", "Germany", "UK".
         user_regions: Regions/countries/states where users are located, e.g. ["US", "California", "EU", "UK", "Brazil"].
         annual_revenue_usd: Gross annual revenue in USD (for US state thresholds).
-        consumers_per_year: Number of consumers/households whose data you handle per year (US thresholds).
+        consumers_per_year: Number of consumers/households (in the relevant US state) whose personal data you collect or process per year. For CCPA this count only triggers the law if you buy, sell or share their data.
         sells_or_shares_data: True if personal data is sold or shared for cross-context behavioural advertising (incl. ad pixels/SDKs).
         revenue_pct_from_data_sales: Share of revenue derived from selling/sharing personal data (0-100).
         audience: "general", "children" (under 13), "teens" (13-17) or "mixed".
         processes_sensitive_data: True if health, biometric, precise location, financial account or similar data is processed.
+        buys_personal_data: True if you buy personal data (lead lists, data brokers) — counts toward the CCPA 100,000-consumer test.
     """
     company = str(company_country).strip().lower()
     if not company:
@@ -291,12 +309,18 @@ def check_applicability(company_country: str, user_regions: list[str], annual_re
         raise ToolError("audience must be general, children, teens or mixed.")
     regimes = []
 
-    def has(*names: str) -> bool:
-        return any(any(n in r for n in names) for r in regions)
+    notes: list[str] = []
+    if "ca" in regions:  # "CA" is California in US usage, Canada in ISO codes — never guess silently
+        regions = [("california" if r == "ca" else r) for r in regions]
+        notes.append("'CA' was read as California. If you meant Canada, pass 'Canada'.")
 
-    us_users = has("us", "united states", "usa", "america") or any(s in regions for s in US_STATE_LAWS)
-    eu_users = any(r in EU_EEA or "eu" == r for r in regions) or has("europe")
-    uk_users = has("uk", "united kingdom", "england", "britain", "scotland", "wales")
+    def has(*names: str) -> bool:
+        # whole-word matching: 'california' must not match Canada's 'ca', 'austria' must not match 'us'/'au'
+        return any(any(re.search(rf"(?<![a-z]){re.escape(n)}(?![a-z])", r) for n in names) for r in regions)
+
+    us_users = has("us", "u.s.", "united states", "usa") or any(s in regions for s in US_STATE_LAWS)
+    eu_users = any(r in EU_EEA for r in regions) or has("eu", "eea", "europe", "european union") or any(has(c) for c in EU_EEA)
+    uk_users = has("uk", "united kingdom", "england", "britain", "scotland", "wales", "northern ireland")
     if company in EU_EEA or eu_users:
         regimes.append({"regime": "GDPR (EU/EEA)", "why": "EU establishment" if company in EU_EEA else "offering services to or monitoring EU/EEA residents (Art. 3(2))", "adds": "Art. 13/14 disclosures, lawful basis per purpose, DPO assessment, EU representative if no EU establishment (Art. 27), transfer mechanism (SCCs/DPF), 1-month rights deadline, records of processing"})
     if company in {"uk", "united kingdom"} or uk_users:
@@ -305,7 +329,7 @@ def check_applicability(company_country: str, user_regions: list[str], annual_re
     if us_users:
         for state, law in US_STATE_LAWS.items():
             named = state in regions or "california" in regions and state == "california"
-            all_us = has("us", "united states", "usa", "america")
+            all_us = has("us", "u.s.", "united states", "usa")
             if not (named or all_us):
                 continue
             meets = False
@@ -313,8 +337,10 @@ def check_applicability(company_country: str, user_regions: list[str], annual_re
             if state == "california":
                 if rev > law["revenue"]:
                     meets, reasons = True, reasons + [f"revenue > ${law['revenue']:,}"]
-                if consumers_per_year >= law["consumers"]:
-                    meets, reasons = True, reasons + [f"≥ {law['consumers']:,} consumers/households"]
+                if consumers_per_year >= law["consumers"] and (sells_or_shares_data or buys_personal_data):
+                    meets, reasons = True, reasons + [f"buys/sells/shares PI of ≥ {law['consumers']:,} consumers/households"]
+                elif consumers_per_year >= law["consumers"]:
+                    notes.append(f"CCPA: {consumers_per_year:,} California consumers alone does not meet §1798.140(d)(1)(B) — that prong counts consumers whose PI you buy, sell or share. Adding an ad pixel or selling data would trigger it.")
                 if sells_or_shares_data and share_pct >= 50:
                     meets, reasons = True, reasons + ["≥ 50% revenue from selling/sharing"]
             elif state == "utah":
@@ -331,15 +357,18 @@ def check_applicability(company_country: str, user_regions: list[str], annual_re
                     meets, reasons = True, ["≥ 25k consumers + revenue from sale"]
             if meets:
                 state_hits.append({"law": law["name"], "state": state.title(), "because": "; ".join(reasons), "note": law["note"]})
+    ca_users = "california" in regions or has("california")
+    if ca_users:
+        regimes.append({"regime": "CalOPPA (California)", "why": "commercial website/online service collecting personally identifiable information from California residents — no revenue or volume threshold (Cal. Bus. & Prof. Code §22575)", "adds": "conspicuously posted policy with: categories of PII collected and third parties it is shared with, how users can review/request changes (if offered), how material changes are notified, effective date, how you respond to browser Do Not Track signals, and whether third parties track users across sites"})
     if state_hits:
         regimes.append({"regime": "US state privacy laws", "why": ", ".join(f"{s['law']} ({s['because']})" for s in state_hits), "adds": "notice at collection with statutory categories, rights to know/delete/correct/opt-out, 45-day response, 'Do Not Sell or Share' link + GPC (CA), universal opt-out signals (CO/CT/others), data protection assessments for targeted ads/sale/sensitive data", "states": state_hits})
     elif us_users:
-        regimes.append({"regime": "US — below state thresholds (verify)", "why": f"revenue ${rev:,.0f}, {consumers_per_year:,} consumers, sells/shares={sells_or_shares_data}", "adds": "FTC Act §5 still applies: the policy must be accurate; state breach-notification laws apply everywhere; CalOPPA requires a posted policy for any site collecting PI from Californians"})
+        regimes.append({"regime": "US — below state thresholds (verify)", "why": f"revenue ${rev:,.0f}, {consumers_per_year:,} consumers, sells/shares={sells_or_shares_data}, buys={buys_personal_data}", "adds": "no CCPA/state-law rights obligations yet; FTC Act §5 still applies (the policy must be accurate); state breach-notification laws apply everywhere"})
     if aud in {"children", "mixed"} or (aud == "teens" and us_users):
         regimes.append({"regime": "COPPA (US, under 13)" if aud != "teens" else "Teen-related rules (CPRA opt-in for under-16 sale; state age-appropriate design codes)", "why": f"audience = {aud}", "adds": "verifiable parental consent, direct notice to parents, no behavioural ads to children, data minimisation, deletion on request" if aud != "teens" else "opt-in consent before selling/sharing data of 13-15s (CPRA); check state minors' codes"})
-    if has("canada", "ca"):
+    if has("canada", "quebec", "ontario", "british columbia", "alberta"):
         regimes.append({"regime": "PIPEDA (Canada) + Quebec Law 25", "why": "Canadian users", "adds": "meaningful consent, privacy officer named, breach reporting, Quebec: French-language notice and privacy impact assessments"})
-    if has("brazil", "br"):
+    if has("brazil", "brasil", "br"):
         regimes.append({"regime": "LGPD (Brazil)", "why": "Brazilian users", "adds": "10 legal bases, DPO (encarregado) named, ANPD as regulator, rights similar to GDPR"})
     if has("australia", "au"):
         regimes.append({"regime": "Privacy Act 1988 (Australia)", "why": "Australian users", "adds": "APP 1 open and transparent policy, APP 5 notification at collection, cross-border disclosure statement"})
@@ -354,6 +383,7 @@ def check_applicability(company_country: str, user_regions: list[str], annual_re
         "regimes": regimes,
         "regime_names": [r["regime"] for r in regimes],
         "additional_obligations": extras,
+        "not_triggered_notes": notes,
         "inputs": {"company_country": company, "user_regions": regions, "annual_revenue_usd": rev, "consumers_per_year": consumers_per_year, "sells_or_shares_data": sells_or_shares_data, "audience": aud},
         "verdict": ("Applies: " + "; ".join(r["regime"] for r in regimes)) if regimes else "No specific regime matched — an accurate policy is still required (FTC Act / consumer-protection law)",
         "scope_note": SCOPE_NOTE + " Thresholds are as widely published (e.g. CCPA revenue threshold is CPI-adjusted) — verify current figures.",
@@ -366,7 +396,7 @@ REQUIRED: dict[str, list[tuple[str, str, str]]] = {
         ("identity", "Controller / business identity and contact details", r"contact us|contact (?:information|details)|who we are|data controller|we are [A-Z][\w ]+(?:,|\.| inc| ltd| llc| gmbh)|our address|@[\w.-]+\.\w{2,}"),
         ("effective_date", "Effective / last-updated date", r"effective (?:date|as of)|last (?:updated|modified|revised)|updated on|\b20\d{2}-\d{2}-\d{2}\b|(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{1,2},? 20\d{2}"),
         ("categories", "Categories of personal data collected", r"(?:information|data) we collect|categories of (?:personal )?(?:information|data)|what we collect|personal (?:data|information) (?:we|that we) (?:collect|process)"),
-        ("sources", "Sources of the data (you, devices, third parties)", r"sources?|collect(?:ed)? (?:directly )?from you|automatically collect|from third parties|information from other sources"),
+        ("sources", "Sources of the data (you, devices, third parties)", r"sources?|collect\w*[^.]{0,40}?from (?:you|your (?:device|browser)|third parties|our (?:payment|partners|service))|directly from you|automatically collect|from third parties|information from other sources"),
         ("purposes", "Purposes of processing", r"how we use|why we (?:use|process|collect)|purposes?|use (?:your|the) (?:information|data) (?:to|for)"),
         ("recipients", "Recipients / who we share with", r"share|disclos|recipients?|service providers?|processors?|third parties"),
         ("retention", "Retention periods or criteria", r"retain|retention|how long|keep (?:your|the) (?:information|data)|delete[sd]? (?:your|the) (?:data|information) (?:after|when)"),
@@ -398,6 +428,12 @@ REQUIRED: dict[str, list[tuple[str, str, str]]] = {
         ("retention_per_category", "Retention period per category", r"retain .{0,80}(?:category|categories)|for each category"),
         ("financial_incentive", "Notice of financial incentive (if loyalty/discounts for data)", r"financial incentive|loyalty|discount|reward"),
     ],
+    "caloppa": [
+        ("dnt", "How you respond to browser Do Not Track signals (Cal. Bus. & Prof. Code §22575(b)(5))", r"do not track|\bdnt\b"),
+        ("third_party_tracking", "Whether third parties may collect PII about users' activity across other sites over time (§22575(b)(6))", r"third[- ]part(?:y|ies)[^.]{0,160}(?:across|over time|other (?:websites|sites|apps|services))|cross-(?:site|context)"),
+        ("review_changes", "How users can review and request changes to their PII, if offered (§22575(b)(2))", r"(?:review|access|update|correct|change|edit)[^.]{0,60}(?:your )?(?:personal )?(?:information|data|account|profile)"),
+        ("notify_changes", "How you notify users of material changes (§22575(b)(3))", r"(?:notify|notice|inform|email)[^.]{0,80}(?:changes?|updates?)|(?:changes?|updates?)[^.]{0,80}(?:notify|email|notice)"),
+    ],
     "coppa": [
         ("parental_consent", "Verifiable parental consent mechanism", r"parental consent|parent'?s? (?:consent|permission)|verifiable"),
         ("parent_rights", "Parents' rights to review/delete and refuse further collection", r"parents? (?:may|can) (?:review|request|delete|refuse)|parents?'? rights"),
@@ -405,7 +441,7 @@ REQUIRED: dict[str, list[tuple[str, str, str]]] = {
         ("operators", "Operators collecting data through the service", r"operators?|third[- ]party (?:services|sdks?) .{0,60}child"),
     ],
 }
-REGIME_ALIASES = {"gdpr": "gdpr", "uk gdpr": "gdpr", "eu": "gdpr", "ccpa": "ccpa", "cpra": "ccpa", "california": "ccpa", "us state": "ccpa", "coppa": "coppa", "children": "coppa"}
+REGIME_ALIASES = {"caloppa": "caloppa", "gdpr": "gdpr", "uk gdpr": "gdpr", "eu": "gdpr", "ccpa": "ccpa", "cpra": "ccpa", "california": "ccpa", "us state": "ccpa", "coppa": "coppa", "children": "coppa"}
 
 
 @AGENT.tool
@@ -413,7 +449,7 @@ def required_sections(regimes: list[str], policy_text: str = "", sells_or_shares
     """Build the required-disclosure checklist for the regimes in force and (optionally) mark which an existing policy covers.
 
     Args:
-        regimes: Regime names, e.g. ["GDPR", "CCPA", "COPPA"]. Core sections are always included.
+        regimes: Regime names, e.g. ["GDPR", "CCPA", "CalOPPA", "COPPA"] (pass the regime_names from check_applicability). Core sections are always included.
         policy_text: Existing policy text to audit (optional; up to 300k chars).
         sells_or_shares: Whether PI is sold or shared for targeted advertising (adds opt-out sections).
         has_sensitive_data: Whether special-category / sensitive PI is processed.
@@ -426,6 +462,8 @@ def required_sections(regimes: list[str], policy_text: str = "", sells_or_shares
     unknown = []
     for r in regimes:
         rl = str(r).strip().lower()
+        if "below state" in rl:  # check_applicability label for "no state privacy law yet" — nothing to add
+            continue
         hit = next((v for k, v in REGIME_ALIASES.items() if k in rl), None)
         if hit:
             keys.add(hit)
@@ -435,7 +473,7 @@ def required_sections(regimes: list[str], policy_text: str = "", sells_or_shares
     if policy_text and policy_text.strip():
         body = check_text(policy_text, "policy_text")
     checklist, missing, present = [], [], 0
-    for regime in ("core", "gdpr", "ccpa", "coppa"):
+    for regime in ("core", "gdpr", "ccpa", "caloppa", "coppa"):
         if regime not in keys:
             continue
         for key, label, rx in REQUIRED[regime]:
@@ -488,7 +526,7 @@ VAGUE_PHRASES = [
     (r"(?:other|various|certain|some) (?:information|data|purposes|parties)", "'other/various/certain' hides specifics"),
     (r"we do not sell(?! (?:or share|your))", "'do not sell' without 'or share' — CPRA covers sharing for targeted ads too"),
     (r"by using (?:our|this|the) (?:site|service|app|website),? you (?:consent|agree)", "implied consent by use is not valid consent under GDPR"),
-    (r"automatically", "say what is collected automatically (IP, device, cookies)"),
+    (r"automatically(?![^.]{0,200}(?:ip address|device|browser|cookies|usage|log))", "say what is collected automatically (IP, device, cookies)"),
 ]
 
 
@@ -517,6 +555,9 @@ def lint_policy_text(policy_text: str, target_grade: float = 10.0) -> dict:
         "named_processors_or_categories": bool(re.search(r"such as|including|for example|e\.g\.|namely|(?:stripe|google|amazon|aws|microsoft|mailchimp|hubspot|salesforce|mixpanel|segment|firebase|cloudflare|intercom|zendesk)", body, re.I)),
     }
     missing_basics = [k for k, v in basics.items() if not v]
+    if basics["named_processors_or_categories"] and re.search(r"service providers?|processors?", body, re.I):
+        # recipients are named elsewhere, so a stray "third parties" is not an undefined category
+        findings = [f for f in findings if not f["fix"].startswith("'third parties' undefined")]
     long_sentences = [s[:140] for s in textlib.sentences(body) if len(textlib.words(s)) > 35][:5]
     passive = len(textlib.passive_sentences(body))
     score = 100

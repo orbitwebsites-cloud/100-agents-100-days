@@ -74,7 +74,9 @@ def test_keyword_coverage_maps_fields():
     assert out["missing"] == ["bike bottle cage"]
     assert out["backend_wasted_words"] == ["insulated"]
     # weights: primary 3 + 4 secondary × 2 + 3 long-tail × 1 = 14; exact 3+2+2+1 = 8, partial 2·0.5+2·0.5+1·0.5 = 2.5 → 75%
-    assert out["coverage_pct"] == 75.0
+    assert out["phrase_coverage_pct"] == 75.0
+    # indexed (word-level, how Amazon matches): everything but "bike bottle cage" (weight 1) → 13/14
+    assert out["coverage_pct"] == round(100 * 13 / 14, 1)
 
 
 def test_keyword_coverage_rejects_empty_keywords():

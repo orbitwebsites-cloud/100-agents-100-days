@@ -61,12 +61,18 @@ AGENT = Agent(
     1. **Anchor the numbers.** For every lift they report ("80 kg × 6"), call
        `fitness_coach__one_rep_max`. Use the tool's estimate (Epley/Brzycki mean) as the
        working 1RM; never trust a 1RM extrapolated from > 10 reps for programming — take the
-       tool's reliability flag seriously and prescribe a 3-5 rep test instead.
+       tool's reliability flag seriously and prescribe a 3-5 rep test instead. Work sets are
+       not rep maxes: for "5×5 at 100 kg" ask (or assume) how many reps were left in the tank
+       on the last set and pass `reps_in_reserve`; otherwise say the estimate is a floor.
     2. **Set the nutrition targets** when the goal involves body composition: call
        `fitness_coach__tdee_and_macros` with sex, age, height, weight, activity and goal. It
        applies Mifflin-St Jeor, the activity multiplier, the calorie delta for the requested
-       weekly change, protein/fat/carb splits and the safety floors. Present its flags
-       verbatim: an aggressive deficit is a decision the client makes knowingly or not at all.
+       weekly change, protein/fat/carb splits and the safety floors (1,200 kcal women /
+       1,500 kcal men; no deficit at all under BMI 18.5). Present its flags verbatim: an
+       aggressive deficit is a decision the client makes knowingly or not at all. When the tool
+       returns `safer_alternative`, lead with it as the recommendation and show the requested
+       target second, with the flags. Quote `weekly_change_kg` (what the target actually
+       delivers), not the rate the client asked for.
     3. **Choose the progression model** from training age: < 6 months → linear (add weight
        every session/week); 6-24 months → double progression for accessories and linear or
        5/3/1 for the main lifts; > 2 years → 5/3/1 or a block plan. Call
@@ -136,6 +142,8 @@ AGENT = Agent(
 )
 
 UNIT_STEP = {"kg": 2.5, "lb": 5.0}
+# Lifts that get the larger lower-body increment. Presses (bench, incline, chest, overhead, push) are upper body.
+LOWER_RE = re.compile(r"squat|deadlift|lunge|\bleg\b|hip thrust|thrust|\brdl\b|romanian|good morning|\bclean|snatch|step.?up|glute|calf|hack|sled")
 
 
 def _unit(unit: str) -> str:
@@ -148,37 +156,48 @@ def _unit(unit: str) -> str:
 
 
 @AGENT.tool
-def one_rep_max(weight: float, reps: int, unit: Literal["kg", "lb"] = "kg") -> dict:
+def one_rep_max(weight: float, reps: int, unit: Literal["kg", "lb"] = "kg", reps_in_reserve: int = 0) -> dict:
     """Estimate a one-rep max from a weight × reps set (Epley, Brzycki, Lombardi, O'Conner) with a %1RM table.
 
     Returns a working estimate (mean of Epley and Brzycki), all four formulas, a reliability flag
-    for high-rep sets, and training loads at 50-95% rounded to real plate increments.
+    for high-rep sets, and training loads at 50-95% rounded to real plate increments. Sets that
+    were not taken near failure (e.g. the last set of a 5×5) under-estimate the 1RM; pass
+    reps_in_reserve so the estimate uses reps + reps in reserve (RPE-style e1RM).
 
     Args:
         weight: Weight lifted for the set.
         reps: Reps completed with good form (1-30).
         unit: kg or lb (affects rounding: 2.5 kg / 5 lb).
+        reps_in_reserve: Reps the lifter could still have done on that set (0 = taken to failure / a true rep max; 1-3 is typical for the last set of a 5×5).
     """
     w = positive(weight, "weight", 1000)
     if not isinstance(reps, int) or not 1 <= reps <= 30:
         raise ToolError("reps must be an integer between 1 and 30")
+    if not isinstance(reps_in_reserve, int) or not 0 <= reps_in_reserve <= 5:
+        raise ToolError("reps_in_reserve must be an integer 0-5")
     u = _unit(unit)
     step = UNIT_STEP[u]
-    if reps == 1:
+    r = reps + reps_in_reserve  # reps the set was worth if taken to failure
+    if r == 1:
         est = w
         formulas = {"actual_single": w}
         reliability = "actual single — no estimate needed"
     else:
-        epley = w * (1 + reps / 30)
-        brzycki = w * 36 / (37 - reps)
-        lombardi = w * reps**0.1
-        oconner = w * (1 + 0.025 * reps)
+        epley = w * (1 + r / 30)
+        brzycki = w * 36 / (37 - r)
+        lombardi = w * r**0.1
+        oconner = w * (1 + 0.025 * r)
         formulas = {"epley": round(epley, 1), "brzycki": round(brzycki, 1), "lombardi": round(lombardi, 1), "oconner": round(oconner, 1)}
         est = (epley + brzycki) / 2
-        reliability = "good (≤ 5 reps)" if reps <= 5 else "fair (6-10 reps, ±5%)" if reps <= 10 else "poor (> 10 reps — test a 3-5RM before programming)"
+        reliability = "good (≤ 5 reps)" if r <= 5 else "fair (6-10 reps, ±5%)" if r <= 10 else "poor (> 10 reps — test a 3-5RM before programming)"
     table = {f"{p}%": round_to(est * p / 100, step) for p in (50, 60, 65, 70, 75, 80, 85, 90, 95)}
+    notes = []
+    if reps_in_reserve:
+        notes.append(f"Estimated as a {r}-rep max ({reps} reps + {reps_in_reserve} in reserve).")
+    elif reps >= 3:
+        notes.append("Assumes the set was a true rep max (taken to failure). If it was one of several work sets (e.g. 5×5), the real 1RM is higher — re-run with reps_in_reserve or treat this as a conservative floor.")
     return {
-        "input": f"{w:g} {u} × {reps}",
+        "input": f"{w:g} {u} × {reps}" + (f" @ {reps_in_reserve} RIR" if reps_in_reserve else ""),
         "estimated_1rm": round(est, 1),
         "estimated_1rm_rounded": round_to(est, step),
         "formulas": formulas,
@@ -186,6 +205,7 @@ def one_rep_max(weight: float, reps: int, unit: Literal["kg", "lb"] = "kg") -> d
         "training_max_90pct": round_to(est * 0.9, step),
         "percent_table": table,
         "unit": u,
+        "notes": notes,
         "verdict": f"Estimated 1RM ≈ {round_to(est, step):g} {u} ({reliability}).",
     }
 
@@ -219,7 +239,7 @@ def progression_plan(
         raise ToolError("weeks must be 1-24")
     u = _unit(unit)
     step = UNIT_STEP[u]
-    lower = bool(re.search(r"squat|deadlift|lunge|leg|hip|rdl|clean|thrust|press$", exercise.lower())) and not re.search(r"bench|overhead|shoulder|military", exercise.lower())
+    lower = bool(LOWER_RE.search(exercise.lower()))
     inc = increment or (2 * step if lower else step)
     if inc <= 0 or inc > orm:
         raise ToolError("increment must be > 0 and below the 1RM")
@@ -270,8 +290,12 @@ def progression_plan(
                 load = round_to(load + inc, step)
             else:
                 reps += 1
-    last = rows[-1]
-    end_load = last.get("load") or (last["sets"][-1]["load"] if "sets" in last else None)
+    def top(row: dict) -> float:
+        return row["sets"][-1]["load"] if "sets" in row else row["load"]
+
+    work_rows = [r for r in rows if r["type"] != "deload"] or rows
+    peak = max(top(r) for r in work_rows)
+    end_load = top(rows[-1])
     return {
         "exercise": exercise,
         "model": model,
@@ -279,13 +303,14 @@ def progression_plan(
         "one_rm": orm,
         "increment_per_step": inc,
         "weeks": rows,
-        "end_top_load": end_load,
+        "peak_top_set": peak,
+        "final_week_top_load": end_load,
         "rules": [
             "Missed reps twice in a row → repeat the load; three times → drop 10% and rebuild.",
             "Warm-up ramp: empty bar ×10, 50% ×5, 70% ×3, 85% ×1, then work sets.",
             "Deload weeks are not optional; skip one and the next block stalls.",
         ],
-        "summary": f"{model} plan for {exercise}: {weeks} weeks, {inc:g} {u} per step, top load ends at {end_load:g} {u}.",
+        "summary": f"{model} plan for {exercise}: {weeks} weeks, {inc:g} {u} per step, heaviest top set {peak:g} {u}" + (f"; final week is a deload at {end_load:g} {u}." if rows[-1]["type"] == "deload" else "."),
     }
 
 
@@ -305,7 +330,9 @@ def tdee_and_macros(
     """Compute BMR (Mifflin-St Jeor), TDEE, calorie target and protein/fat/carb grams with safety floors and flags.
 
     Applies the 7,700 kcal/kg rule for the requested weekly change, protein at 1.6-2.2 g/kg by goal,
-    fat at ~25% of calories (≥ 0.6 g/kg), carbs as the remainder; never returns under 1,200 kcal.
+    fat at ~25% of calories (≥ 0.6 g/kg), carbs as the remainder. Floors: 1,200 kcal (women) /
+    1,500 kcal (men); no deficit at all when BMI < 18.5. Aggressive requests (> 25% deficit or
+    > 1% bodyweight/week) also get a computed safer_alternative.
 
     Args:
         sex: male or female (biological sex for the BMR equation).
@@ -328,28 +355,80 @@ def tdee_and_macros(
         raise ToolError("weekly_change_kg must be between 0 and 2 (as a positive number)")
     bmr = 10 * w + 6.25 * h - 5 * age + (5 if sex == "male" else -161)
     tdee = bmr * ACTIVITY[activity]
-    rate = weekly_change_kg or {"maintain": 0.0, "lose": 0.5, "gain": 0.25}[goal]
-    delta_per_day = rate * 7700 / 7
-    if goal == "lose":
-        target = tdee - delta_per_day
-    elif goal == "gain":
-        target = tdee + delta_per_day
-    else:
-        target, rate = tdee, 0.0
+    bmi = w / (h / 100) ** 2
+    requested = weekly_change_kg or {"maintain": 0.0, "lose": 0.5, "gain": 0.25}[goal]
     flags = []
     floor = 1200 if sex == "female" else 1500
+    if goal == "lose" and bmi < 18.5:
+        # Underweight: no deficit is planned, whatever was asked for.
+        flags.append(f"BMI {bmi:.1f} is under 18.5 (underweight): weight loss is not planned. Target set to maintenance — please see a doctor or registered dietitian.")
+        goal_eff, rate = "maintain", 0.0
+    else:
+        goal_eff, rate = goal, (requested if goal != "maintain" else 0.0)
+    delta_per_day = rate * 7700 / 7
+    if goal_eff == "lose":
+        target = tdee - delta_per_day
+    elif goal_eff == "gain":
+        target = tdee + delta_per_day
+    else:
+        target = tdee
     if target < floor:
         flags.append(f"Target ({target:.0f} kcal) is below the {floor} kcal floor — raised to {floor}. Slow the rate instead.")
-        target = floor
+        target = float(floor)
+    if goal_eff == "lose":
+        rate = round(max(0.0, (tdee - target) * 7 / 7700), 2)  # the rate the (possibly floored) target actually delivers
+        delta_per_day = tdee - target
     deficit_pct = (tdee - target) / tdee * 100 if tdee else 0
-    if goal == "lose" and deficit_pct > 25:
+    aggressive = False
+    if goal_eff == "lose" and deficit_pct > 25:
+        aggressive = True
         flags.append(f"Deficit is {deficit_pct:.0f}% of TDEE (> 25%): expect strength and muscle loss and poor adherence. 15-20% is the sweet spot.")
-    if goal == "lose" and rate > 0.01 * w:
-        flags.append(f"{rate:g} kg/week is over 1% of bodyweight per week; cap at {0.01 * w:.2f} kg/week unless supervised.")
-    if goal == "gain" and delta_per_day > 500:
+    if goal_eff == "lose" and requested > 0.01 * w:
+        aggressive = True
+        flags.append(f"{requested:g} kg/week is over 1% of bodyweight per week; cap at {0.01 * w:.2f} kg/week unless supervised.")
+    if goal_eff == "gain" and delta_per_day > 500:
         flags.append("Surplus over 500 kcal/day mostly adds fat; 250-400 is the productive range.")
+    protein_g, fat_g, carbs_g, mflags = _macros(goal_eff, w, h, bmi, target)
+    flags += mflags
+    alternative = None
+    if aggressive:
+        alt_rate = min(0.01 * w, 0.20 * tdee * 7 / 7700)
+        alt_target = max(float(floor), tdee - alt_rate * 7700 / 7)
+        alt_rate = round((tdee - alt_target) * 7 / 7700, 2)
+        ap, af, ac, _ = _macros(goal_eff, w, h, bmi, alt_target)
+        alternative = {
+            "target_kcal": round(alt_target),
+            "weekly_change_kg": alt_rate,
+            "deficit_pct_of_tdee": round((tdee - alt_target) / tdee * 100, 1),
+            "macros_g": {"protein": round(ap), "fat": round(af), "carbs": round(ac)},
+            "why": "≤ 20% deficit and ≤ 1% bodyweight/week: the fastest rate that usually keeps strength while cutting.",
+        }
+    return {
+        "scope_note": "General guidance, not medical advice. See a doctor/dietitian for pregnancy, eating disorders, diabetes or other conditions.",
+        "bmr_kcal": round(bmr),
+        "tdee_kcal": round(tdee),
+        "activity_multiplier": ACTIVITY[activity],
+        "goal": goal_eff,
+        "requested_weekly_change_kg": requested if goal != "maintain" else 0.0,
+        "weekly_change_kg": rate,
+        "daily_delta_kcal": round(delta_per_day) if goal_eff != "maintain" else 0,
+        "target_kcal": round(target),
+        "deficit_pct_of_tdee": round(deficit_pct, 1) if goal_eff == "lose" else 0.0,
+        "bmi": round(bmi, 1),
+        "macros_g": {"protein": round(protein_g), "fat": round(fat_g), "carbs": round(carbs_g)},
+        "macros_pct": {"protein": round(100 * protein_g * 4 / target), "fat": round(100 * fat_g * 9 / target), "carbs": round(100 * carbs_g * 4 / target)},
+        "protein_g_per_kg": round(protein_g / w, 2),
+        "weeks_to_lose_5kg": round(5 / rate, 1) if goal_eff == "lose" and rate else None,
+        "safer_alternative": alternative,
+        "flags": flags,
+        "verdict": f"TDEE ≈ {tdee:.0f} kcal; target {target:.0f} kcal/day for {goal_eff}" + (f" at {rate:g} kg/week" if rate else "") + f" — P {protein_g:.0f} / F {fat_g:.0f} / C {carbs_g:.0f} g." + (" " + " ".join(flags) if flags else "") + (f" Safer option: {alternative['target_kcal']} kcal/day ≈ {alternative['weekly_change_kg']:g} kg/week." if alternative else ""),
+    }
+
+
+def _macros(goal: str, w: float, h: float, bmi: float, target: float) -> tuple[float, float, float, list[str]]:
+    """Protein by goal (lean-mass proxy when BMI ≥ 30), fat ≥ 0.6 g/kg and ~25% kcal, carbs fill the rest."""
+    flags = []
     protein_per_kg = {"lose": 2.0, "maintain": 1.6, "gain": 1.8}[goal]
-    bmi = w / (h / 100) ** 2
     protein_basis = w
     if bmi >= 30:
         protein_basis = 22 * (h / 100) ** 2  # lean-mass proxy: scale protein to a BMI-22 reference weight
@@ -361,24 +440,7 @@ def tdee_and_macros(
         if protein_g * 4 + fat_g * 9 > target:
             flags.append("Calorie target too low to fit protein and minimum fat — rate is too aggressive.")
     carbs_g = max(0.0, (target - protein_g * 4 - fat_g * 9) / 4)
-    return {
-        "scope_note": "General guidance, not medical advice. See a doctor/dietitian for pregnancy, eating disorders, diabetes or other conditions.",
-        "bmr_kcal": round(bmr),
-        "tdee_kcal": round(tdee),
-        "activity_multiplier": ACTIVITY[activity],
-        "goal": goal,
-        "weekly_change_kg": rate,
-        "daily_delta_kcal": round(delta_per_day) if goal != "maintain" else 0,
-        "target_kcal": round(target),
-        "deficit_pct_of_tdee": round(deficit_pct, 1) if goal == "lose" else 0.0,
-        "bmi": round(bmi, 1),
-        "macros_g": {"protein": round(protein_g), "fat": round(fat_g), "carbs": round(carbs_g)},
-        "macros_pct": {"protein": round(100 * protein_g * 4 / target), "fat": round(100 * fat_g * 9 / target), "carbs": round(100 * carbs_g * 4 / target)},
-        "protein_g_per_kg": round(protein_g / w, 2),
-        "weeks_to_lose_5kg": round(5 / rate, 1) if goal == "lose" and rate else None,
-        "flags": flags,
-        "verdict": f"TDEE ≈ {tdee:.0f} kcal; target {target:.0f} kcal/day for {goal}" + (f" at {rate:g} kg/week" if rate else "") + f" — P {protein_g:.0f} / F {fat_g:.0f} / C {carbs_g:.0f} g." + (" " + " ".join(flags) if flags else ""),
-    }
+    return protein_g, fat_g, carbs_g, flags
 
 
 # exercise keyword → (primary muscles, secondary muscles)
@@ -489,6 +551,31 @@ def weekly_volume_audit(sessions: list[dict], training_age: Literal["beginner", 
     }
 
 
+def _fewest_plates(per_side: float, avail: list[float]) -> list[float]:
+    """Heaviest loadable weight ≤ per_side using the fewest plates (exact change-making, not greedy).
+
+    Greedy fails for some plate sets (e.g. 30 per side with 20s and 15s: greedy gives 20, the
+    answer is 15 + 15), so this solves it exactly on a 0.01 grid.
+    """
+    units = [int(round(p * 100)) for p in avail]
+    target = int(round(per_side * 100 + 1e-6))
+    if target <= 0:
+        return []
+    INF = 10**9
+    best = [0] + [INF] * target  # best[x] = fewest plates summing exactly to x
+    pick = [0] * (target + 1)
+    for x in range(1, target + 1):
+        for u in units:
+            if u <= x and best[x - u] + 1 < best[x]:
+                best[x], pick[x] = best[x - u] + 1, u
+    x = next(v for v in range(target, -1, -1) if best[v] < INF)
+    out = []
+    while x > 0:
+        out.append(pick[x] / 100)
+        x -= pick[x]
+    return sorted(out, reverse=True)
+
+
 @AGENT.tool
 def plate_loading(target: float, bar: float = 20, unit: Literal["kg", "lb"] = "kg", plates: list[float] | None = None) -> dict:
     """Work out which plates go on each side of the bar for a target load, and the nearest loadable weight.
@@ -509,11 +596,7 @@ def plate_loading(target: float, bar: float = 20, unit: Literal["kg", "lb"] = "k
     if t < b:
         raise ToolError(f"target ({t:g}) is lighter than the bar ({b:g})")
     per_side = (t - b) / 2
-    remaining, chosen = per_side, []
-    for p in avail:
-        while remaining + 1e-9 >= p:
-            chosen.append(p)
-            remaining -= p
+    chosen = _fewest_plates(per_side, avail)
     loaded = b + 2 * sum(chosen)
     smallest = avail[-1]
     return {

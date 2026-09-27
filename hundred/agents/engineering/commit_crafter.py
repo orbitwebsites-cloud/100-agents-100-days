@@ -160,7 +160,8 @@ def _parse_commit(message: str) -> dict:
         "header": header, "type": m.group("type").lower() if m else None, "scope": (m.group("scope") or "").strip() if m else None,
         "bang": bool(m and m.group("bang")), "subject": m.group("subject").strip() if m else header, "body": body,
         "breaking": bool(breaking) or bool(m and m.group("bang")), "breaking_note": breaking.group(1).strip() if breaking else None,
-        "tickets": sorted({t for t in TICKET_RE.findall(message)}), "conventional": m is not None and m.group("type").lower() in TYPES,
+        "tickets": sorted({t for t in TICKET_RE.findall(message)}),
+        "conventional": m is not None and m.group("type").lower() in TYPES and re.match(r"^[A-Za-z]+(?:\([^)]*\))?!?: ", header) is not None,
     }
 
 
@@ -191,6 +192,8 @@ def lint_commit(message: str, max_subject: int = 50, allowed_scopes: list[str] |
             warnings.append(f"scope '{p['scope']}' not in the team's list ({', '.join(allowed_scopes[:10])})")
     if p["scope"] == "" and p["type"]:
         warnings.append("empty scope parentheses — omit them")
+    if p["type"] and re.match(r"^[A-Za-z]+(?:\([^)]*\))?!?:(?!\s)", header):
+        errors.append("no space after the colon — the spec requires `type: subject` (colon AND space); parsers such as commitlint won't read the type")
     subject = p["subject"]
     if not subject:
         errors.append("subject is empty")
@@ -393,6 +396,7 @@ def changelog(commits: list[str], current_version: str, release_date: str = "", 
     sections: dict[str, list[str]] = defaultdict(list)
     breaking_entries, unparsed, parsed = [], [], []
     type_counts: Counter[str] = Counter()
+    items: list[tuple[str | None, str]] = []
     for raw in commits:
         if not isinstance(raw, str) or not raw.strip():
             continue
@@ -402,6 +406,23 @@ def changelog(commits: list[str], current_version: str, release_date: str = "", 
         if hm:
             sha = hm.group(1)[:7]
             text = hm.group(2) + ("\n" + text.split("\n", 1)[1] if "\n" in text else "")
+        items.append((sha, text))
+    # a commit reverted inside the same range cancels out (as conventional-commits-filter does): drop both
+    shas = {sha for sha, _ in items if sha}
+    dropped: set[int] = set()
+    reverted_notes = []
+    for i, (sha, text) in enumerate(items):
+        if not re.match(r"^(revert\b|Revert \")", text, re.I):
+            continue
+        refs = re.findall(r"(?:This reverts commit|Refs:?)\s+([0-9a-f]{7,40})", text, re.I)
+        target = next((r[:7] for r in refs if r[:7] in shas), None)
+        if target:
+            j = next(k for k, (sh, _) in enumerate(items) if sh == target)
+            dropped |= {i, j}
+            reverted_notes.append(f"{target} was reverted by {sha or 'a later commit'} in this range — both left out of the changelog and the bump.")
+    for idx, (sha, text) in enumerate(items):
+        if idx in dropped:
+            continue
         p = _parse_commit(text)
         if not p["conventional"]:
             if re.match(r"^Merge (branch|pull request|remote)", p["header"]):
@@ -435,7 +456,7 @@ def changelog(commits: list[str], current_version: str, release_date: str = "", 
         bump = "patch"
     else:
         bump = "none"
-    notes = []
+    notes = list(reverted_notes)
     if bump == "none":
         next_v = _fmt(dict(v, pre=[]))
         notes.append("Only internal commits — no user-facing change; release only if you need to ship them.")

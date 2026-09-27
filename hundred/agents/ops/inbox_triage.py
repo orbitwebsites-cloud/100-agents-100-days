@@ -133,6 +133,13 @@ _DEADLINE = re.compile(
     re.I,
 )
 _MONEY = re.compile(r"(\$|€|£)\s?\d|\b(invoice|payment|contract|renewal|refund|pricing|quote|proposal|offer|budget)\b", re.I)
+_COLD = re.compile(
+    r"\b(are you (currently )?hiring|quick (question|call|chat)|pre-?vetted|we help (companies|teams|startups|founders)|"
+    r"i'?d love to (show|connect|chat|hop on)|(15|20|30)[- ]min(ute)?s? (call|chat)|book a (demo|call)|"
+    r"partner(ship)? opportunit|reaching out|our (platform|solution|agency|services)|would you be (open|interested)|"
+    r"circling back|following up on my (last|previous)|bump(ing)? this|worth a (quick )?(chat|call)|free (trial|audit))\b",
+    re.I,
+)
 _FYI = re.compile(r"^\s*(fyi|fwd?:|for your information|no action)\b", re.I)
 _THANKS_ONLY = re.compile(r"^\s*(thanks|thank you|thx|ty|cheers|great|perfect|sounds good|got it|ok|okay|noted)[\s!.,]*(\w+[\s!.,]*){0,4}$", re.I)
 
@@ -243,6 +250,17 @@ def score_priority(emails: list[dict], me: str = "", vips: list[str] = [], as_of
         if _THANKS_ONLY.match(body) and not asks:
             score -= 25
             reasons.append("thanks-only, no ask")
+        thanks_only = bool(_THANKS_ONLY.match(body)) and not asks and not questions
+        cold = (
+            not is_vip
+            and not (my_domain and _domain(sender) == my_domain)
+            and thread_len <= 1
+            and not re.match(r"^\s*re:", subject, re.I)
+            and bool(_COLD.search(text_all))
+        )
+        if cold:
+            score -= 30
+            reasons.append("cold outreach from an unknown sender")
         if thread_len >= 3:
             score += 4
             reasons.append(f"active thread ({thread_len} msgs)")
@@ -254,12 +272,17 @@ def score_priority(emails: list[dict], me: str = "", vips: list[str] = [], as_of
         important = is_vip or (asks > 0 and (not me_addr or me_addr in to)) or bool(_MONEY.search(text_all))
         urgent = days_to is not None and days_to <= 2 or (deadline_phrase is not None and re.search(r"asap|urgent|today|eod|tomorrow", deadline_phrase, re.I) is not None)
         quadrant = "Q1 do first (important + urgent)" if important and urgent else "Q2 schedule (important)" if important else "Q3 delegate (urgent, not important)" if urgent else "Q4 archive"
+        if cold:
+            quadrant = "Q4 archive"
         if newsletter:
             action = "Unsubscribe or digest"
-        elif automated or score < 25:
+        elif automated or score < 25 or cold or thanks_only:
             action = "Archive"
-        elif score >= 70:
+        elif score >= 70 and (urgent or is_vip):
             action = "Reply now"
+        elif score >= 70:
+            action = "Reply today"
+            reasons.append("no deadline pressure — batch it")
         elif score >= 45:
             action = "Reply today"
         elif quadrant.startswith("Q3"):
@@ -348,6 +371,8 @@ def extract_asks(body: str, as_of: str = "", received: str = "") -> dict:
     }
 
 
+_GREETING_LINE = re.compile(r"^(hi|hello|hey|dear|good (morning|afternoon|evening))\b[\w .'-]{0,40}[,!:]?$", re.I)
+_SIGNOFF_LINE = re.compile(r"^(best|thanks|thank you|many thanks|regards|kind regards|best regards|warm regards|cheers|talk soon|sincerely|speak soon|thx)[,!.]?(\s+[\w.'-]+){0,3}$", re.I)
 _PLACEHOLDER = re.compile(r"\{\{\s*([\w .-]+?)\s*\}\}|\{([\w .-]+?)\}|\[([\w .-]+?)\]|<([\w .-]+?)>")
 
 
@@ -381,7 +406,7 @@ def fill_reply_template(template: str, fields: dict, max_sentences: int = 5) -> 
 
     filled = _PLACEHOLDER.sub(sub, template)
     unused = [k for k in fields if re.sub(r"[\s_-]+", "", str(k).lower()) not in used]
-    sents = text.sentences(filled)
+    sents = [x for x in text.sentences(filled) if not (_GREETING_LINE.match(x.strip()) or _SIGNOFF_LINE.match(x.strip()))]
     words = len(text.words(filled))
     rd = text.readability(filled)
     fixes = []

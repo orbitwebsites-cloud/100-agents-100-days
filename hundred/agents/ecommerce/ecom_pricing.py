@@ -47,8 +47,10 @@ AGENT = Agent(
     and packaging cost, payment processing (rate + fixed), marketplace/referral and
     fulfilment fees if applicable, return rate and what a return costs, and the current or
     candidate price. Ask at most 3 questions, only if you cannot proceed. Otherwise assume
-    and state: payment 2.9% + $0.30; return rate 8% (apparel 20%); return cost = outbound +
-    return shipping + 15% restock loss; Amazon referral 15% (verify the category).
+    and state: payment 2.9% + $0.30; return rate 8% (apparel 20%); return cost = return
+    label + handling + 15% of COGS written off (outbound shipping, packaging and payment fees
+    on returned orders are added by the tool — do not double count); Amazon referral 15%
+    (verify the category).
 
     ## Procedure
     1. **Build the order P&L.** Call `ecom_pricing__unit_economics` with every cost line.
@@ -59,7 +61,10 @@ AGENT = Agent(
        (price = fixed costs ÷ (1 − target − fee%)), then shows the charm-price options
        ($X.99, $X.95, $X.00, $X9) with the margin each actually delivers. Recommend one.
     3. **Interrogate discounts.** Any promo, coupon, bundle discount or sale goes through
-       `ecom_pricing__discount_impact` first. It computes the break-even unit lift
+       `ecom_pricing__discount_impact` first. Run `unit_economics` at the discounted price
+       too and pass both CM2 values (`contribution_at_full_price`,
+       `contribution_at_discount_price`) — never a COGS-only "variable cost", which ignores
+       shipping, fees and returns and understates the lift needed. It computes the break-even unit lift
        (discount ÷ (margin − discount)) and profit at realistic lifts. If the break-even
        lift exceeds ~40% and the product is not a traffic driver, say the promo is a losing
        trade and offer a non-price alternative (gift with purchase, free shipping threshold,
@@ -153,7 +158,7 @@ def unit_economics(
         marketplace_fee_pct: Marketplace referral/commission percent of price (Amazon ~15; 0 for own store).
         fulfillment_fee: Per-unit fulfilment fee (FBA pick/pack/ship) if the marketplace ships it.
         return_rate_pct: Percent of orders returned (8 typical, apparel 20-30).
-        return_cost: Cost per returned order: return shipping + handling + value lost. Refunded price is handled automatically.
+        return_cost: Extra cost per returned order: return label + handling + value of unsellable stock (COGS × write-off share). Do NOT include outbound shipping, packaging or fees — the tool already treats those as sunk on a returned order, and the refunded price and restocked COGS are handled automatically.
         shipping_charged: Shipping revenue collected from the customer per order (0 if free shipping).
         min_margin_pct: The contribution margin (% of price) below which you refuse to sell; used to compute the floor price.
     """
@@ -170,15 +175,18 @@ def unit_economics(
     gross_profit = p - c
     variable = shipping_cost + packaging_cost + fulfillment_fee + pay_fee + mkt_fee
     cm1 = revenue - c - variable
-    # a returned order loses the contribution it would have earned plus the handling cost;
-    # expected cost = return rate × (cm1 + return_cost) (fees are usually not refunded → conservative)
-    expected_return_cost = rr * (cm1 + return_cost) if cm1 > 0 else rr * return_cost
+    # A returned order refunds the price (and any shipping charged) and puts the unit back in stock
+    # (COGS recovered; unsellable share belongs in return_cost). Outbound shipping, packaging,
+    # fulfilment and payment fees are sunk (Shopify Payments, Stripe and PayPal keep the processing
+    # fee on refunds); marketplace referral fees are treated as refunded. So a returned order's
+    # contribution is −(sunk + return_cost) and each return costs cm1 + sunk + return_cost vs a kept order.
+    sunk = shipping_cost + packaging_cost + fulfillment_fee + pay_fee
+    expected_return_cost = rr * (cm1 + sunk + return_cost)
     cm2 = cm1 - expected_return_cost
-    pct_fees = pf + mf
-    fixed_costs = c + shipping_cost + packaging_cost + fulfillment_fee + payment_fee_fixed
-    # floor price: (1 - rr) * (P(1 - pct) - fixed) - rr * return_cost = mm * P  (ignoring shipping_charged)
-    denom = (1 - rr) * (1 - pct_fees) - mm
-    floor = ((1 - rr) * fixed_costs + rr * return_cost) / denom if denom > 0 else None
+    sunk_fixed = shipping_cost + packaging_cost + fulfillment_fee + payment_fee_fixed
+    # floor price: E[CM](P) = (1−rr)(1−mf)P − C(1−rr) − sunk_fixed − pf·P − rr·R = mm·P  (ignoring shipping_charged)
+    denom = (1 - rr) * (1 - mf) - pf - mm
+    floor = ((1 - rr) * c + sunk_fixed + rr * return_cost) / denom if denom > 0 else None
     breakeven_roas = revenue / cm2 if cm2 > 0 else None
     lines = {
         "price": money(p),
@@ -204,7 +212,8 @@ def unit_economics(
         "target_roas_for_20pct_ad_profit": round(breakeven_roas / 0.8, 2) if breakeven_roas else None,
         "floor_price_at_min_margin": money(floor) if floor else None,
         "pct_of_price": {k: pct(v / p) for k, v in lines.items() if k not in ("price", "shipping_charged")},
-        "formulas": "CM2 = revenue − COGS − ship − pack − fees − rr·(CM1 + return_cost); ROAS_be = revenue ÷ CM2; markup = GP ÷ COGS",
+        "return_loss_per_returned_order": money(cm1 + sunk + return_cost),
+        "formulas": "CM1 = revenue − COGS − ship − pack − fulfil − fees; CM2 = CM1 − rr·(CM1 + sunk ship/pack/fulfil/payment fees + return_cost); ROAS_be = revenue ÷ CM2; markup = GP ÷ COGS",
         "verdict": (
             f"CM2 {cm2:.2f} ({100 * cm2 / p:.1f}% of price), gross margin {100 * gross_profit / p:.0f}%, "
             + (f"break-even ROAS {breakeven_roas:.2f}×, max CPA {cm2:.2f}." if breakeven_roas else "NEGATIVE contribution — this price loses money on every order.")
@@ -257,7 +266,7 @@ def price_for_target_margin(
         marketplace_fee_pct: Marketplace referral percent of price (Amazon ~15).
         fulfillment_fee: Per-unit fulfilment fee if applicable.
         return_rate_pct: Percent of orders returned.
-        return_cost: Cost per returned order beyond the refund.
+        return_cost: Extra cost per returned order (return label + handling + unsellable stock); outbound shipping and fees are handled automatically.
         margin_basis: "contribution" (target applies to margin after all variable costs and returns) or "gross" (target applies to price − COGS only).
     """
     c = require_positive("cogs", cogs)
@@ -270,11 +279,11 @@ def price_for_target_margin(
     if margin_basis == "gross":
         raw = c / (1 - t)
     else:
-        fixed = c + shipping_cost + packaging_cost + fulfillment_fee + payment_fee_fixed
-        denom = (1 - rr) * (1 - pf - mf) - t
+        sunk_fixed = shipping_cost + packaging_cost + fulfillment_fee + payment_fee_fixed
+        denom = (1 - rr) * (1 - mf) - pf - t
         if denom <= 0:
-            raise ToolError(f"Target margin {target_margin_pct}% is impossible: fees + returns already consume {100 * (1 - (1 - rr) * (1 - pf - mf)):.1f}% of price.")
-        raw = ((1 - rr) * fixed + rr * return_cost) / denom
+            raise ToolError(f"Target margin {target_margin_pct}% is impossible: fees + returns already consume {100 * (1 - (1 - rr) * (1 - mf) + pf):.1f}% of price.")
+        raw = ((1 - rr) * c + sunk_fixed + rr * return_cost) / denom
     options = []
     for opt in _charm_options(raw):
         ue = unit_economics(
@@ -290,14 +299,27 @@ def price_for_target_margin(
         "margin_basis": margin_basis,
         "charm_options": options,
         "recommended": best,
-        "formula": "P = ((1−rr)·fixed + rr·return_cost) ÷ ((1−rr)(1 − fee%) − target)" if margin_basis == "contribution" else "P = COGS ÷ (1 − target)",
+        "formula": "P = ((1−rr)·COGS + ship + pack + fulfil + fixed fee + rr·return_cost) ÷ ((1−rr)(1 − marketplace%) − payment% − target)" if margin_basis == "contribution" else "P = COGS ÷ (1 − target)",
         "verdict": f"Exact price {raw:.2f}; lowest charm price that still clears the target: {best['price']:.2f} ({best['ending']}) at {best['contribution_margin_pct']}% CM2.",
     }
 
 
 @AGENT.tool
-def discount_impact(price: float, unit_variable_cost: float, discount_pct: float, baseline_units: float, expected_lift_pct: float = 0.0, promo_fixed_cost: float = 0.0) -> dict:
+def discount_impact(
+    price: float,
+    unit_variable_cost: float,
+    discount_pct: float,
+    baseline_units: float,
+    expected_lift_pct: float = 0.0,
+    promo_fixed_cost: float = 0.0,
+    contribution_at_full_price: float | None = None,
+    contribution_at_discount_price: float | None = None,
+) -> dict:
     """Compute the unit lift a discount needs to break even on profit, and profit at expected/realistic lifts.
+
+    Most accurate: run unit_economics at the full and at the discounted price and pass both CM2
+    values — percentage fees and return refunds shrink with the price, which a single flat
+    unit_variable_cost cannot capture.
 
     Args:
         price: Regular selling price.
@@ -306,6 +328,8 @@ def discount_impact(price: float, unit_variable_cost: float, discount_pct: float
         baseline_units: Units you would sell at full price over the promo period.
         expected_lift_pct: Your expected unit lift from the promo (percent), 0 to just see break-even.
         promo_fixed_cost: Fixed promo cost (ads, creative, email) to recover.
+        contribution_at_full_price: Optional CM2 per unit at full price (from unit_economics). Overrides price − unit_variable_cost.
+        contribution_at_discount_price: Optional CM2 per unit at the discounted price (from unit_economics at price × (1 − discount)).
     """
     p = require_positive("price", price)
     v = require_positive("unit_variable_cost", unit_variable_cost, allow_zero=True)
@@ -313,10 +337,19 @@ def discount_impact(price: float, unit_variable_cost: float, discount_pct: float
     b = require_positive("baseline_units", baseline_units)
     if d >= 1:
         raise ToolError("discount_pct must be below 100.")
-    margin = (p - v) / p
     new_price = p * (1 - d)
-    new_unit_profit = new_price - v
-    baseline_profit = b * (p - v) - 0
+    if (contribution_at_full_price is None) != (contribution_at_discount_price is None):
+        raise ToolError("Pass both contribution_at_full_price and contribution_at_discount_price, or neither.")
+    if contribution_at_full_price is not None:
+        unit_profit = float(contribution_at_full_price)
+        new_unit_profit = float(contribution_at_discount_price)
+        basis = "CM2 from unit_economics at both prices"
+    else:
+        unit_profit = p - v
+        new_unit_profit = new_price - v
+        basis = "price − flat unit_variable_cost"
+    margin = unit_profit / p
+    baseline_profit = b * unit_profit
     if new_unit_profit <= 0:
         be_lift = None
     else:
@@ -329,14 +362,15 @@ def discount_impact(price: float, unit_variable_cost: float, discount_pct: float
         scenarios.append({"lift_pct": round(lift * 100), "units": round(units), "revenue": money(units * new_price), "profit": money(profit), "profit_vs_baseline": money(profit - baseline_profit)})
     expected = next((s for s in scenarios if s["lift_pct"] == round(as_fraction(expected_lift_pct, "x") * 100)), None) if expected_lift_pct else None
     verdict = (
-        f"{discount_pct:.0f}% off cuts unit profit from {p - v:.2f} to {new_unit_profit:.2f} ({100 * margin:.0f}% → {100 * new_unit_profit / new_price:.0f}% margin). "
+        f"{discount_pct:.0f}% off cuts unit profit from {unit_profit:.2f} to {new_unit_profit:.2f} ({100 * margin:.0f}% → {100 * new_unit_profit / new_price:.0f}% margin). "
         + (f"Break-even lift: +{100 * be_lift:.0f}% units ({math.ceil(b * (1 + be_lift)):,} vs {b:,.0f})." if be_lift is not None else "Unit profit is ≤ 0 at this depth — every extra unit loses money.")
         + (f" At your expected +{expected_lift_pct:.0f}%: {expected['profit_vs_baseline']:+,.0f} vs baseline." if expected else "")
     )
     return {
         "margin_pct_before": pct(margin),
         "margin_pct_after": pct(new_unit_profit / new_price) if new_price else None,
-        "unit_profit_before": money(p - v),
+        "unit_profit_before": money(unit_profit),
+        "basis": basis,
         "unit_profit_after": money(new_unit_profit),
         "breakeven_lift_pct": round(100 * be_lift, 1) if be_lift is not None else None,
         "breakeven_units": math.ceil(b * (1 + be_lift)) if be_lift is not None else None,

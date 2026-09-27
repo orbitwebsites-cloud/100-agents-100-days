@@ -215,12 +215,12 @@ def meddpicc_scorecard(ratings: dict, target_stage: str = "proposal") -> dict:
 
 
 TOPICS = {
-    "pain": r"\b(problem|pain|struggl|frustrat|broken|manual|slow|error|bottleneck|headache|challenge|issue|waste|churn|miss(?:ed|ing))\w*",
+    "pain": r"\b(problem|pain|struggl|frustrat|broken|manual|slow|error|bottleneck|headache|challenge|issue|waste|churn|miss(?:ed|ing)|mess(?:y)?\b|hate|drop(?:s|ped)?\b|no[- ]shows?|short[- ]staffed|burn(?:ed|t)? ?out|tedious|painful|can'?t keep up|fall(?:s|ing)? through|lost (?:two|\d+|a|our|staff|people|customers|deals))\w*",
     "impact": r"\b(cost(?:s|ing)?|lose|losing|lost|hours|per (?:week|month)|revenue|margin|penalt|risk|delay|impact|\$\s?\d|\d+\s?%)\w*",
-    "timeline": r"\b(deadline|by (?:q[1-4]|end of|january|february|march|april|may|june|july|august|september|october|november|december)|this quarter|next quarter|timeline|when do you|go[- ]live|renewal|urgen)\w*",
-    "budget": r"\b(budget|spend|price|pricing|cost of|invest|approve[ds]?|funding|allocated|per seat|per user)\w*",
+    "timeline": r"\b(deadline|(?:by|before|after) (?:the )?(?:q[1-4]|end of|year[- ]end|january|february|march|april|may|june|july|august|september|october|november|december|renewal|launch)|this quarter|next quarter|timeline|when do you|go[- ]live|live (?:by|before)|renewal|urgen|within (?:\d+|a|one|two|three|six) (?:weeks?|months?))\w*",
+    "budget": r"\b(budget|price|pricing|cost of|invest|approve[ds]?|funding|allocated|per seat|per user|spend(?:ing)? (?:on|about|around|roughly)? ?\$)\w*",
     "decision_process": r"\b(sign[- ]?off|decision|approv|procurement|legal|security review|stakeholder|committee|who else|evaluat|criteria)\w*",
-    "competition": r"\b(alternative|competitor|other vendor|compar|in[- ]house|build it|also looking|evaluating|incumbent|currently use|switch)\w*",
+    "competition": r"\b(alternative|competitor|other vendor|compar|in[- ]house|build it|also looking|evaluating|incumbent|currently use|switch|(?:had|saw|took|did) a demo|demo(?:ed)? (?:from|with)|looked at|talked to (?:another|other|a few)|considering|shortlist|versus|vs\.?\s)\w*",
     "current_solution": r"\b(today|currently|right now|spreadsheet|excel|manual|existing|current (?:tool|process|system|vendor)|we use)\w*",
     "next_step": r"\b(next step|follow[- ]up|send (?:you|over)|schedule|calendar|invite|proposal|pilot|trial|demo)\w*",
 }
@@ -237,7 +237,7 @@ def analyze_transcript(transcript: str, rep_name: str = "", call_minutes: int = 
     Args:
         transcript: Raw call transcript text.
         rep_name: The seller's name as it appears in the transcript (optional).
-        call_minutes: Actual call length in minutes if known; otherwise estimated at 150 words/min.
+        call_minutes: Actual call length in minutes if known; otherwise taken from line timestamps, else estimated at 150 words/min.
     """
     turns = c.parse_transcript(transcript)
     speakers = [s for s, _ in turns if s]
@@ -274,7 +274,7 @@ def analyze_transcript(transcript: str, rep_name: str = "", call_minutes: int = 
             if n > longest_prospect[1]:
                 longest_prospect = (said[:160], n)
     total = sum(words_by.values()) or 1
-    minutes = call_minutes if call_minutes > 0 else max(1, round(total / 150))
+    minutes, minutes_source, duration_warnings = c.call_minutes_for(transcript, total, call_minutes)
     q_types = Counter(c.classify_question(q) for q in rep_questions)
     n_q = len(rep_questions)
     open_pct = c.pct(q_types["open"], n_q) if n_q else 0.0
@@ -289,7 +289,7 @@ def analyze_transcript(transcript: str, rep_name: str = "", call_minutes: int = 
     covered = [t for t, v in coverage.items() if v["covered"]]
     missed = [t for t in TOPICS if t not in covered]
     rep_share = c.pct(words_by[rep], total)
-    flags = []
+    flags = list(duration_warnings)
     if rep_share > 55:
         flags.append(f"rep talked {rep_share}% — target ≤ 45%; you pitched, they didn't discover")
     elif rep_share > 45:
@@ -321,6 +321,7 @@ def analyze_transcript(transcript: str, rep_name: str = "", call_minutes: int = 
         "talk_share_pct": {s: c.pct(w, total) for s, w in words_by.most_common()},
         "rep_talk_pct": rep_share,
         "estimated_minutes": minutes,
+        "minutes_source": minutes_source,
         "total_words": total,
         "rep_questions": n_q,
         "rep_questions_per_30min": q_per_30,

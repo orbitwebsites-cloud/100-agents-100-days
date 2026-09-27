@@ -100,3 +100,14 @@ def test_sop_control_block_version_and_review_date():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("cycle_time").call({"steps": "a,b"})
+
+
+def test_irreversible_verb_phrase_needs_verification():
+    out = A.get_tool("lint_steps").call({"steps": ["Open the ticket in Zendesk.", "Issue the refund in Stripe.", "Close the ticket."]})
+    assert any("irreversible" in i for i in out["steps"][1]["issues"])
+    assert not any("irreversible" in i for i in out["steps"][0]["issues"])  # opening a refund ticket is not a refund
+
+
+def test_cycle_time_reports_elapsed_days_not_8h_workdays():
+    out = A.get_tool("cycle_time").call({"steps": [{"step": "Approve", "touch_minutes": 5, "wait_minutes": 1440, "role": "Finance"}]})
+    assert "1.0 days" in out["verdict"] and "workdays" not in out["verdict"]

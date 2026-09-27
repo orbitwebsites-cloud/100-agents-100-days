@@ -61,6 +61,11 @@ AGENT = Agent(
        gives the category by majority, the Better/Worse coefficients (Berger et al.), and flags
        Questionable/Reverse answers. Must-be features go first (absence kills), Performance next
        (proportional value), Attractive for differentiation, Indifferent → cut.
+    3b. **If deadlines or experiments drive the backlog**, call `roadmap_prioritizer__wsjf_ice_score`:
+       method "wsjf" (SAFe: cost of delay = business value + time criticality + risk reduction,
+       ÷ job size, all on the 1-2-3-5-8-13-20 relative scale) for time-sensitive work, or "ice"
+       (impact × confidence × ease, 1-10 each) for growth-experiment triage. Use it alongside RICE,
+       not instead of it, and say which items change rank between the two.
     4. **If you have importance/satisfaction ratings** (JTBD outcome surveys), call
        `roadmap_prioritizer__opportunity_score`. Opportunity = Importance + max(Importance −
        Satisfaction, 0) on a 1-10 scale: > 15 is a top opportunity, 12-15 worth pursuing, < 10
@@ -172,12 +177,22 @@ def rice_score(items: list[dict], fragility_pct: float = 30.0) -> dict:
         r["fragile_with"] = neighbours
     total_effort = sum(r["effort"] for r in scored)
     fragile = [r["name"] for r in scored if r["fragile_with"]]
+    # tiers: consecutive items whose ranks could swap within the estimate error are one tie group
+    tiers: list[list[str]] = []
+    for idx, r in enumerate(scored):
+        if idx > 0 and scored[idx - 1]["name"] in r["fragile_with"]:
+            tiers[-1].append(r["name"])
+        else:
+            tiers.append([r["name"]])
+    for r in scored:
+        r["tier"] = next(t for t, grp in enumerate(tiers, 1) if r["name"] in grp)
     return {
         "ranked": scored,
+        "tiers": tiers,
         "total_effort_weeks": round(total_effort, 1),
         "fragile_ranks": fragile,
         "flagged": [r["name"] for r in scored if r["flags"]],
-        "summary": f"#1 {scored[0]['name']} (RICE {scored[0]['rice']}); {len(fragile)} rank(s) within ±{int(err * 100)}% estimate error — show as ties.",
+        "summary": f"#1 {scored[0]['name']} (RICE {scored[0]['rice']}); {len(fragile)} rank(s) within ±{int(err * 100)}% estimate error — present the {len(tiers)} tiers, not {len(scored)} ranks.",
     }
 
 
@@ -229,7 +244,7 @@ def kano_classify(features: list[dict]) -> dict:
         a, o, m, ind = counts["A"], counts["O"], counts["M"], counts["I"]
         denom = a + o + m + ind
         better = round(pct(a + o, denom) / 100, 2) if denom else None
-        worse = round(-pct(o + m, denom) / 100, 2) if denom else None
+        worse = (round(-pct(o + m, denom) / 100, 2) + 0.0) if denom else None  # + 0.0 avoids "-0.0"
         # majority category among valid ones, ties broken by M > O > A > I
         valid = [(c, counts[c]) for c in "MOAI" if counts[c]]
         if valid:
@@ -263,6 +278,54 @@ def kano_classify(features: list[dict]) -> dict:
         "cut_candidates": [f["name"] for f in out if f["code"] in "IR"],
         "summary": "; ".join(f"{f['name']}: {f['category']}" for f in out),
     }
+
+
+_FIB = (1, 2, 3, 5, 8, 13, 20, 40, 100)
+
+
+@AGENT.tool
+def wsjf_ice_score(items: list[dict], method: str = "wsjf") -> dict:
+    """Score items with WSJF (SAFe cost of delay ÷ job size) or ICE (Impact × Confidence × Ease) and rank them.
+
+    Use WSJF when time matters (deadlines, compliance, decaying opportunities); use ICE for quick
+    growth-experiment triage. Both are the formulas Productboard/SAFe document.
+
+    Args:
+        items: For "wsjf": [{"name", "business_value", "time_criticality", "risk_reduction", "job_size"}] on the
+            modified Fibonacci scale 1,2,3,5,8,13,20 (relative, smallest item = 1). For "ice":
+            [{"name", "impact", "confidence", "ease"}] each 1-10.
+        method: "wsjf" (default) or "ice".
+    """
+    rows = check_rows(items, "items")
+    m = str(method).strip().lower()
+    if m not in {"wsjf", "ice"}:
+        raise ToolError("method must be 'wsjf' or 'ice'.")
+    out = []
+    for i, raw in enumerate(rows):
+        if not isinstance(raw, dict) or not str(raw.get("name", "")).strip():
+            raise ToolError(f"items[{i}] needs a 'name'.")
+        name = str(raw["name"]).strip()
+        notes = []
+        if m == "wsjf":
+            bv, tc, rr = (to_float(raw.get(k), f"{name}: {k}", 0, 100) for k in ("business_value", "time_criticality", "risk_reduction"))
+            size = to_float(raw.get("job_size"), f"{name}: job_size", 0.5, 100)
+            off = [k for k, v in (("business_value", bv), ("time_criticality", tc), ("risk_reduction", rr), ("job_size", size)) if v not in _FIB]
+            if off:
+                notes.append(f"not on the 1-2-3-5-8-13-20 scale: {', '.join(off)} — WSJF inputs are relative Fibonacci estimates")
+            cod = bv + tc + rr
+            score = cod / size
+            out.append({"name": name, "cost_of_delay": round(cod, 1), "job_size": size, "score": round(score, 2), "notes": notes})
+        else:
+            imp, conf, ease = (to_float(raw.get(k), f"{name}: {k}", 1, 10) for k in ("impact", "confidence", "ease"))
+            score = imp * conf * ease
+            if conf >= 9:
+                notes.append("confidence ≥ 9/10 — only with shipped evidence")
+            out.append({"name": name, "impact": imp, "confidence": conf, "ease": ease, "score": round(score, 1), "notes": notes})
+    out.sort(key=lambda r: -r["score"])
+    for rank, r in enumerate(out, 1):
+        r["rank"] = rank
+    formula = "WSJF = (business value + time criticality + risk reduction) ÷ job size" if m == "wsjf" else "ICE = impact × confidence × ease (1-10 each, max 1000)"
+    return {"method": m, "formula": formula, "ranked": out, "summary": f"#1 {out[0]['name']} ({m.upper()} {out[0]['score']}) — {formula}"}
 
 
 @AGENT.tool

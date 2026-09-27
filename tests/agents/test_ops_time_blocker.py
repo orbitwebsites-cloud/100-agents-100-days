@@ -109,8 +109,8 @@ def test_audit_calendar_load_fragments_and_focus():
     )
     mon, tue = out["by_day"]
     assert mon["meeting_minutes"] == 105 and mon["back_to_back"] == 1 and mon["fragments_under_30"] == 1
-    assert mon["longest_free_block"] == 360 and mon["focus_blocks"] == 1
-    assert tue["focus_blocks"] == 1 and tue["longest_free_block"] == 465
+    assert mon["longest_free_block"] == 360 and mon["focus_blocks"] == 4  # four 90-min blocks fit in 6 h
+    assert tue["focus_blocks"] == 5 and tue["longest_free_block"] == 465
     assert out["meeting_load_pct"] == 12 and out["rag"] == "GREEN"
     assert out["by_category"][0]["category"] == "external/customer"
     with pytest.raises(ToolError):
@@ -120,3 +120,39 @@ def test_audit_calendar_load_fragments_and_focus():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("convert_time").call({"when": "2026-10-08 14:00", "from_zone": "UTC", "to_zones": "London"})
+
+
+def test_audit_calendar_ignores_focus_blocks_all_day_items_and_counts_free_days():
+    out = call(
+        "audit_calendar",
+        events=[
+            {"title": "Standup", "start": "2026-10-19 09:30", "end": "2026-10-19 09:45"},
+            {"title": "Focus: board memo", "start": "2026-10-19 10:00", "end": "2026-10-19 12:00"},
+            {"title": "Offsite (all day)", "start": "2026-10-21 00:00", "end": "2026-10-22 00:00"},
+        ],
+        work_start="09:00", work_end="18:00", period_end="2026-10-23",
+    )
+    assert out["days_analysed"] == 5 and out["total_meeting_hours"] == 0.2  # 15 min of meetings over Mon-Fri
+    assert out["focus_minutes_scheduled"] == 120 and out["all_day_items_ignored"] == 1
+    assert out["meeting_free_days"] == ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]
+
+
+def test_pack_day_respects_due_by_and_avoids_deep_slivers():
+    out = call(
+        "pack_day",
+        tasks=[
+            {"name": "Memo", "minutes": 150, "priority": 1, "kind": "deep"},
+            {"name": "Prep call", "minutes": 30, "priority": 1, "kind": "shallow", "due_by": "13:00"},
+            {"name": "Reading", "minutes": 60, "priority": 4, "kind": "deep"},
+        ],
+        fixed_events=[{"title": "Standup", "start": "10:00", "end": "10:30"}, {"title": "Call", "start": "13:00", "end": "14:00"}],
+        day_start="08:00", day_end="15:00", peak_start="08:00", peak_end="11:00", lunch_start="12:15",
+    )
+    prep = [b for b in out["blocks"] if b["task"] == "Prep call"][0]
+    assert prep["end"] <= "13:00"
+    assert all(b["minutes"] >= 25 for b in out["blocks"] if b["kind"] == "deep")
+
+
+def test_convert_time_warns_on_fall_back_ambiguity():
+    out = call("convert_time", when="2026-11-01 01:30", from_zone="New York", to_zones=["UTC"])
+    assert out["utc"] == "2026-11-01 05:30" and "twice" in out["warning"]

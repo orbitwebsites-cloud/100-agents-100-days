@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from ...core import Agent, ToolError
@@ -62,7 +62,7 @@ AGENT = Agent(
        not the best single month.
     3. **State runway.** Call `investor_update__runway_line` with cash and the last 1-3 months of net
        burn (and revenue if it is growing). It returns average burn, months of runway, the cash-out
-       month, and the standard sentence. Under 9 months of runway: the ask section must include
+       month, and the standard sentence. Under 12 months of runway (the tool sets `fundraise_flag`): the ask section must include
        fundraising and the update must say so plainly.
     4. **Draft in the format below.** TL;DR is 3 lines max: the one number, the one win, the one
        problem. Highlights and lowlights are each 2-4 bullets with a number in every bullet. Asks are
@@ -122,7 +122,8 @@ AGENT = Agent(
 
 def _fmt(v: Decimal, unit: str) -> str:
     if unit in ("$", "usd", "dollars"):
-        return f"${money(v):,.0f}" if abs(v) >= 1000 else f"${money(v):,.2f}"
+        sign = "-" if v < 0 else ""
+        return f"{sign}${money(abs(v)):,.0f}" if abs(v) >= 1000 else f"{sign}${money(abs(v)):,.2f}"
     if unit in ("%", "pct", "percent"):
         return f"{pct(v, 1)}%"
     if unit in ("x", "ratio"):
@@ -152,7 +153,7 @@ def metric_deltas(metrics: list[dict], period_label: str = "", flag_threshold_pc
     Args:
         metrics: List of {"name": str, "current": n, "prior_month": n (optional), "prior_year": n (optional), "unit": "$"|"%"|"x"|"count", "higher_is_better": bool (default true)}.
         period_label: Column header for the current period, e.g. "Sep 2026".
-        flag_threshold_pct: Percent move (or points for % metrics) above which a metric needs an explanation line.
+        flag_threshold_pct: Relative MoM move, in percent, above which a metric needs an explanation line (for % metrics this is the relative change too: churn 2.1% → 2.4% is +14.3%).
     """
     rows = bound_rows(metrics, "metrics", limit=60)
     thr = D(flag_threshold_pct, "flag_threshold_pct")
@@ -178,8 +179,9 @@ def metric_deltas(metrics: list[dict], period_label: str = "", flag_threshold_pc
     hdr = period_label or "Current"
     lines = [f"| Metric | {hdr} | MoM | YoY | Note |", "|---|---|---|---|---|"]
     for r in out:
-        arrow = lambda d: ("" if not d or d["favourable"] is None else ("▲ " if d["favourable"] else "▼ "))  # noqa: E731
-        lines.append(f"| {r['name']} | {r['current_display']} | {arrow(r['mom']) + r['mom']['display'] if r['mom'] else '—'} | {arrow(r['yoy']) + r['yoy']['display'] if r['yoy'] else '—'} | {'explain' if r['needs_explanation'] else ''} |")
+        # arrow = direction of the number; ✓/✗ = good or bad for the business (lower churn is ▼ but ✓)
+        cell = lambda d: "—" if not d else ({"up": "▲ ", "down": "▼ ", "flat": ""}[d["direction"]] + d["display"] + ("" if d["favourable"] is None else (" ✓" if d["favourable"] else " ✗")))  # noqa: E731
+        lines.append(f"| {r['name']} | {r['current_display']} | {cell(r['mom'])} | {cell(r['yoy'])} | {'explain' if r['needs_explanation'] else ''} |")
     good = sum(1 for r in out if r["mom"] and r["mom"]["favourable"])
     bad = sum(1 for r in out if r["mom"] and r["mom"]["favourable"] is False)
     return {
@@ -277,12 +279,17 @@ def runway_line(cash: float, net_burn_months: list[float], as_of: str = "", hire
     if avg <= 0:
         return {"cash": money(c), "avg_net_burn": money(avg), "runway_months": None, "cash_out_month": None, "cash_flow_positive": True, "sentence": f"Cash ${money(c):,.0f}; cash-flow positive (avg ${money(-avg):,.0f}/mo generated) — runway not applicable.", "verdict": "Cash-flow positive."}
     months = c / avg
-    out_month = month_label(add_months(today, int(months)))
+
+    def cash_out(m: Decimal) -> str:  # the calendar month in which the cash actually runs out
+        whole = int(m)
+        return month_label(add_months(today, whole) + timedelta(days=int((m - whole) * Decimal("30.4375"))))
+
+    out_month = cash_out(months)
     sentence = f"Cash ${money(c):,.0f}, net burn ${money(avg):,.0f}/mo (avg of last {len(burns)}) → {pct(months, 1)} months of runway (cash-out ~{out_month})."
     res = {"cash": money(c), "avg_net_burn": money(avg), "burn_trend": ("rising" if len(burns) > 1 and burns[-1] > burns[0] else "falling" if len(burns) > 1 and burns[-1] < burns[0] else "flat"), "runway_months": pct(months, 1), "cash_out_month": out_month, "cash_flow_positive": False, "sentence": sentence}
     if extra > 0:
         m2 = c / (avg + extra)
-        res["with_planned_hires"] = {"net_burn": money(avg + extra), "runway_months": pct(m2, 1), "cash_out_month": month_label(add_months(today, int(m2)))}
+        res["with_planned_hires"] = {"net_burn": money(avg + extra), "runway_months": pct(m2, 1), "cash_out_month": cash_out(m2)}
         sentence += f" After planned hires: {pct(m2, 1)} months."
         res["sentence"] = sentence
     res["fundraise_flag"] = months < 12

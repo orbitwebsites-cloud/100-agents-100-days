@@ -18,10 +18,14 @@ from ...lib import dates, text
 SPEAKER_RE = re.compile(r"^\s*(?:\[?[\d:]{4,8}\]?\s*)?([A-Z][\w .'-]{0,40}?)\s*(?:\([^)]*\))?\s*:\s+(.+)$")
 
 FILLERS = (
-    "um", "uh", "like", "you know", "sort of", "kind of", "basically", "actually",
+    "um", "uh", "you know", "sort of", "kind of", "basically", "actually",
     "literally", "right?", "i mean", "so yeah", "okay so", "honestly",
 )
 _FILLER_RE = re.compile(r"\b(" + "|".join(re.escape(f) for f in FILLERS) + r")\b", re.I)
+# "like" is only a filler when set off by commas ("it was, like, huge" / "like, we tried"),
+# never as a verb ("you'll like the dashboard") or a preposition ("teams like yours").
+_LIKE_FILLER_RE = re.compile(r"(?:(?<=,)\s*like\b(?!\s+(?:a|an|the|this|that|yours?|ours?|them|us|me)\b)|(?:^|(?<=[.!?]))\s*like,)", re.I)
+_TIMESTAMP_RE = re.compile(r"^\s*\[?((?:\d{1,2}:)?\d{1,2}:\d{2})\]?\s")
 
 CLOSED_STARTS = re.compile(
     r"^(is|are|do|does|did|can|could|will|would|should|have|has|had|was|were|am|any|shall)\b", re.I
@@ -68,7 +72,55 @@ def match_speaker(name: str, speakers: list[str]) -> str | None:
 
 
 def count_fillers(t: str) -> Counter[str]:
-    return Counter(m.group(1).lower() for m in _FILLER_RE.finditer(t or ""))
+    out = Counter(m.group(1).lower() for m in _FILLER_RE.finditer(t or ""))
+    n_like = len(_LIKE_FILLER_RE.findall(t or ""))
+    if n_like:
+        out["like"] += n_like
+    return out
+
+
+def transcript_span_minutes(transcript: str) -> float | None:
+    """Call length from line timestamps ("[12:05] Name: ..." or "01:02:03 Name: ..."), first to last.
+
+    Returns None when fewer than two timestamps are present. The last line's own duration is
+    unknown, so this slightly under-counts; callers treat it as a floor.
+    """
+    secs = []
+    for line in (transcript or "").splitlines():
+        m = _TIMESTAMP_RE.match(line)
+        if m:
+            parts = [int(x) for x in m.group(1).split(":")]
+            while len(parts) < 3:
+                parts.insert(0, 0)
+            secs.append(parts[0] * 3600 + parts[1] * 60 + parts[2])
+    if len(secs) < 2 or secs[-1] <= secs[0]:
+        return None
+    return round((secs[-1] - secs[0]) / 60, 1)
+
+
+def call_minutes_for(transcript: str, total_words: int, call_minutes: int) -> tuple[float, str, list[str]]:
+    """Resolve call length: user-given > timestamps > 150 wpm estimate. Returns (minutes, source, warnings)."""
+    warnings: list[str] = []
+    span = transcript_span_minutes(transcript)
+    if call_minutes and call_minutes > 0:
+        minutes, source = float(call_minutes), "given"
+        if total_words / minutes < 60:
+            warnings.append(
+                f"only {total_words} words for a {call_minutes}-minute call (~{round(total_words / minutes)} words/min; "
+                "live speech runs 120-160) — this looks like a partial transcript, so per-minute rates "
+                "(questions/30 min, fillers/min, words/min) are understated"
+            )
+    elif span:
+        minutes, source = max(1.0, span), "timestamps"
+    else:
+        minutes, source = float(max(1, round(total_words / 150))), "estimated at 150 words/min"
+    return minutes, source, warnings
+
+
+def word_count(t: str) -> int:
+    """Words as a person (or Word/Docs) counts them: a URL is one word, "30-minute" is one word."""
+    t = re.sub(r"(https?://\S+|www\.\S+)", " URL ", t or "")
+    return sum(1 for tok in t.split() if re.search(r"[A-Za-z0-9]", tok))
 
 
 def questions_in(t: str) -> list[str]:
@@ -82,6 +134,9 @@ def classify_question(q: str) -> str:
     for _ in range(3):
         s = _LEAD_IN_RE.sub("", s)
     if s.count("?") >= 2 or re.search(r"\?\s+(and|or)\b", s, re.I):
+        return "multi"
+    # "Who else is involved, and what's your timeline?" — two questions joined in one sentence
+    if re.search(r",\s*(?:and|or|plus)\s+(?:what|how|why|who|when|where|which|is|are|do|does|did|can|could|would|will|have|has)\b", s, re.I):
         return "multi"
     if LEADING_RE.search(s):
         return "leading"

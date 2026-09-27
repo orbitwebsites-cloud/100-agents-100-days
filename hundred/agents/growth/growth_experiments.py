@@ -286,7 +286,7 @@ def sample_size(baseline_rate: float, mde_relative: float, weekly_traffic: int =
 
 @AGENT.tool
 def evaluate_result(control_visitors: int, control_conversions: int, variant_visitors: int, variant_conversions: int, alpha: float = 0.05, planned_visitors_per_arm: int = 0, expected_split: float = 0.5) -> dict:
-    """Judge an A/B result: conversion rates, relative lift, two-proportion z-test p-value, 95% CI, sample-ratio mismatch and a ship/kill/inconclusive decision.
+    """Judge an A/B result: conversion rates, relative lift, two-proportion z-test p-value, CI (delta-method for relative lift), sample-ratio mismatch and a ship/kill/inconclusive decision.
 
     Args:
         control_visitors: Visitors (or users) exposed to control.
@@ -317,7 +317,13 @@ def evaluate_result(control_visitors: int, control_conversions: int, variant_vis
     diff = p2 - p1
     ci = (diff - zc * se_diff, diff + zc * se_diff)
     rel = diff / p1 if p1 else None
-    rel_ci = ((ci[0] / p1), (ci[1] / p1)) if p1 else None
+    # Relative lift CI by the delta method (variance of p2/p1), which also counts the control's noise;
+    # dividing the absolute CI by p1 would understate the width.
+    if p1:
+        se_rel = math.sqrt((p2 * (1 - p2) / n2) / p1**2 + (p2**2) * (p1 * (1 - p1) / n1) / p1**4)
+        rel_ci = (rel - zc * se_rel, rel + zc * se_rel)
+    else:
+        rel_ci = None
     # SRM: chi-square with 1 df against expected split
     total = n1 + n2
     exp_var = total * split
@@ -471,7 +477,8 @@ def plan_sprint(experiments: list[dict], parallel_slots: int = 2, horizon_weeks:
             if t + it["weeks"] <= end and (best is None or t < best[1]):
                 best = (s, t)
         if best is None:
-            unscheduled.append({"name": it["name"], "weeks": it["weeks"], "reason": "no slot within horizon" + (" (surface conflicts)" if it["surface"] else "")})
+            fits_without_surface = any(slot_free[x] + it["weeks"] <= end for x in range(slots))
+            unscheduled.append({"name": it["name"], "weeks": it["weeks"], "reason": "no slot within horizon" + (f" (blocked by another test on '{it['surface']}')" if it["surface"] and fits_without_surface else "")})
             continue
         s, t = best
         slot_free[s] = t + it["weeks"]

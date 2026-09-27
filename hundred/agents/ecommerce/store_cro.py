@@ -68,9 +68,11 @@ AGENT = Agent(
     5. **Plan the test** with `store_cro__ab_test` in planning mode (baseline rate, minimum
        detectable effect, daily traffic) to get sample size and duration. Run for whole
        weeks (min 2, max 4) and never stop early on a peek.
-    6. **Read the result** with `store_cro__ab_test` in analysis mode. Declare a win only at
-       p < 0.05 with the confidence interval excluding zero and full weeks completed; report
-       relative lift with its interval, not a point estimate.
+    6. **Read the result** with `store_cro__ab_test` in analysis mode, always passing the
+       planned `min_detectable_effect_pct`, `daily_visitors` and `days_run` so it can check
+       the pre-planned sample. Follow its `decision` field: declare a win only at p < 0.05
+       with the confidence interval excluding zero, the planned sample reached and full
+       weeks completed; report relative lift with its interval, not a point estimate.
     7. **Self-check**: the recommendation moves contribution per session, not just CVR; each
        hypothesis names a segment and a metric; sample size is stated before any test.
 
@@ -212,6 +214,9 @@ def funnel_analysis(sessions: int, product_views: int, add_to_carts: int, checko
             f"(benchmark {top['benchmark_pct']}%) — worth ~{top['orders_gained_at_benchmark']} orders"
             + (f" / {top['revenue_gained_at_benchmark']:,.0f} revenue" if top["revenue_gained_at_benchmark"] else "")
             + " per period if brought to benchmark."
+            if top["orders_gained_at_benchmark"] > 0
+            else f"CVR {100 * cvr:.2f}% vs benchmark {100 * bm['overall_conversion_rate']:.1f}%. Every step is at or above benchmark — no leak to fix here; "
+            "compare segments (device, new vs returning, traffic source) or work on AOV."
         ),
     }
 
@@ -227,6 +232,7 @@ def ab_test(
     daily_visitors: int = 0,
     confidence_pct: float = 95.0,
     power_pct: float = 80.0,
+    days_run: int = 0,
 ) -> dict:
     """Two-proportion z-test for a finished A/B test (p-value, CI, lift) or sample-size and duration planning for a new one.
 
@@ -244,6 +250,7 @@ def ab_test(
         daily_visitors: Planning: total daily visitors that will be split across the two arms.
         confidence_pct: Confidence level (95 → α = 0.05, two-sided).
         power_pct: Statistical power (80 typical).
+        days_run: Days the test has been running (analysis). With the planning inputs it checks the pre-planned sample and full weeks before a win can be called.
     """
     if not 50 < confidence_pct < 100 or not 50 <= power_pct < 100:
         raise ToolError("confidence_pct must be in (50, 100) and power_pct in [50, 100).")
@@ -313,6 +320,25 @@ def ab_test(
             out["planning_verdict"] = f"Need {n:,} visitors per arm ({2 * n:,} total) for +{min_detectable_effect_pct:g}% relative MDE."
         if has_counts:
             out["progress_pct_of_required_sample"] = round(100 * min(control_visitors, variant_visitors) / n, 1)
+    if has_counts:
+        # a p-value is only valid at the pre-planned sample size; an early "win" is a peek, not a result
+        blockers = []
+        prog = out.get("progress_pct_of_required_sample")
+        if prog is not None and prog < 100:
+            blockers.append(f"only {prog:g}% of the planned {out['sample_size_per_arm']:,} visitors per arm")
+        if days_run and days_run < 14:
+            blockers.append(f"{days_run} days run (< 2 full weeks)")
+        elif days_run and days_run % 7:
+            blockers.append(f"{days_run} days is not whole weeks (day-of-week mix is unbalanced)")
+        if out["significant"] and not blockers:
+            out["decision"] = "call it: " + ("ship the variant" if out["variant_rate_pct"] > out["control_rate_pct"] else "keep control")
+        elif out["significant"]:
+            out["decision"] = "NOT YET — significant at this peek but " + "; ".join(blockers) + ". Keep running to the planned sample; stopping on a peek inflates false positives."
+            out["verdict"] = "PROVISIONAL (do not call): " + out["verdict"]
+        elif blockers:
+            out["decision"] = "keep running — " + "; ".join(blockers)
+        else:
+            out["decision"] = "no detectable difference at the planned sample — keep control or test a bolder change"
     if not out["mode"]:
         raise ToolError("Pass either the four test counts (analysis) or baseline_rate_pct + min_detectable_effect_pct (planning).")
     out["peeking_warning"] = "Decide the sample size before starting; checking daily and stopping at the first p < 0.05 inflates false positives several-fold."
@@ -415,7 +441,16 @@ def free_shipping_threshold(
             }
         )
     best = max(rows, key=lambda r: r["net_contribution_per_100_orders"])
+    warnings = []
+    if len(rows) > 1 and best is rows[-1]:
+        warnings.append(f"Best candidate is the highest one tested ({best['threshold']:.0f}) — the optimum may lie beyond the range; the model rewards shrinking the subsidy, so sanity-check reach.")
+    if best["orders_already_above_pct"] + best["expected_upgrades_per_100_orders"] < 25:
+        warnings.append(f"Only ~{best['orders_already_above_pct'] + best['expected_upgrades_per_100_orders']:.0f}% of orders would qualify at {best['threshold']:.0f} — a threshold few customers reach barely moves conversion; the lift assumption is least reliable here.")
+    spread = max(r["net_contribution_per_100_orders"] for r in rows) - min(r["net_contribution_per_100_orders"] for r in rows)
+    if abs(best["net_contribution_per_100_orders"]) < 0.5 * sc * 100 * 0.1 and spread < sc * 100 * 0.2:
+        warnings.append("Net effect is within noise of break-even across candidates — pick by reach (AOV × 1.15-1.30) and test; do not treat the argmax as a finding.")
     return {
+        "warnings": warnings,
         "orders_analysed": n,
         "synthetic_distribution": synthetic,
         "aov": money(avg),

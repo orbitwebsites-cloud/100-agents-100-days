@@ -14,7 +14,7 @@ def test_mrr_projection_first_month_and_target():
     out = call("mrr_projection", starting_mrr=42000, months=24, new_mrr_monthly=6000, new_mrr_growth_pct=5, churn_pct=2.5, expansion_pct=1, target_mrr=100000, start_month="2026-09-27")
     m1 = out["monthly"][0]
     assert m1["churn"] == -1050.0 and m1["expansion"] == 420.0 and m1["ending_mrr"] == 47370.0
-    assert m1["label"] == "2026-10"
+    assert m1["label"] == "2026-09"  # month 1 is labelled with start_month's month
     assert out["monthly"][1]["new"] == 6300.0  # new MRR compounds 5%
     assert out["target_reached_month"] == 10
     assert out["cmgr_pct"] == 7.9
@@ -50,7 +50,7 @@ def test_hiring_plan_burn_loaded_costs_and_flags():
 def test_runway_projection_zero_cash_and_milestone():
     out = call("runway_projection", cash=300000, monthly_revenue=[20000] * 12, monthly_costs=[80000] * 12, milestone_month=6, start_month="2026-09-27")
     assert out["zero_cash_month"] == 6
-    assert out["zero_cash_label"] == "2027-03"
+    assert out["zero_cash_label"] == "2027-02"  # month 6, counting Sep 2026 as month 1
     assert out["runway_months"] == 5
     assert out["lowest_cash"]["amount"] == -420000.0
     assert out["milestone_covered_with_buffer"] is False

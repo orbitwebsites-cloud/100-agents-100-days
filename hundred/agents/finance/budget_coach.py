@@ -9,6 +9,7 @@ from typing import Literal
 from ...core import Agent, ToolError
 from ._common import (
     CENT,
+    as_pct,
     MAX_MONTHS,
     ZERO,
     D,
@@ -292,7 +293,7 @@ def debt_payoff(
         if not isinstance(row, dict):
             raise ToolError(f"debts[{i}] must be an object")
         bal = require_positive(D(row.get("balance"), f"debts[{i}].balance"), f"debts[{i}].balance")
-        apr = as_rate(row.get("apr", 0), f"debts[{i}].apr")
+        apr = as_pct(row.get("apr", 0), f"debts[{i}].apr")
         if apr < 0 or apr > 2:
             raise ToolError(f"debts[{i}].apr looks wrong ({row.get('apr')}); give a percent like 24.99")
         mn = require_nonneg(D(row.get("min_payment", 0), f"debts[{i}].min_payment"), f"debts[{i}].min_payment")
@@ -340,6 +341,25 @@ def debt_payoff(
     }
 
 
+def _fixed_term(principal: Decimal, annual_rate: Decimal, pay: Decimal, months: int) -> tuple[Decimal, Decimal]:
+    """Amortise over exactly `months` payments; the final payment absorbs the cent-rounding residue.
+
+    Returns (total_interest, final_payment). Interest is balance x rate/12 rounded half-up each month.
+    """
+    r = annual_rate / 12
+    bal, total = principal, ZERO
+    final = pay
+    for k in range(1, months + 1):
+        interest = (bal * r).quantize(CENT, rounding=ROUND_HALF_UP)
+        total += interest
+        if k == months:
+            final = bal + interest
+            bal = ZERO
+        else:
+            bal = bal + interest - pay
+    return total, final
+
+
 @AGENT.tool
 def loan_payment(principal: float, apr: float, months: int, extra_payment: float = 0) -> dict:
     """Compute the amortised monthly payment and total interest, plus the effect of extra principal.
@@ -354,23 +374,25 @@ def loan_payment(principal: float, apr: float, months: int, extra_payment: float
         extra_payment: Optional extra dollars paid toward principal every month.
     """
     p = require_positive(D(principal, "principal"), "principal")
-    rate = as_rate(apr, "apr")
+    rate = as_pct(apr, "apr")
     if rate < 0 or rate > 1:
         raise ToolError("apr must be a percent between 0 and 100")
     if months < 1 or months > MAX_MONTHS:
         raise ToolError(f"months must be between 1 and {MAX_MONTHS}")
     extra = require_nonneg(D(extra_payment, "extra_payment"), "extra_payment")
     pay = monthly_payment(p, rate, months).quantize(CENT, rounding=ROUND_HALF_UP)
-    base = amortize(p, rate, pay, max_months=months + 2)
-    total_interest = Decimal(str(base["total_interest"])) if base["pays_off"] else p * rate / 12 * months
+    total_interest, final_payment = _fixed_term(p, rate, pay, months)
+    total_paid = p + total_interest
     out = {
         "monthly_payment": money(pay),
         "months": months,
-        "total_paid": money(pay * base["months"]) if base["pays_off"] else money(pay * months),
+        "final_payment": money(final_payment),
+        "total_paid": money(total_paid),
         "total_interest": money(total_interest),
-        "interest_share_of_payments_pct": ratio_to_pct(total_interest / (pay * months)) if pay else 0.0,
+        "interest_share_of_payments_pct": ratio_to_pct(total_interest / total_paid) if total_paid else 0.0,
         "first_month_interest": money(p * rate / 12),
-        "first_month_principal": money(pay - p * rate / 12),
+        "first_month_principal": money(pay - (p * rate / 12).quantize(CENT, rounding=ROUND_HALF_UP)),
+        "schedule_convention": "interest = balance x APR/12 rounded to the cent each month; the payment is rounded to the cent and the last payment absorbs the rounding residue (lender convention)",
     }
     if extra > 0:
         acc = amortize(p, rate, pay + extra)
@@ -388,7 +410,7 @@ def loan_payment(principal: float, apr: float, months: int, extra_payment: float
 
 
 @AGENT.tool
-def savings_goal(target: float, current: float = 0, monthly_contribution: float = 0, apy: float = 0, months: int = 0) -> dict:
+def savings_goal(target: float, current: float = 0, monthly_contribution: float = 0, apy: float = 0, months: int = 0, start_date: str = "") -> dict:
     """Months to reach a savings target with monthly compounding, or the monthly amount a deadline needs.
 
     Give monthly_contribution to get the funded date; give months instead to get the required
@@ -400,11 +422,12 @@ def savings_goal(target: float, current: float = 0, monthly_contribution: float 
         monthly_contribution: Dollars added each month (leave 0 if solving for it).
         apy: Annual yield on the savings, e.g. 4.5 for a high-yield account. 0 for a checking account.
         months: Deadline in months (only when solving for the contribution).
+        start_date: YYYY-MM-DD the plan starts (contributions land at each month end); defaults to today.
     """
     tgt = require_positive(D(target, "target"), "target")
     cur = require_nonneg(D(current, "current"), "current")
     contrib = require_nonneg(D(monthly_contribution, "monthly_contribution"), "monthly_contribution")
-    rate = as_rate(apy, "apy") / 12
+    rate = as_pct(apy, "apy") / 12
     if cur >= tgt:
         return {"already_funded": True, "surplus": money(cur - tgt), "verdict": "Goal already funded — redirect contributions to the next priority."}
     gap = tgt - cur
@@ -436,7 +459,7 @@ def savings_goal(target: float, current: float = 0, monthly_contribution: float 
         n += 1
     if bal < tgt:
         return {"reachable": False, "gap_today": money(gap), "verdict": f"Not reachable within {MAX_MONTHS} months at ${money(contrib):,.2f}/month."}
-    funded = add_months(date.today(), n)
+    funded = add_months(parse_iso(start_date, "start_date") if start_date else date.today(), n)
     return {
         "solve_for": "months",
         "months": n,

@@ -70,11 +70,14 @@ def test_linking_architecture():
     out = call("linking_architecture", page_count=12000, links_per_hub=100)
     assert out["hub_levels"] == [120, 2]
     assert out["total_hub_pages"] == 122
-    assert out["click_depth_from_home"] == 4 and out["depth_ok"]
+    # home → 2 top hubs → 120 leaf hubs → page = 3 clicks (the playbook's ≤ 3 rule)
+    assert out["click_depth_from_home"] == 3 and out["depth_ok"]
+    via_categories = call("linking_architecture", page_count=12000, links_per_hub=100, existing_authority_pages=5)
+    assert via_categories["hub_levels"] == [120] and via_categories["click_depth_from_home"] == 3
     assert out["sitemaps"] == 1
     assert out["rollout"] == {"phase_1_pages": 1200, "phase_1_gate": "≥ 60% indexed and impressions on ≥ 30% of pages at 4 weeks", "remaining_pages": 10800, "weeks": 8, "pages_per_week": 1350}
     small = call("linking_architecture", page_count=80)
-    assert small["hub_levels"] == [] and small["click_depth_from_home"] == 2
+    assert small["hub_levels"] == [] and small["click_depth_from_home"] == 1
     huge = call("linking_architecture", page_count=2_000_000, links_per_hub=50)
     assert huge["sitemaps"] == 40 and huge["depth_ok"] is False
     with pytest.raises(ToolError):

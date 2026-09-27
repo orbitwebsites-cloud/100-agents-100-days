@@ -102,3 +102,26 @@ def test_plan_session_two_minute_rule_and_deferral():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("plan_session").call({"items": [], "minutes_available": 30})
+
+
+def test_cold_pitch_thanks_only_and_non_urgent_routing():
+    out = call(
+        "score_priority",
+        emails=[
+            {"id": "cold", "from": "rick@talentsprint.io", "to": "alex@northwind.io", "subject": "Quick question", "body": "Are you hiring engineers? We have 5 pre-vetted candidates. Let me know if you'd like a quick call."},
+            {"id": "thx", "from": "lee@acme.com", "to": "alex@northwind.io", "subject": "Re: export fix", "body": "Thanks, that worked!"},
+            {"id": "coffee", "from": "tom@reyescapital.com", "to": "alex@northwind.io", "subject": "Coffee next week?", "body": "Would you be free for coffee next week? Happy to come to you.", "received": "2026-09-26"},
+            {"id": "renew", "from": "mark@brightline.io", "to": "alex@northwind.io", "subject": "Renewal", "body": "Please confirm by October 15 to lock the current terms. 12% increase.", "received": "2026-09-28"},
+        ],
+        me="alex@northwind.io", vips=["acme.com"], as_of="2026-09-29",
+    )
+    by = {r["id"]: r for r in out["emails"]}
+    assert by["cold"]["action"] == "Archive" and "cold outreach from an unknown sender" in by["cold"]["reasons"]
+    assert by["thx"]["action"] == "Archive"  # VIP, but nothing to answer
+    assert by["coffee"]["action"] == "Reply today"  # high score, no deadline pressure
+    assert by["renew"]["deadline"] == "2026-10-15" and by["renew"]["action"] != "Reply now"
+
+
+def test_reply_length_ignores_greeting_and_signoff():
+    out = call("fill_reply_template", template="Hi {name},\n\nOne. Two. Three. Four by Friday.\n\nBest,\nAlex", fields={"name": "Dana"}, max_sentences=4)
+    assert out["sentences"] == 4 and out["ready_to_send"] is True

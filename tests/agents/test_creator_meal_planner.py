@@ -49,10 +49,11 @@ def test_grocery_list_merges_units_and_pantry():
     produce = {r["item"]: r for r in out["by_aisle"]["produce"]}
     assert produce["onion"]["qty"] == 3 and produce["onion"]["used_in"] == ["Chili", "Curry"]
     meat = {r["item"]: r for r in out["by_aisle"]["meat & fish"]}
-    assert meat["ground beef"]["qty"] == round(453.592 + 300, 2) and meat["ground beef"]["display"] == "754 g"
+    assert meat["ground beef"]["qty"] == round(453.592 + 300, 2) and meat["ground beef"]["display"] == "754 g (1.66 lb)"
     assert out["skipped_from_pantry"] == ["olive oil"]
     assert out["items"] == 3 and out["merged_away"] == 2
-    assert out["checklist"][0].startswith("[ ] 3 each onion")
+    assert out["checklist"][0] == "[ ] onion: 3"
+    assert {r["item"] for r in out["by_aisle"]["pantry"]} == {"coconut milk"}
 
 
 def test_grocery_list_bad_input():

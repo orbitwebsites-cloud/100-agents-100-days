@@ -56,12 +56,17 @@ AGENT = Agent(
        pain ("frustrating", "hate", "waste"), workaround ("I just export to Excel"), wish ("I wish",
        "if only"), money/frequency ("every week", "$400/month"), and switching intent. Read each in
        context; a quote is only evidence if it describes the user's actual behaviour, not a
-       hypothetical ("I would probably…").
+       hypothetical ("I would probably…"). The tool is a keyword net, not a reader: on notes it
+       was not tuned on it surfaced only about 4 in 10 signal sentences ("reps forget to log
+       calls", "the approval chain is the bottleneck" carry no keyword). So read every interview
+       in full yourself; use the tool to rank quotes, catch numbers and flag hypotheticals, and
+       never treat "not returned by the tool" as "not said".
     2. **Tag observations.** Write one observation per sticky note: a single behaviour or belief, in
        the user's words where possible, tagged with interview ID and segment. 20-40 per interview
        is normal for a 45-minute session.
     3. **Cluster.** Call `interview_synthesizer__cluster_observations` with the observations. It
-       groups them by keyword affinity (Jaccard on content words, threshold 0.25 by default) and
+       groups them by keyword affinity (Jaccard on shared linking words, threshold 0.34 by default — lower it if
+       everything is a singleton, raise it if one cluster swallows unrelated notes) and
        returns clusters with member counts and the distinct interviews backing each. Rename every
        cluster as an insight sentence ("Ops managers rebuild the same report weekly because exports
        lose formatting"), never a topic label ("Exports").
@@ -126,12 +131,12 @@ AGENT = Agent(
 )
 
 SIGNALS: dict[str, re.Pattern] = {
-    "pain": re.compile(r"\b(frustrat|annoy|hate|painful|pain\b|waste|wasting|nightmare|confus|struggl|difficult|hard to|can'?t|cannot|impossible|broken|slow|tedious|manual|error|fail|lost|worst|terrible|ugh)", re.I),
-    "workaround": re.compile(r"\b(workaround|work around|i just|so i|instead i|hack|spreadsheet|excel|manually|copy[- ]paste|by hand|export(?:ed)? to|end up|ended up)\b", re.I),
+    "pain": re.compile(r"\b(frustrat|annoy|hate|painful|pain\b|problem|waste|wasting|nightmare|confus|struggl|difficult|hard to|can'?t|cannot|impossible|broken|slow|tedious|manual|error|fail|lost\b|lose\b|losing|worst|terrible|ugh|drives? me crazy|mess\b|messy|scattered|slipped|risk|flaky|buggy|clunky|unreliable|stuck|falls? apart|missed|eats (?:my|our|up)|takes (?:weeks|days|hours|forever|ages))", re.I),
+    "workaround": re.compile(r"\b(workaround|work around|i just|so i|so now i|instead i|hack|spreadsheet|excel|manually|copy[- ]paste|by hand|re-?type|re-?enter|as (?:a )?backup|on paper|sticky notes?|export(?:ed)? to|end up|ended up)\b", re.I),
     "wish": re.compile(r"\b(i wish|if only|would love|would be (?:great|nice|amazing)|it'?d be|should be able|why can'?t|i'?d like|ideally|dream)\b", re.I),
-    "money_frequency": re.compile(r"(\$\s?\d[\d,.]*k?|\d+\s?(?:dollars|usd|eur|gbp|€|£)|\b(?:every|each|per)\s+(?:day|week|month|hour|morning|sprint)|\b(?:daily|weekly|monthly|hourly)\b|\b\d+\s*(?:hours?|minutes?|mins?|times|x)\s+(?:a|per|each)\s+(?:day|week|month))", re.I),
+    "money_frequency": re.compile(r"(\$\s?\d[\d,.]*k?|\d+\s?(?:dollars|usd|eur|gbp|€|£)|\b(?:every|each|per)\s+(?:single\s+)?(?:day|week|month|quarter|hour|morning|sprint|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend)|\b(?:monday|tuesday|wednesday|thursday|friday|sunday) (?:mornings|afternoons|evenings|nights)\b|\b(?:daily|weekly|monthly|hourly|twice|month[- ]end|end of (?:the )?(?:month|quarter|year))\b|\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|a few|several)\s*(?:hours?|minutes?|mins?|days?|weeks?|times|x)\b)", re.I),
     "switching": re.compile(r"\b(switch(?:ed|ing)?|cancel(?:led|ing)?|churn|moved to|left|tried \w+ instead|competitor|alternative|looking at|evaluat)", re.I),
-    "hypothetical": re.compile(r"\b(i would (?:probably|maybe|definitely)?\s?(?:use|try|pay|buy|want)|might use|could see myself|in theory|hypothetically|if you built)\b", re.I),
+    "hypothetical": re.compile(r"\b(i would (?:probably|maybe|definitely)?\s?(?:use|try|pay|buy|want)|i'?d (?:probably |definitely )?(?:use|pay|buy)|(?:i )?might (?:use|pay|buy|try)|would pay|could see myself|in theory|hypothetically|if you built|if there (?:was|were))\b", re.I),
 }
 _SPLIT_RE = re.compile(r"^\s*(?:#+\s*)?(?:interview|participant|session|user)\s*#?\s*(\d+|[A-Z])\b[^\n]*$|^\s*(P\d{1,3})\b[^\n]*$", re.I | re.M)
 
@@ -194,15 +199,18 @@ def extract_signals(notes: str, max_quotes: int = 40) -> dict:
 
 
 @AGENT.tool
-def cluster_observations(observations: list[dict], threshold: float = 0.25) -> dict:
+def cluster_observations(observations: list[dict], threshold: float = 0.34) -> dict:
     """Group observations into affinity clusters by keyword overlap, with distinct-interview counts.
 
-    Single-link clustering on Jaccard similarity of content words. Returns clusters (largest first)
-    with member texts, interviews backing each, and shared keywords to help you name the insight.
+    Single-link clustering on Jaccard similarity of *linking* content words: stemmed words that appear
+    in at least two observations and in at most half of them. One-off words can never link two
+    sticky notes, so leaving them out stops short notes from looking dissimilar just because they are
+    worded differently; ubiquitous words ("client") are dropped so they cannot chain every note together.
+    Returns clusters (largest first) with member texts, interviews backing each, and shared keywords.
 
     Args:
         observations: List of {"text": str, "interview": str, "segment": str (optional)}; up to 500.
-        threshold: Jaccard similarity needed to link two observations (0.1-0.9; default 0.25).
+        threshold: Jaccard similarity of linking words needed to link two observations (0.1-0.9; default 0.34, i.e. more than one shared word in three).
     """
     rows = check_rows(observations, "observations")
     if not isinstance(threshold, (int, float)) or not 0.1 <= threshold <= 0.9:
@@ -214,6 +222,10 @@ def cluster_observations(observations: list[dict], threshold: float = 0.25) -> d
         items.append({"text": str(raw["text"]).strip(), "interview": str(raw.get("interview", "?")), "segment": str(raw.get("segment", "")) or None, "terms": term_set(str(raw["text"]))})
     n = len(items)
     parent = list(range(n))
+    df = Counter(w for it in items for w in it["terms"])
+    max_df = max(2, n // 2)
+    for it in items:
+        it["link"] = frozenset(w for w in it["terms"] if 2 <= df[w] <= max_df)
 
     def find(x: int) -> int:
         while parent[x] != x:
@@ -223,7 +235,7 @@ def cluster_observations(observations: list[dict], threshold: float = 0.25) -> d
 
     for i in range(n):
         for j in range(i + 1, n):
-            if jaccard(items[i]["terms"], items[j]["terms"]) >= threshold:
+            if jaccard(items[i]["link"], items[j]["link"]) >= threshold:
                 parent[find(i)] = find(j)
     groups: dict[int, list[int]] = defaultdict(list)
     for i in range(n):

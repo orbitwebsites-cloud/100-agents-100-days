@@ -85,11 +85,13 @@ def _resolve_term(matched: str, lookup: dict[str, str], stems: list[str]) -> str
     return next((t for t in stems if low.startswith(t[:-1].lower())), matched)
 
 
-def scan_lexicon(body: str, lexicon: dict[str, str]) -> list[dict]:
+def scan_lexicon(body: str, lexicon: dict[str, str], skip: dict[str, "re.Pattern"] | None = None) -> list[dict]:
     """Find every lexicon term (word-bounded, case-insensitive; 'stem*' = prefix) in body in one pass.
 
     lexicon maps term -> suggestion/reason. Terms are ours (not user input), so the
-    compiled regex is safe. Returns [{term, count, suggestion, sample, matched}] sorted by count;
+    compiled regex is safe. `skip` maps a term to a regex matched against the hit's surface
+    form plus the following ~30 characters; a match vetoes that hit.
+    Returns [{term, count, suggestion, sample, matched}] sorted by count;
     `matched` lists the surface forms found (useful for stems).
     """
     if not body or not lexicon:
@@ -100,6 +102,10 @@ def scan_lexicon(body: str, lexicon: dict[str, str]) -> list[dict]:
     forms: dict[str, set[str]] = {}
     for m in pat.finditer(body):
         term = _resolve_term(m.group(0), lookup, stems)
+        # skip[term] vetoes a hit by its surface form + the next few words ("family leave",
+        # "competencies", "mature product") so benefit/functional uses aren't flagged.
+        if skip and term in skip and skip[term].match(body[m.start() : m.end() + 30].lower()):
+            continue
         counts[term] += 1
         first.setdefault(term, m.start())
         forms.setdefault(term, set()).add(m.group(0).lower())
@@ -216,7 +222,8 @@ _GENERIC_ACRONYMS = frozenset(
     "THE AND FOR YOU OUR ARE NOT WITH FROM THIS THAT WILL EEO USA US UK EU II III IV VP HQ NY NYC SF LA DC CA TX WA MA CO IL GA FL NJ PST EST CET".split()
 )
 # Capitalised word mid-sentence (after a lowercase word) — catches product/company names like "Stripe".
-_PROPER_RE = re.compile(r"(?<=[a-z,;] )([A-Z][a-z]{2,})(?![\w.])")
+# Not followed by a word char or ".js"-style suffix; a sentence-ending period is fine ("…and Gainsight.").
+_PROPER_RE = re.compile(r"(?<=[a-z,;] )([A-Z][a-z]{2,})(?!\w|\.\w)")
 _COMMON_CAPS = frozenset(
     """Bachelor Bachelors Master Masters Degree Experience Senior Junior Strong Ability Company Team Role
     January February March April May June July August September October November December Monday Tuesday
@@ -335,12 +342,16 @@ def split_requirements(jd: str) -> list[dict]:
                 current_tier = "nice"
             elif MUST_CUES.search(line) or re.search(r"\b(about you|looking for)\b", line, re.I):
                 current_tier = "must"
-            elif re.search(r"^\s*about\b|\b(benefits|perks|we offer|compensation|why join|our team|who we are)\b", line, re.I):
+            elif re.search(r"\b(benefits|perks|we offer|compensation|why join|what.s in it for you)\b", line, re.I):
+                current_tier = "offer"  # what the employer gives, never a requirement ("base plus commission")
+            elif re.search(r"^\s*about\b|\b(our team|who we are)\b", line, re.I):
                 current_tier = "unclear"
             elif re.search(r"\b(responsibilit|what you.ll do|what you will do|you will|day[- ]to[- ]day|duties|the role|in this role)", line, re.I):
                 current_tier = "duty"
             continue
         if not is_bullet and len(text.words(line)) < 4:
+            continue
+        if current_tier == "offer":
             continue
         body = BULLET_RE.sub("", raw).strip() if is_bullet else line
         tier = current_tier

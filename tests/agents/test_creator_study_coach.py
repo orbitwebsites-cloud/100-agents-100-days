@@ -19,17 +19,18 @@ def test_sm2_review_exact_algorithm():
         cards=[
             {"id": "new-5", "quality": 5},  # new card, perfect → rep 1, interval 1, ease 2.6
             {"id": "second-4", "quality": 4, "repetitions": 1, "interval_days": 1, "ease": 2.5},  # → rep 2, interval 6, ease 2.5
-            {"id": "third-3", "quality": 3, "repetitions": 2, "interval_days": 6, "ease": 2.5},  # → rep 3, interval round(6*2.36)=14, ease 2.36
-            {"id": "lapse-1", "quality": 1, "repetitions": 4, "interval_days": 30, "ease": 2.5},  # → reset, interval 1, ease 1.96
+            {"id": "third-3", "quality": 3, "repetitions": 2, "interval_days": 6, "ease": 2.5},  # → rep 3, interval ceil(6*2.36)=15 (SM-2 rounds up), ease 2.36
+            {"id": "lapse-1", "quality": 1, "repetitions": 4, "interval_days": 30, "ease": 2.5},  # → reset, interval 1, ease UNCHANGED 2.5 (SM-2 step 6)
             {"id": "floor", "quality": 0, "repetitions": 1, "interval_days": 1, "ease": 1.3},  # ease floor 1.3
         ],
     )
     by = {c["id"]: c for c in out["cards"]}
     assert by["new-5"]["interval_days"] == 1 and by["new-5"]["ease"] == 2.6 and by["new-5"]["due"] == "2026-10-02"
     assert by["second-4"]["interval_days"] == 6 and by["second-4"]["ease"] == 2.5 and by["second-4"]["due"] == "2026-10-07"
-    assert by["third-3"]["interval_days"] == 14 and by["third-3"]["ease"] == 2.36 and by["third-3"]["status"] == "review"
-    assert by["lapse-1"]["repetitions"] == 0 and by["lapse-1"]["interval_days"] == 1 and by["lapse-1"]["ease"] == 1.96
+    assert by["third-3"]["interval_days"] == 15 and by["third-3"]["ease"] == 2.36 and by["third-3"]["status"] == "review"
+    assert by["lapse-1"]["repetitions"] == 0 and by["lapse-1"]["interval_days"] == 1 and by["lapse-1"]["ease"] == 2.5
     assert by["floor"]["ease"] == 1.3
+    assert out["redrill_today"] == ["third-3", "lapse-1", "floor"]
     assert out["lapses"] == 2 and out["next_review_date"] == "2026-10-02"
 
 
@@ -82,7 +83,7 @@ def test_anki_export_lints_and_escapes():
     lines = out["file_content"].splitlines()
     assert lines[0] == "#separator:tab" and "#deck:Biochem" in lines
     assert lines[4].split("\t")[2] == "biochem krebs_cycle"
-    assert '"What does ""anaplerotic""\tmean?"' in out["file_content"] and "Replenishes cycle<br>intermediates" in out["file_content"]
+    assert '"What does ""anaplerotic""\tmean?"' in out["file_content"] and '"Replenishes cycle\nintermediates"' in out["file_content"] and "<br>" not in out["file_content"]
 
 
 def test_anki_export_bad_input():

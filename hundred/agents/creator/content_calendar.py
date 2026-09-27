@@ -135,7 +135,8 @@ _DAY_LOOKUP.update({d.lower(): i for i, d in enumerate(["monday", "tuesday", "we
 # Platform table: hard caption/title limits, mention/hashtag rules, default slot days (preference
 # order) and a sane default time. Limits are the platforms' documented maximums.
 PLATFORMS: dict[str, dict] = {
-    "instagram": {"limit": 2200, "fold": 125, "max_hashtags": 30, "best_hashtags": (3, 5), "days": [1, 3, 2, 0, 4, 5, 6], "time": "11:00", "minutes": 45},
+    # Instagram caps captions at 5 hashtags per post/Reel since Dec 2025 (was 30).
+    "instagram": {"limit": 2200, "fold": 125, "max_hashtags": 5, "best_hashtags": (3, 5), "days": [1, 3, 2, 0, 4, 5, 6], "time": "11:00", "minutes": 45},
     "tiktok": {"limit": 4000, "fold": 100, "max_hashtags": None, "best_hashtags": (3, 5), "days": [1, 3, 4, 2, 0, 5, 6], "time": "18:00", "minutes": 75},
     "youtube": {"limit": 5000, "title_limit": 100, "fold": 157, "max_hashtags": 60, "best_hashtags": (0, 3), "days": [4, 5, 3, 1, 6, 2, 0], "time": "15:00", "minutes": 360},
     "youtube_shorts": {"limit": 5000, "title_limit": 100, "fold": 157, "max_hashtags": 60, "best_hashtags": (1, 3), "days": [1, 3, 5, 0, 2, 4, 6], "time": "16:00", "minutes": 75},
@@ -192,14 +193,16 @@ def build_schedule(
     """Generate dated posting slots for several platforms with rotated pillars, times and creation deadlines.
 
     Spreads each platform's weekly posts over its best default days (or the days you specify),
-    assigns a default posting time per platform, rotates content pillars so consecutive posts differ,
-    converts each slot to the audience timezone, and reports per-day load and warnings.
+    assigns a default posting time per platform — anchored in the audience's timezone when one is
+    given, converted to the creator's clock per date (DST-aware) — rotates content pillars so
+    consecutive posts differ, and reports per-day load, creation deadlines and warnings.
 
     Args:
         start_date: First day of the calendar as YYYY-MM-DD (any weekday; weeks run from this date).
         weeks: Number of weeks to plan, 1-12.
         platforms: One dict per platform: {"platform": "instagram", "posts_per_week": 3,
             "days": ["Tue","Thu","Sat"] (optional), "time": "11:00" (optional, creator local time)}.
+            posts_per_week may be 0.5 (every other week) or 0.25 (every 4th week) for heavy formats.
         pillars: Content pillar names to rotate through, e.g. ["Educate", "Story", "Community", "Promo"].
         timezone: Creator's IANA timezone (posting times are in this zone). Default UTC.
         audience_timezone: Optional IANA timezone of the main audience; each slot is also shown in it.
@@ -224,12 +227,21 @@ def build_schedule(
             raise ToolError("Each platform entry must be a dict like {'platform': 'x', 'posts_per_week': 5}")
         p = norm_platform(spec.get("platform", ""))
         n = spec.get("posts_per_week", 1)
-        if not isinstance(n, int) or not 1 <= n <= 14:
-            raise ToolError(f"{p}: posts_per_week must be an integer 1-14")
+        every = 1
+        if isinstance(n, float) and n.is_integer():
+            n = int(n)
+        if isinstance(n, float) and n in (0.5, 0.25):
+            every, n = int(round(1 / n)), 1
+        elif not isinstance(n, int) or not 1 <= n <= 14:
+            raise ToolError(f"{p}: posts_per_week must be an integer 1-14, or 0.5 / 0.25 for every 2nd / 4th week")
         days = _parse_days(spec.get("days"), p, n)
-        hhmm = str(spec.get("time") or PLATFORMS[p]["time"])
+        explicit = spec.get("time")
+        hhmm = str(explicit or PLATFORMS[p]["time"])
         h, m = parse_hhmm(hhmm)
+        anchor = aud_zone if (aud_zone and not explicit) else zone  # default times target the audience's clock
         for w in range(weeks):
+            if w % every:
+                continue
             week_start = start + timedelta(days=7 * w)
             for k in range(n):
                 wd = days[k % len(days)]
@@ -237,21 +249,22 @@ def build_schedule(
                 d = week_start + timedelta(days=offset)
                 if d >= start + timedelta(days=7 * weeks):
                     d -= timedelta(days=7)
-                slots.append({"date": d, "platform": p, "time": f"{h:02d}:{m:02d}"})
-    slots.sort(key=lambda s: (s["date"], s["time"], s["platform"]))
+                local = datetime(d.year, d.month, d.day, h, m, tzinfo=anchor).astimezone(zone)
+                slots.append({"dt": local, "platform": p, "anchored": "audience" if anchor is not zone else "creator"})
+    slots.sort(key=lambda s: (s["dt"], s["platform"]))
 
     rows, load = [], Counter()
     last_pillar = None
     pillar_idx = 0
     for i, s in enumerate(slots, 1):
+        s["date"], s["time"] = s["dt"].date(), s["dt"].strftime("%H:%M")
         pillar = pillars[pillar_idx % len(pillars)]
         if pillar == last_pillar and len(pillars) > 1:
             pillar_idx += 1
             pillar = pillars[pillar_idx % len(pillars)]
         pillar_idx += 1
         last_pillar = pillar
-        h, m = parse_hhmm(s["time"])
-        local = datetime(s["date"].year, s["date"].month, s["date"].day, h, m, tzinfo=zone)
+        local = s["dt"]
         row = {
             "n": i,
             "date": s["date"].isoformat(),
@@ -259,6 +272,7 @@ def build_schedule(
             "week": (s["date"] - start).days // 7 + 1,
             "platform": s["platform"],
             "time_local": s["time"],
+            "time_anchored_to": s["anchored"],
             "pillar": pillar,
             "create_by": (s["date"] - timedelta(days=lead_days)).isoformat(),
         }
@@ -270,6 +284,9 @@ def build_schedule(
         load[s["date"].isoformat()] += 1
 
     warnings = []
+    early = [r for r in rows if r["create_by"] < start.isoformat()]
+    if early:
+        warnings.append(f"{len(early)} slot(s) have a create-by date before the calendar starts — make those in the first batch session.")
     heavy = [(d, c) for d, c in sorted(load.items()) if c >= 4]
     if heavy:
         warnings.append(f"{len(heavy)} day(s) carry 4+ posts (e.g. {heavy[0][0]}: {heavy[0][1]}). Spread or batch-create them.")
@@ -486,34 +503,57 @@ def capacity_check(hours_per_week: float, platforms: list[dict], repurpose_share
         p = norm_platform(spec.get("platform", ""))
         n = spec.get("posts_per_week", 1)
         if not isinstance(n, (int, float)) or n <= 0 or n > 21:
-            raise ToolError(f"{p}: posts_per_week must be 1-21")
+            raise ToolError(f"{p}: posts_per_week must be > 0 and ≤ 21 (0.5 = every other week)")
         mpp = spec.get("minutes_per_post") or PLATFORMS[p]["minutes"]
         if not isinstance(mpp, (int, float)) or mpp <= 0:
             raise ToolError(f"{p}: minutes_per_post must be > 0")
         effective = mpp * (1 - repurpose_share * 0.75)
         cost = n * effective
         total += cost
-        lines.append({"platform": p, "posts_per_week": n, "minutes_per_post": mpp, "weekly_minutes": round(cost)})
+        lines.append({"platform": p, "posts_per_week": n, "minutes_per_post": mpp, "weekly_minutes": round(cost), "_eff": effective})
     ratio = total / budget
-    fit_plan = []
+    fit_plan, fit_minutes, notes = [], total, []
     if ratio > 1:
-        scale = 1 / ratio
-        for ln in lines:
-            fitted = max(1, int(ln["posts_per_week"] * scale)) if ln["posts_per_week"] >= 1 else ln["posts_per_week"]
-            fit_plan.append({"platform": ln["platform"], "posts_per_week": fitted})
-        fit_minutes = sum(f["posts_per_week"] * ln["weekly_minutes"] / ln["posts_per_week"] for f, ln in zip(fit_plan, lines))
-        while fit_minutes > budget and any(f["posts_per_week"] > 1 for f in fit_plan):
-            # drop one post from the most expensive platform still above 1/week
-            idx = max((i for i, f in enumerate(fit_plan) if f["posts_per_week"] > 1), key=lambda i: lines[i]["minutes_per_post"])
-            fit_plan[idx]["posts_per_week"] -= 1
-            fit_minutes = sum(f["posts_per_week"] * ln["weekly_minutes"] / ln["posts_per_week"] for f, ln in zip(fit_plan, lines))
-        if fit_minutes > budget:
-            fit_plan = sorted(fit_plan, key=lambda f: lines[[x["platform"] for x in lines].index(f["platform"])]["minutes_per_post"])[:2]
-            note = "Even at 1 post/week per platform the plan does not fit; keep the two cheapest platforms."
-        else:
-            note = "Scaled cadence that fits the weekly budget."
+        eff = [ln["_eff"] for ln in lines]
+        desired = [float(ln["posts_per_week"]) for ln in lines]
+        cur = [float(max(1, int(d / ratio))) if d >= 1 else d for d in desired]
+
+        def cost() -> float:
+            return sum(c * e for c, e in zip(cur, eff))
+
+        # 1. trim the most expensive platform that still posts more than once a week
+        while cost() > budget and any(c > 1 for c in cur):
+            i = max((i for i, c in enumerate(cur) if c > 1), key=lambda i: eff[i])
+            cur[i] -= 1
+        # 2. still over at 1/week each: move the most expensive platform to every other week, then drop platforms
+        while cost() > budget and any(c > 0 for c in cur):
+            i = max((i for i, c in enumerate(cur) if c > 0), key=lambda i: eff[i])
+            if cur[i] >= 1:
+                cur[i] = 0.5
+                notes.append(f"{lines[i]['platform']} moves to every other week")
+            else:
+                cur[i] = 0.0
+                notes.append(f"{lines[i]['platform']} is dropped for now")
+        # 3. give spare minutes back, cheapest platform first, up to the desired cadence
+        grew = True
+        while grew:
+            grew = False
+            for i in sorted(range(len(cur)), key=lambda i: eff[i]):
+                if cur[i] <= 0:
+                    continue
+                nxt = 1.0 if cur[i] < 1 else cur[i] + 1
+                if nxt <= desired[i] and cost() + (nxt - cur[i]) * eff[i] <= budget:
+                    cur[i] = nxt
+                    grew = True
+        fit_minutes = cost()
+        for ln, c in zip(lines, cur):
+            if c > 0:
+                fit_plan.append({"platform": ln["platform"], "posts_per_week": int(c) if c >= 1 else c, "cadence": f"{int(c)}/week" if c >= 1 else "every other week"})
+        note = "Scaled cadence that fits the weekly budget" + (": " + "; ".join(notes) if notes else "") + f". Uses {fit_minutes / 60:.1f} of {hours_per_week:g} h."
     else:
         note = "Plan fits."
+    for ln in lines:
+        ln.pop("_eff", None)
     verdict = (
         f"Needs {total / 60:.1f} h/wk against {hours_per_week:g} h available ({ratio:.0%} of capacity). "
         + ("Fits" + (" with little slack — expect misses on busy weeks." if ratio > 0.85 else ".") if ratio <= 1 else "Over capacity — use fit_plan.")
@@ -526,5 +566,6 @@ def capacity_check(hours_per_week: float, platforms: list[dict], repurpose_share
         "per_platform": lines,
         "fit_plan": fit_plan,
         "fit_plan_note": note if ratio > 1 else "",
+        "fit_plan_hours": round(fit_minutes / 60, 1) if ratio > 1 else None,
         "verdict": verdict,
     }

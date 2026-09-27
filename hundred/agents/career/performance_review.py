@@ -147,10 +147,10 @@ TRAIT_WORDS = {
     "careless": "name the defects and their cost",
     "passionate": "describe what they did",
     "immature": "describe the specific behaviour",
-    "abrasive": "describe the words used and their effect on whom",
-    "aggressive": "describe the words/actions and their effect",
-    "bossy": "describe the behaviour and its effect",
-    "emotional": "describe the behaviour and its effect",
+    "abrasive": "describe the words used and their effect on whom — gender-skewed descriptor (appears far more in women's reviews, Snyder 2014)",
+    "aggressive": "describe the words/actions and their effect — gender-skewed descriptor (appears far more in women's reviews, Snyder 2014)",
+    "bossy": "describe the behaviour and its effect — gender-skewed descriptor (appears far more in women's reviews, Snyder 2014)",
+    "emotional": "describe the behaviour and its effect — gender-skewed descriptor (appears far more in women's reviews, Snyder 2014)",
     "helpful": "describe what they did and its measured effect",
     "pleasant": "outcome, not personality",
     "nice": "outcome, not personality",
@@ -216,6 +216,10 @@ def format_sbi(items: list[dict]) -> dict:
             sit = "in " + sit
         sit = sit[0].lower() + sit[1:] if not sit.startswith("[") else sit
         beh = b.rstrip(".") if b else "[what did they do?]"
+        trait_terms = [x for x in issues if x.startswith("trait instead of behaviour")]
+        if trait_terms:
+            # Don't launder a trait into a sentence ("you abrasive…"); leave a placeholder the manager must fill.
+            beh = "[what did they do or say, observably? — not " + trait_terms[0].split(": ", 1)[1] + "]"
         if not beh.startswith("["):
             beh = re.sub(r"^(?:he|she|they|you)\s+(?:is|was|are|were|has been|have been)?\s*", "", beh, flags=re.I)
             beh = re.sub(r"^(?:is|was|are|were)\s+", "", beh, flags=re.I)
@@ -235,9 +239,9 @@ def format_sbi(items: list[dict]) -> dict:
     }
 
 
-PERSONALITY = {**{k: v for k, v in TRAIT_WORDS.items()}, "personality": "describe behaviour", "energy": "describe behaviour", "likeable": "remove", "charming": "remove", "warm": "remove", "supportive": "what did they do, with what effect?", "kind": "remove", "loud": "describe the behaviour", "quiet": "describe the behaviour and impact", "shy": "describe the behaviour and impact", "confident": "describe the behaviour", "mature": "remove (age-coded)", "young": "remove (age-coded)", "family": "remove (family status)", "pregnan": "remove (protected)", "kids": "remove (family status)", "maternity": "remove (protected)", "accent": "remove (national origin)", "health": "remove (protected)", "religio": "remove (protected)"}
+PERSONALITY = {**{k: v for k, v in TRAIT_WORDS.items()}, "personality": "describe behaviour", "energy": "describe behaviour", "likeable": "remove", "charming": "remove", "warm": "remove", "supportive": "what did they do, with what effect?", "kind": "remove", "loud": "describe the behaviour", "quiet": "describe the behaviour and impact", "shy": "describe the behaviour and impact", "confident": "describe the behaviour", "mature": "remove (age-coded)", "young": "remove (age-coded)", "family": "remove (family status)", "pregnan*": "remove (protected)", "kids": "remove (family status)", "maternity": "remove (protected)", "paternity": "remove (family status)", "medical leave": "remove (protected)", "disabilit*": "remove (protected)", "age": "remove (protected)", "accent": "remove (national origin)", "health": "remove (protected)", "religio*": "remove (protected)", "committed": "commitment judged how? cite hours, deadlines or deliverables — 'less committed' after leave is a classic bias pattern", "pleasure to work with": "personality, not performance — what did they do, with what effect?"}
 OUTCOME_RE = re.compile(r"\b(shipped|delivered|launched|reduced|increased|cut|grew|saved|closed|hit|missed|exceeded|achieved|migrated|fixed|resolved|built|wrote|presented|led|onboarded|mentored|automated|improved|retained|won|lost|completed|%|\$|revenue|latency|uptime|churn|nps|velocity|bugs?|incidents?|tickets?|customers?|users?|deals?|\d+)\b", re.I)
-VAGUE_PRAISE = {"great job": "which job, what result?", "did well": "what and how measured?", "good work": "which work?", "solid contributor": "contributed what?", "valuable member": "what value, measured how?", "went above and beyond": "what specifically?", "excellent": "at what, evidenced by?", "outstanding": "at what, evidenced by?", "strong performer": "which goals, what attainment?", "has potential": "potential for what, based on what evidence?", "high potential": "based on what evidence?", "needs to improve": "what behaviour, to what standard, by when?", "could be better": "what behaviour, to what standard, by when?", "communication skills": "which communication behaviour?", "step up": "what specifically?"}
+VAGUE_PRAISE = {"solid": "solid at what, evidenced by?", "seems": "observed or inferred? cite the behaviour", "seemed": "observed or inferred? cite the behaviour", "great job": "which job, what result?", "did well": "what and how measured?", "good work": "which work?", "solid contributor": "contributed what?", "valuable member": "what value, measured how?", "went above and beyond": "what specifically?", "excellent": "at what, evidenced by?", "outstanding": "at what, evidenced by?", "strong performer": "which goals, what attainment?", "has potential": "potential for what, based on what evidence?", "high potential": "based on what evidence?", "needs to improve": "what behaviour, to what standard, by when?", "could be better": "what behaviour, to what standard, by when?", "communication skills": "which communication behaviour?", "step up": "what specifically?"}
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 DATE_MENTION_RE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s+\d{1,2})?(?:,?\s+(\d{4}))?\b|\b(\d{4})-(\d{2})(?:-\d{2})?\b|\b(q[1-4])\b", re.I)
 
@@ -432,9 +436,14 @@ def calibrate_ratings(ratings: list[dict], scale_max: int = 5, expected_distribu
     dist = {k: pct(sum(1 for v in all_vals if round(v) == k), len(all_vals)) for k in range(1, scale_max + 1)}
     dist_gap = {k: round(dist[k] - expected.get(k, 0), 1) for k in dist}
     managers = {}
+    # Leniency vs the MEDIAN manager (with 3+ managers): one very lenient manager inflates the org
+    # mean and would otherwise make a normal manager look harsh.
+    mgr_means = {m: statistics.mean(v) for m, v in by_mgr.items()}
+    ref = statistics.median(mgr_means.values()) if len(mgr_means) >= 3 else mean
     for m, vals in by_mgr.items():
-        mm = statistics.mean(vals)
-        managers[m] = {"n": len(vals), "mean": round(mm, 2), "delta_vs_org": round(mm - mean, 2), "top_band_pct": pct(sum(1 for v in vals if v >= scale_max), len(vals)), "flag": ("lenient" if mm - mean >= 0.5 else "harsh" if mm - mean <= -0.5 else None) if len(vals) >= 3 else "too few to judge"}
+        mm = mgr_means[m]
+        d = mm - ref
+        managers[m] = {"n": len(vals), "mean": round(mm, 2), "delta_vs_org": round(mm - mean, 2), "delta_vs_median_manager": round(d, 2), "top_band_pct": pct(sum(1 for v in vals if v >= scale_max), len(vals)), "flag": ("lenient" if d >= 0.5 else "harsh" if d <= -0.5 else None) if len(vals) >= 3 else "too few to judge"}
     for r in rows:
         r["z_score"] = round((r["rating"] - mean) / sd, 2) if sd else 0.0
         r["needs_justification"] = r["rating"] >= scale_max or r["rating"] <= 1
@@ -446,7 +455,7 @@ def calibrate_ratings(ratings: list[dict], scale_max: int = 5, expected_distribu
         flags.append("almost no low ratings — either the team is exceptional or gaps aren't being named")
     for m, v in managers.items():
         if v["flag"] in ("lenient", "harsh"):
-            flags.append(f"{m} is {v['flag']}: mean {v['mean']} vs org {round(mean, 2)} — review their top/bottom cases first")
+            flags.append(f"{m} is {v['flag']}: mean {v['mean']} vs median manager {round(ref, 2)} (org mean {round(mean, 2)}) — review their top/bottom cases first")
     return {
         "n": len(rows),
         "org_mean": round(mean, 2),

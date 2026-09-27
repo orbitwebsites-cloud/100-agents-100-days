@@ -7,23 +7,28 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
 from ...core import Agent, ToolError
-from ._common import D, ZERO, as_rate, bound_rows, money, parse_iso, ratio_to_pct, require_nonneg, require_positive
+from ._common import D, as_pct, ZERO, as_rate, bound_rows, money, parse_iso, ratio_to_pct, require_nonneg, require_positive
 
+DEFAULTS_YEAR = 2026
 SCOPE_NOTE = (
-    "Estimate only, not tax advice. Default rates and brackets are approximations of recent US federal "
-    "figures and are NOT authoritative for any specific year — verify current IRS figures (Pub 505, "
-    "Schedule SE, Form 1040-ES) or pass this year's values as parameters. State tax is a flat "
-    "placeholder. Consult a CPA for anything unusual."
+    "Estimate only, not tax advice. Default brackets, standard deduction, SS wage base and mileage rate "
+    f"are the published {DEFAULTS_YEAR} US federal figures (IRS Rev. Proc. 2025-32, SSA 2026 wage base, "
+    "IRS Notice 2026-10 / Announcement 2026-11) as transcribed by us — verify them on IRS.gov (Pub 505, "
+    "Schedule SE, Form 1040-ES) and pass the correct year's values as parameters for any other year. "
+    "State tax is a flat placeholder. Consult a CPA or EA for anything unusual."
 )
 
-# Clearly-labelled defaults (approximate 2025 federal figures). Every one can be overridden by parameter.
+# Clearly-labelled defaults: tax year 2026 federal figures (IRS Rev. Proc. 2025-32 incl. OBBBA changes;
+# SSA wage base announced 2025-10-24). Every one can be overridden by parameter. Verify before relying on them.
 DEFAULT_BRACKETS = {
-    "single": [[0, 10], [11925, 12], [48475, 22], [103350, 24], [197300, 32], [250525, 35], [626350, 37]],
-    "married_joint": [[0, 10], [23850, 12], [96950, 22], [206700, 24], [394600, 32], [501050, 35], [751600, 37]],
-    "head_of_household": [[0, 10], [17000, 12], [64850, 22], [103350, 24], [197300, 32], [250500, 35], [626350, 37]],
+    "single": [[0, 10], [12400, 12], [50400, 22], [105700, 24], [201775, 32], [256225, 35], [640600, 37]],
+    "married_joint": [[0, 10], [24800, 12], [100800, 22], [211400, 24], [403550, 32], [512450, 35], [768700, 37]],
+    "head_of_household": [[0, 10], [17700, 12], [67450, 22], [105700, 24], [201775, 32], [256200, 35], [640600, 37]],
 }
-DEFAULT_STANDARD_DEDUCTION = {"single": 15000, "married_joint": 30000, "head_of_household": 22500}
-DEFAULT_SS_WAGE_BASE = 176100
+DEFAULT_STANDARD_DEDUCTION = {"single": 16100, "married_joint": 32200, "head_of_household": 24150}
+DEFAULT_SS_WAGE_BASE = 184500
+QBI_THRESHOLD = {"single": 201775, "married_joint": 403550, "head_of_household": 201775}  # 2026 taxable-income threshold where §199A limits begin
+DEFAULT_MILEAGE_RATE = 0.725  # 2026 Jan 1–Jun 30; 76¢ for miles driven Jul 1–Dec 31 2026 (IRS Announcement 2026-11)
 SE_NET_FACTOR = Decimal("0.9235")
 SS_RATE = Decimal("0.124")
 MEDICARE_RATE = Decimal("0.029")
@@ -64,8 +69,8 @@ AGENT = Agent(
     dollar amount to move into a tax account from every payment, the four payment dates, and whether
     they are protected from an underpayment penalty. The metric is **zero surprises in April**: no
     penalty, no scramble. Scope: US federal estimates with a flat state placeholder; estimates only,
-    not tax advice; defaults approximate recent IRS figures and must be verified or overridden for the
-    current year; hand off to a CPA for S-corp elections, multi-state, foreign income or anything odd.
+    not tax advice; defaults are the tax-year-2026 IRS figures as we transcribed them, must be
+    verified, and must be overridden for any other year; hand off to a CPA for S-corp elections, multi-state, foreign income or anything odd.
 
     ## Intake
     Needed: expected net self-employment profit for the year (revenue minus expenses), filing status,
@@ -75,8 +80,9 @@ AGENT = Agent(
 
     ## Procedure
     1. **Confirm figures.** If the user supplies this year's brackets, standard deduction or wage
-       base, pass them as parameters; otherwise use the tool defaults and state in the output that
-       they are approximate and must be verified against current IRS publications.
+       base, pass them as parameters; otherwise use the tool defaults (tax year 2026) and state in the
+       output that they are estimates to verify against current IRS publications. For any tax year
+       other than 2026, the defaults are wrong: pass that year's figures.
     2. **Project the year.** Call `freelance_tax__quarterly_estimate` with net SE profit, filing
        status, W-2 wages/withholding and any overrides. It computes SE tax on 92.35% of net profit
        (Social Security up to the wage base, Medicare with the 0.9% surtax above the threshold), the
@@ -89,14 +95,16 @@ AGENT = Agent(
        the threshold, default $150,000). Recommend paying to the safe-harbor number when income is
        rising and to 90% of current when it is falling — never less than safe harbor if cash allows.
     4. **Value deductions.** Call `freelance_tax__deduction_value` with the expense list and the
-       marginal rate from step 2. It applies the rules (meals 50%, home office simplified method at
+       two rates from step 2's `for_deduction_value` (never the raw bracket rate: the half-SE and QBI
+       deductions shrink what a deduction saves). It applies the rules (meals 50%, home office simplified method at
        the per-square-foot rate up to the cap, standard mileage rate, business-use percentage) and
        returns the deductible amount and tax saved (income tax + SE tax effect). Remind the user that
        a deduction saves tax at the marginal rate, not dollar for dollar.
     5. **Set the calendar.** Call `freelance_tax__payment_deadlines` with the tax year and today's
        date. It returns the four due dates (weekend-adjusted), the income period each covers, days
-       remaining and which payment is next. Put the next date and amount in the first line of the
-       output.
+       remaining and which payment is next. Put the next date in the first line of the output with
+       the amount from step 3's `per_remaining_quarter` (it includes any catch-up), not the even
+       annual ÷ 4 split, whenever a quarter has already been missed or underpaid.
     6. **Write the plan.** Include the per-invoice set-aside rule ("move X% of every deposit to the
        tax account the day it lands"), a separate tax account recommendation, and the annualised-income
        method note for lumpy income (Form 2210 Schedule AI) as a CPA question.
@@ -110,7 +118,8 @@ AGENT = Agent(
     - **Quarter periods are uneven**: Jan-Mar, Apr-May, Jun-Aug, Sep-Dec; due Apr 15, Jun 15,
       Sep 15, Jan 15 (next year), moved to the next business day when on a weekend or holiday.
     - **Deduction rules**: meals 50%; home office simplified $5/sq ft up to 300 sq ft (default;
-      verify); mileage at the standard rate (default 70¢; verify); phone/internet at business-use %.
+      verify); mileage at the standard rate (2026 default 72.5¢ Jan-Jun, 76¢ Jul-Dec — split the miles;
+      verify); phone/internet at business-use %.
 
     ## Output format
     ```
@@ -218,7 +227,7 @@ def quarterly_estimate(
     withheld = require_nonneg(D(w2_withholding, "w2_withholding"), "w2_withholding")
     other = require_nonneg(D(other_income, "other_income"), "other_income")
     paid = require_nonneg(D(payments_made, "payments_made"), "payments_made")
-    state = as_rate(state_rate_pct, "state_rate_pct")
+    state = as_pct(state_rate_pct, "state_rate_pct")
     if not 0 <= state <= Decimal("0.2"):
         raise ToolError("state_rate_pct must be 0-20")
     br = _validate_brackets(brackets) if brackets else DEFAULT_BRACKETS[filing_status]
@@ -226,20 +235,21 @@ def quarterly_estimate(
     base = D(ss_wage_base, "ss_wage_base") if ss_wage_base else D(DEFAULT_SS_WAGE_BASE)
     defaults_used = []
     if not brackets:
-        defaults_used.append("federal brackets (approx. 2025)")
+        defaults_used.append(f"federal brackets: {DEFAULTS_YEAR} tables (Rev. Proc. 2025-32) — estimate; verify current IRS figure")
     if not standard_deduction:
-        defaults_used.append(f"standard deduction ${money(std):,.0f} (approx. 2025)")
+        defaults_used.append(f"standard deduction ${money(std):,.0f} ({DEFAULTS_YEAR}) — estimate; verify current IRS figure")
     if not ss_wage_base:
-        defaults_used.append(f"SS wage base ${money(base):,.0f} (approx. 2025)")
+        defaults_used.append(f"SS wage base ${money(base):,.0f} ({DEFAULTS_YEAR}) — estimate; verify current SSA figure")
     # SE tax
     se_base = (net * SE_NET_FACTOR).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     ss_room = max(base - wages, ZERO)
     ss_tax = min(se_base, ss_room) * SS_RATE
     medicare = se_base * MEDICARE_RATE
     addl_thr = D(ADDL_MEDICARE_THRESHOLD[filing_status])
-    addl = max(se_base + wages - addl_thr, ZERO) * ADDL_MEDICARE_RATE
+    # Form 8959: the threshold is reduced (not below zero) by wages; the surtax applies to SE income above the rest
+    addl = max(se_base - max(addl_thr - wages, ZERO), ZERO) * ADDL_MEDICARE_RATE
     se_tax = ss_tax + medicare + addl
-    half_se = se_tax / 2
+    half_se = (ss_tax + medicare) / 2  # Schedule SE: the deduction is half of SE tax; the 0.9% surtax is not deductible
     # income tax
     agi = net + wages + other - half_se
     qbi = min(net - half_se, ZERO.max(agi - std)) * Decimal("0.2") if apply_qbi_deduction and net > 0 else ZERO
@@ -251,9 +261,15 @@ def quarterly_estimate(
     remaining = max(total - withheld - paid, ZERO)
     quarterly = (total - withheld) / 4
     set_aside = (se_tax + income_tax + state_tax - (_tax_from_brackets(max(wages + other - std, ZERO), br)[0] if (wages or other) else ZERO)) / net if net > 0 else ZERO
-    effective_se_marginal = SS_RATE + MEDICARE_RATE if se_base < ss_room else MEDICARE_RATE
-    combined_marginal = marginal / 100 + state + effective_se_marginal * SE_NET_FACTOR * (1 - marginal / 200)
-    qbi_flag = taxable > (190000 if filing_status != "married_joint" else 380000) and apply_qbi_deduction
+    # Marginal effect of one more (or one fewer, for a deduction) dollar of net SE profit:
+    se_rate = (SS_RATE + MEDICARE_RATE if se_base < ss_room else MEDICARE_RATE) * SE_NET_FACTOR  # 14.13% or 2.68%
+    deductible_se = se_rate / 2
+    if se_base + wages > addl_thr:
+        se_rate += ADDL_MEDICARE_RATE * SE_NET_FACTOR
+    qbi_factor = Decimal("0.8") if (apply_qbi_deduction and qbi > 0) else Decimal(1)
+    income_rate_per_dollar = (marginal / 100 + state) * (1 - deductible_se) * qbi_factor
+    combined_marginal = se_rate + income_rate_per_dollar
+    qbi_flag = taxable > QBI_THRESHOLD[filing_status] and apply_qbi_deduction
     return {
         "inputs": {"net_se_income": money(net), "filing_status": filing_status, "w2_wages": money(wages), "other_income": money(other)},
         "se_tax": {"se_base_92_35pct": money(se_base), "social_security": money(ss_tax), "medicare": money(medicare), "additional_medicare": money(addl), "total": money(se_tax), "half_se_deduction": money(half_se)},
@@ -266,8 +282,13 @@ def quarterly_estimate(
         "quarterly_payment": money(max(quarterly, ZERO)),
         "set_aside_pct_of_net": ratio_to_pct(set_aside),
         "combined_marginal_rate_pct": ratio_to_pct(combined_marginal),
+        "for_deduction_value": {
+            "marginal_income_rate_pct": ratio_to_pct(income_rate_per_dollar, 2),
+            "se_rate_effective_pct": ratio_to_pct(se_rate, 2),
+            "note": "income-tax saving per $1 of deduction after the half-SE and 20% QBI effects; pass both to deduction_value",
+        },
         "defaults_used": defaults_used,
-        "flags": (["taxable income above the QBI phase-out range — QBI deduction may be limited; CPA review"] if qbi_flag else []),
+        "flags": (["taxable income above the §199A threshold — QBI deduction may be limited (W-2 wage/SSTB rules); CPA review"] if qbi_flag else []),
         "verdict": f"Projected total ${money(total):,.0f} (SE ${money(se_tax):,.0f} + federal ${money(income_tax):,.0f}" + (f" + state ${money(state_tax):,.0f}" if state_tax else "") + f"); pay ${money(max(quarterly, ZERO)):,.0f} per quarter and set aside {ratio_to_pct(set_aside)}% of every net dollar. Marginal rate {float(marginal)}% federal.",
         "scope_note": SCOPE_NOTE,
     }
@@ -282,6 +303,7 @@ def safe_harbor(
     quarters_elapsed: int = 0,
     high_income_threshold: float = 150000,
     high_income_pct: float = 110,
+    withholding: float = 0,
 ) -> dict:
     """Required annual payment under the safe-harbor rule, and whether payments to date are on track.
 
@@ -296,6 +318,7 @@ def safe_harbor(
         quarters_elapsed: How many quarterly due dates have passed (0-4) to judge on-track status.
         high_income_threshold: Prior-year AGI above which the higher percentage applies (default 150000; verify; 75000 if married filing separately).
         high_income_pct: Percentage of prior-year tax required above the threshold (default 110).
+        withholding: W-2 withholding expected for the year (already included in paid_to_date if withheld so far); used for the under-$1,000 test.
     """
     prior = require_nonneg(D(prior_year_total_tax, "prior_year_total_tax"), "prior_year_total_tax")
     agi = require_nonneg(D(prior_year_agi, "prior_year_agi"), "prior_year_agi")
@@ -310,9 +333,10 @@ def safe_harbor(
     current_based = cur * Decimal("0.9")
     required = min(prior_based, current_based)
     basis = "prior-year" if prior_based <= current_based else "current-year 90%"
-    if cur < 1000:
+    wh = require_nonneg(D(withholding, "withholding"), "withholding")
+    if cur - wh < 1000:
         required = ZERO
-        basis = "no estimated tax required (projected tax under $1,000 after withholding — verify)"
+        basis = "no estimated tax required (projected tax minus withholding is under $1,000 — verify)"
     per_q = required / 4
     should_have_paid = per_q * quarters_elapsed
     shortfall = max(should_have_paid - paid, ZERO)
@@ -365,7 +389,7 @@ def deduction_value(
     se_rate_effective_pct: float = 14.13,
     home_office_rate_per_sqft: float = 5,
     home_office_max_sqft: int = 300,
-    mileage_rate: float = 0.70,
+    mileage_rate: float = DEFAULT_MILEAGE_RATE,
 ) -> dict:
     """Apply deduction rules to a list of expenses and value each at the marginal income + SE rate.
 
@@ -374,16 +398,16 @@ def deduction_value(
     travel, other. Tax saved = deductible × (marginal income rate + effective SE rate).
 
     Args:
-        expenses: List of {"type": str, "amount": n, "description": str (optional), "business_use_pct": n (optional, default 100), "sqft": n (home_office), "miles": n (mileage)}.
-        marginal_income_rate_pct: Your federal (+ state) marginal income tax rate, e.g. 22 or 27.
-        se_rate_effective_pct: Effective SE tax saved per deductible dollar (15.3% × 0.9235 ≈ 14.13%; use 2.68 if above the SS wage base). Verify.
+        expenses: List of {"type": str, "amount": n, "description": str (optional), "business_use_pct": n (optional, default 100), "sqft": n (home_office), "miles": n (mileage), "rate": n (mileage only, $/mile override for that row)}.
+        marginal_income_rate_pct: Income-tax saving per deductible dollar — use quarterly_estimate's for_deduction_value.marginal_income_rate_pct (bracket rate after the half-SE and 20% QBI effects, e.g. 16.36 in the 22% bracket), not the raw bracket rate.
+        se_rate_effective_pct: Effective SE tax saved per deductible dollar (15.3% × 0.9235 ≈ 14.13%; 2.68 above the SS wage base) — use quarterly_estimate's for_deduction_value.se_rate_effective_pct.
         home_office_rate_per_sqft: Simplified-method rate per square foot (default 5; verify current IRS figure).
         home_office_max_sqft: Simplified-method cap in square feet (default 300; verify).
-        mileage_rate: Standard mileage rate in dollars per mile (default 0.70; verify current IRS figure).
+        mileage_rate: Standard mileage rate in dollars per mile (default 0.725 = 2026 Jan-Jun rate; 0.76 applies Jul-Dec 2026 — give a mileage item its own "rate" to split; verify current IRS figure).
     """
     rows = bound_rows(expenses, "expenses", limit=300)
-    inc = as_rate(marginal_income_rate_pct, "marginal_income_rate_pct")
-    se = as_rate(se_rate_effective_pct, "se_rate_effective_pct")
+    inc = as_pct(marginal_income_rate_pct, "marginal_income_rate_pct")
+    se = as_pct(se_rate_effective_pct, "se_rate_effective_pct")
     if not 0 <= inc <= Decimal("0.6") or not 0 <= se <= Decimal("0.2"):
         raise ToolError("marginal_income_rate_pct must be 0-60 and se_rate_effective_pct 0-20")
     ho_rate = D(home_office_rate_per_sqft, "home_office_rate_per_sqft")
@@ -415,13 +439,18 @@ def deduction_value(
             miles = D(e.get("miles", 0), f"expenses[{i}].miles")
             if miles <= 0:
                 raise ToolError(f"expenses[{i}]: mileage needs 'miles'")
-            deductible = miles * mi_rate * use
+            row_rate = D(e["rate"], f"expenses[{i}].rate") if e.get("rate") not in (None, "") else mi_rate
+            if not 0 < row_rate < 5:
+                raise ToolError(f"expenses[{i}]: mileage rate looks wrong ({row_rate}); give dollars per mile like 0.725")
+            deductible = miles * row_rate * use
             amount = deductible
+            note = f"{rule} ({money(miles):,.0f} mi x ${row_rate}/mi)"
         else:
             deductible = amount * factor * use
             if use < 1:
                 note += f" at {ratio_to_pct(use)}% business use"
-        saved = deductible * combined if etype not in ("health_insurance", "retirement") else deductible * inc  # above-the-line items do not reduce SE tax
+        # above-the-line items do not reduce SE tax (nor the half-SE deduction), so their income-tax rate is inc / (1 - se/2)
+        saved = deductible * combined if etype not in ("health_insurance", "retirement") else deductible * inc / (1 - se / 2)
         if etype in ("health_insurance", "retirement"):
             note += " — reduces income tax only, not SE tax"
         out.append({"type": etype, "description": e.get("description", ""), "claimed": money(amount), "deductible": money(deductible), "tax_saved": money(saved), "rule": note})
@@ -439,8 +468,21 @@ def deduction_value(
     }
 
 
+def _observed(d: date) -> date:
+    """Federal observance: a Saturday holiday is observed Friday, a Sunday holiday Monday."""
+    return d - timedelta(days=1) if d.weekday() == 5 else d + timedelta(days=1) if d.weekday() == 6 else d
+
+
+def _holidays(year: int) -> set[date]:
+    """Holidays that can move a 1040-ES due date: DC Emancipation Day (Apr 16, observed) and MLK Day (3rd Monday of January)."""
+    jan1 = date(year, 1, 1)
+    first_monday = jan1 + timedelta(days=(7 - jan1.weekday()) % 7)
+    return {_observed(date(year, 4, 16)), first_monday + timedelta(days=14)}
+
+
 def _next_business_day(d: date) -> date:
-    while d.weekday() >= 5:
+    hol = _holidays(d.year)
+    while d.weekday() >= 5 or d in hol:
         d += timedelta(days=1)
     return d
 
@@ -449,8 +491,9 @@ def _next_business_day(d: date) -> date:
 def payment_deadlines(tax_year: int, as_of: str = "", annual_amount: float = 0) -> dict:
     """The four federal estimated-tax due dates for a tax year (weekend-adjusted), periods covered, and days remaining.
 
-    Due dates: Apr 15, Jun 15, Sep 15 of the tax year and Jan 15 of the next. Weekend dates roll to
-    Monday; federal holidays (e.g. Emancipation Day in DC) can shift them further — verify with the IRS.
+    Due dates: Apr 15, Jun 15, Sep 15 of the tax year and Jan 15 of the next, rolled to the next
+    business day past weekends, DC Emancipation Day (observed) and MLK Day — verify with the IRS
+    (disaster-area postponements are not modelled).
 
     Args:
         tax_year: The tax year, e.g. 2026.
@@ -483,6 +526,6 @@ def payment_deadlines(tax_year: int, as_of: str = "", annual_amount: float = 0) 
         "deadlines": rows,
         "next": nxt,
         "quarters_elapsed": passed,
-        "note": "Holiday shifts (e.g. Emancipation Day) are not modelled — verify the exact date on IRS.gov. Income earned in each period is what the payment covers; use the annualised method if income is lumpy.",
+        "note": "Weekends, DC Emancipation Day and MLK Day are applied; disaster postponements are not — verify the exact date on IRS.gov. Income earned in each period is what the payment covers; use the annualised method if income is lumpy.",
         "verdict": (f"Next: Q{nxt['quarter']} due {nxt['due']} ({nxt['weekday']}), {nxt['days_remaining']} days away" + (f", ${nxt['amount']:,.0f}" if nxt["amount"] else "") + f". {passed} of 4 deadlines passed.") if nxt else f"All four {tax_year} deadlines have passed; file and pay any balance with the return.",
     }

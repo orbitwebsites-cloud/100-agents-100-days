@@ -56,12 +56,15 @@ AGENT = Agent(
     ## Procedure
     1. **Compute the real number.** Call `salary_negotiator__compare_offers` with every offer
        (and the current job as an "offer" if the user has one). Read year-1 cash, year-1 total,
-       and the 4-year average. Public-company RSUs are cash-like; for private-company equity
+       and the 4-year average, then `crossover`: if the leader flips, tell the user which offer
+       wins if they leave after 1, 2 or 3 years — back-loaded vests often win only at year 4.
+       Public-company RSUs are cash-like; for private-company equity
        set `equity_haircut_pct` (typically 50-90 for early-stage; options with no 409A gap are
        worth ~0 today) and say the assumption out loud.
     2. **Map the vest.** If equity is material (> 15% of total), call
        `salary_negotiator__vesting_schedule` with the grant and start date. Show the cliff date
-       and what is forfeited if they leave at 12 / 24 months. Back-loaded schedules (5/15/40/40)
+       and what is forfeited if they leave at 12 / 24 months. Back-loaded schedules (5/15/40/40 — Amazon vests every 6 months after the
+       first year, so pass `frequency: "semiannual"`)
        change the counter: ask for a larger sign-on to bridge years 1-2.
     3. **Size the counter.** Call `salary_negotiator__plan_counter` with the offer base, market
        percentiles (p50/p75 if known), competing offer, and the user's walk-away. It returns the
@@ -247,6 +250,18 @@ def compare_offers(offers: list[dict], years: int = 4, equity_haircut_pct: float
     notes = [f"Bonus assumed paid at target; equity haircut {equity_haircut_pct:g}%, growth {equity_growth_pct:g}%/yr; sign-on counted in year 1 (and 2 if given)."]
     if cash_best["name"] != best["name"]:
         notes.append(f"{cash_best['name']} pays the most year-1 cash (${cash_best['year_1_cash']:,.0f}); {best['name']} wins on {years}-yr average — equity-weighted.")
+    # Who leads if the person leaves early? Back-loaded vests can win on the 4-year average
+    # yet lose on every shorter tenure — say so, with the year the lead flips.
+    leaders = [max(rows, key=lambda r: r["by_year"][y]["cumulative"])["name"] for y in range(years)]
+    crossover = None
+    if len(rows) > 1 and len(set(leaders)) > 1:
+        flip = next(y for y in range(1, years) if leaders[y] != leaders[y - 1])
+        crossover = {"leader_by_year": leaders, "early_leader": leaders[0], "overtaken_in_year": flip + 1, "final_leader": leaders[-1]}
+        notes.append(
+            f"{leaders[0]} leads on cumulative pay if you leave within {flip} year(s); {leaders[flip]} overtakes in year {flip + 1}"
+            + (f" and leads at year {years}" if leaders[-1] == leaders[flip] else "")
+            + " — the ranking depends on how long you stay."
+        )
     high_eq = [r["name"] for r in rows if r["equity_share_of_total_pct"] > 40]
     if high_eq:
         notes.append(f"Equity is > 40% of total for {', '.join(high_eq)} — confirm liquidity path, refresh policy and ask for a larger sign-on to de-risk years 1-2.")
@@ -256,6 +271,7 @@ def compare_offers(offers: list[dict], years: int = 4, equity_haircut_pct: float
         "best": best["name"],
         "offers": rows,
         "notes": notes,
+        "crossover": crossover,
         "verdict": f"{best['name']} leads on {years}-year average total comp (${best['average_annual_col_adjusted']:,.0f}/yr COL-adjusted)"
         + (f", ahead of {ranked[1]['name']} by ${ranked[0]['average_annual_col_adjusted'] - ranked[1]['average_annual_col_adjusted']:,.0f}/yr." if len(ranked) > 1 else "."),
     }
@@ -275,7 +291,7 @@ def vesting_schedule(
     start_date: str,
     vesting_years: int = 4,
     cliff_months: int = 12,
-    frequency: Literal["monthly", "quarterly", "annual"] = "quarterly",
+    frequency: Literal["monthly", "quarterly", "semiannual", "annual"] = "quarterly",
     schedule: Literal["even", "amazon", "front", "back", "custom"] = "even",
     custom_vest_pct: list[float] | None = None,
     leave_date: str = "",
@@ -287,7 +303,7 @@ def vesting_schedule(
         start_date: Vesting commencement date, YYYY-MM-DD (usually the start date).
         vesting_years: Total vesting period in years (1-10).
         cliff_months: Months before the first vest (0 = no cliff; 12 is standard).
-        frequency: Vest cadence after the cliff: monthly, quarterly or annual.
+        frequency: Vest cadence after the cliff: monthly, quarterly, semiannual (Amazon pays every 6 months after year 1) or annual.
         schedule: Per-year split: even, amazon (5/15/40/40), front (40/30/20/10), back (10/20/30/40) or custom.
         custom_vest_pct: Per-year percentages summing to 100 when schedule is custom.
         leave_date: Optional YYYY-MM-DD to compute vested vs forfeited if the person leaves that day.
@@ -303,7 +319,7 @@ def vesting_schedule(
     if schedule == "custom" and not custom_vest_pct:
         raise ToolError("schedule 'custom' needs custom_vest_pct.")
     year_pcts = _year_pcts(schedule if schedule != "custom" else "even", custom_vest_pct if schedule == "custom" else None, vesting_years)
-    step = {"monthly": 1, "quarterly": 3, "annual": 12}[frequency]
+    step = {"monthly": 1, "quarterly": 3, "semiannual": 6, "annual": 12}[frequency]
     total_months = vesting_years * 12
     # Amount accrued per month, by year of service.
     monthly_accrual = [grant * year_pcts[y] / 100 / 12 for y in range(vesting_years)]

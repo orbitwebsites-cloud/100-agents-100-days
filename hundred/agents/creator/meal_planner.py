@@ -74,9 +74,12 @@ AGENT = Agent(
        calories against its macros, and flags protein, fibre and sodium against targets.
        If a day is more than 5% off, fix portions before moving on.
     5. **Build one grocery list.** Call `meal_planner__grocery_list` with all scaled recipes
-       and the pantry list. It merges duplicates across recipes (converting units), drops
-       pantry items, and sorts by aisle in store order. Never hand-merge — "2 onions" in one
-       recipe and "1 onion, diced" in another is where lists go wrong.
+       and the pantry list. It merges duplicates across recipes (converting units), rounds
+       counted items up to what can be bought (1½ cans → 2 cans), drops exact pantry matches,
+       and sorts by aisle in store order. Never hand-merge — "2 onions" in one recipe and
+       "1 onion, diced" in another is where lists go wrong. Show `check_pantry` items as
+       questions ("you have rice — is it jasmine?") and resolve every `unit_conflicts` line
+       (e.g. "2 onions + 200 g onion" → "3 onions") before delivering the list.
     6. **Price it** with `meal_planner__cost_per_serving` when a budget was given. If over
        budget, swap the most expensive protein first (chicken thigh for breast, eggs and
        legumes for meat), then reduce distinct ingredients — never cut calories to save money.
@@ -164,7 +167,7 @@ def _to_base(qty: float, unit: str) -> tuple[float, str]:
 
 def _nice_fraction(x: float, denom: int) -> str:
     whole = math.floor(x + 1e-9)
-    frac = round((x - whole) * denom)
+    frac = math.floor((x - whole) * denom + 0.5)  # half-up, not banker's rounding
     if frac == denom:
         whole, frac = whole + 1, 0
     frac_map = {(1, 2): "½", (1, 4): "¼", (3, 4): "¾", (1, 3): "⅓", (2, 3): "⅔", (1, 8): "⅛", (3, 8): "⅜", (5, 8): "⅝", (7, 8): "⅞"}
@@ -176,20 +179,37 @@ def _nice_fraction(x: float, denom: int) -> str:
     return f"{whole} {sym}" if whole else sym
 
 
+def _spoons(ml: float) -> str:
+    """Express a volume with the measures a US kitchen owns: cups (quarters, eighths, thirds), tbsp + tsp."""
+    cups = ml / VOL_ML["cup"]
+    if cups >= 1:
+        return f"{_nice_fraction(cups, 4)} cup"
+    if cups >= 0.24:
+        for denom in (8, 3):  # ¼ ½ ¾ ⅛-cup measures, and ⅓ ⅔
+            r = math.floor(cups * denom + 0.5) / denom
+            if r and abs(r - cups) / cups <= 0.04:
+                return f"{_nice_fraction(r, denom)} cup"
+    tbsp = ml / VOL_ML["tbsp"]
+    if tbsp >= 0.99:
+        half = math.floor(tbsp * 2 + 0.5) / 2
+        if abs(half - tbsp) / tbsp <= 0.04:
+            return f"{_nice_fraction(half, 2)} tbsp"
+        whole = math.floor(tbsp * 2) / 2
+        rest = math.floor((tbsp - whole) * 3 * 4 + 0.5) / 4  # remainder in ¼ tsp
+        return f"{_nice_fraction(whole, 2)} tbsp" + (f" + {_nice_fraction(rest, 4)} tsp" if rest else "")
+    tsp = ml / VOL_ML["tsp"]
+    if tsp < 0.0625:
+        return "a pinch"
+    return f"{_nice_fraction(tsp, 8 if tsp < 0.25 else 4)} tsp"
+
+
 def _display(qty: float, unit: str) -> str:
     """Round a scaled quantity to something measurable and promote tsp→tbsp→cup."""
     if unit in ("tsp", "tbsp", "cup") and qty > 0:
-        ml = qty * VOL_ML[unit]
-        cups = ml / VOL_ML["cup"]
-        if cups >= 0.24 and abs(round(cups * 8) / 8 - cups) / cups <= 0.04:
-            return f"{_nice_fraction(cups, 8)} cup"
-        tbsp = ml / VOL_ML["tbsp"]
-        if tbsp >= 0.99 and abs(round(tbsp * 2) / 2 - tbsp) / tbsp <= 0.04:
-            return f"{_nice_fraction(tbsp, 2)} tbsp"
-        return f"{_nice_fraction(ml / VOL_ML['tsp'], 4)} tsp"
+        return _spoons(qty * VOL_ML[unit])
     if unit in ("g", "ml"):
         step = 1 if qty < 20 else 5 if qty < 200 else 10
-        return f"{int(round(qty / step) * step)} {unit}"
+        return f"{int(math.floor(qty / step + 0.5) * step)} {unit}"
     if unit in ("kg", "l", "lb", "oz"):
         return f"{round(qty, 2):g} {unit}"
     if unit in COUNT_UNITS:
@@ -251,16 +271,28 @@ def scale_recipe(ingredients: list[dict], from_servings: float, to_servings: flo
     }
 
 
+# Checked before the fresh aisles: spices, sauces, cans and other shelf-stable products whose
+# names contain a fresh-food word ("chili powder", "ground cumin", "peanut butter", "chicken stock").
+PANTRY_FIRST_RE = re.compile(
+    r"\b(powder|paste|sauce|stock|broth|bouillon|canned|tinned|dried|flakes|seasoning|vinegar|extract|oil|"
+    r"peanut|nut butter|coconut milk|black pepper|peppercorns?|crushed tomato|diced tomato|tomato puree|passata|spice|"
+    r"ground (cumin|coriander|cinnamon|ginger|turmeric|nutmeg|cloves?|paprika|pepper|cardamom|allspice|mustard))"
+)
 AISLES: list[tuple[str, re.Pattern]] = [
     ("frozen", re.compile(r"\bfrozen\b")),
-    ("produce", re.compile(r"\b(onion|garlic|tomato|lettuce|spinach|kale|apple|banana|lemon|lime|orange|berr|pepper|carrot|potato|sweet potato|broccoli|cauliflower|zucchini|courgette|cucumber|avocado|mushroom|celery|ginger|herb|cilantro|coriander|parsley|basil|mint|dill|scallion|spring onion|leek|cabbage|squash|pumpkin|corn|pea|bean sprout|salad|greens|fruit|grape|mango|pineapple|melon|chili|chilli|jalape)\w*"))
-    ,
-    ("meat & fish", re.compile(r"\b(chicken|beef|pork|lamb|turkey|salmon|tuna|cod|shrimp|prawn|fish|steak|mince|ground|sausage|bacon|ham|tofu|tempeh|seitan)\b")),
+    ("pantry", PANTRY_FIRST_RE),
+    ("produce", re.compile(r"\b(onion|garlic|tomato|lettuce|spinach|kale|apple|banana|lemon|lime|orange|berr|pepper|carrot|potato|sweet potato|broccoli|cauliflower|zucchini|courgette|cucumber|avocado|mushroom|celery|ginger|herb|cilantro|coriander|parsley|basil|mint|dill|scallion|spring onion|leek|cabbage|squash|pumpkin|corn|pea(?!nut)|bean sprout|salad|greens|fruit|grape|mango|pineapple|melon|chili|chilli|jalape)\w*")),
+    ("meat & fish", re.compile(r"\b(chicken|beef|pork|lamb|turkey|salmon|tuna|cod|shrimp|prawn|fish|steak|mince|sausage|bacon|ham|tofu|tempeh|seitan)\b")),
     ("dairy & eggs", re.compile(r"\b(milk|cheese|yogurt|yoghurt|butter|cream|egg|eggs|feta|mozzarella|parmesan|cheddar|ricotta|paneer|kefir)\b")),
     ("bakery", re.compile(r"\b(bread|tortilla|wrap|bun|bagel|pita|naan|baguette|roll)s?\b")),
-    ("pantry", re.compile(r"\b(rice|pasta|noodle|flour|sugar|oil|oats|bean|lentil|chickpea|quinoa|canned|can of|stock|broth|sauce|vinegar|honey|syrup|spice|salt|pepper|cumin|paprika|oregano|cinnamon|curry|nut|almond|peanut|seed|coconut|soy|tahini|mustard|ketchup|tomato paste|passata|couscous|barley|cereal|granola|protein powder|cocoa|chocolate|baking|yeast|vanilla)\w*")),
+    ("pantry", re.compile(r"\b(rice|pasta|noodle|flour|sugar|oil|oat|bean|lentil|chickpea|quinoa|canned|can of|stock|broth|sauce|vinegar|honey|syrup|spice|salt|pepper|cumin|paprika|oregano|cinnamon|curry|nut|almond|peanut|seed|coconut|soy|tahini|mustard|ketchup|tomato paste|passata|couscous|barley|cereal|granola|protein powder|cocoa|chocolate|baking|yeast|vanilla)\w*")),
 ]
-DESCRIPTOR_RE = re.compile(r"\b(fresh|chopped|diced|minced|sliced|grated|crushed|peeled|large|medium|small|ripe|boneless|skinless|finely|roughly|to taste|optional|of)\b|,.*$", re.I)
+# Preparation words that don't change what you buy. ("crushed tomatoes" and "ground beef" are products, so kept.)
+DESCRIPTOR_RE = re.compile(r"\b(fresh|chopped|diced|minced|sliced|grated|peeled|large|medium|small|ripe|boneless|skinless|finely|roughly|to taste|optional|of)\b|,.*$", re.I)
+# Count units that name the same purchasable thing, so "2 large eggs" and "3 eggs" merge but "1 head" and "3 cloves" don't.
+COUNT_CANON = {"": "each", "each": "each", "whole": "each", "pc": "each", "pcs": "each", "piece": "each", "pieces": "each", "large": "each", "medium": "each", "small": "each", "egg": "each", "eggs": "each", "cloves": "clove", "cans": "can", "bunches": "bunch", "slices": "slice", "stalks": "stalk", "heads": "head", "sprigs": "sprig", "leaves": "leaf", "fillets": "fillet", "breasts": "breast", "packet": "pack"}
+US_VOLUME = {"tsp", "teaspoon", "teaspoons", "tbsp", "tablespoon", "tablespoons", "cup", "cups", "fl oz", "floz", "pint", "pints", "quart", "quarts"}
+US_MASS = {"oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds"}
 
 
 def _norm_name(name: str) -> str:
@@ -275,12 +307,32 @@ def _norm_name(name: str) -> str:
     return n or str(name).strip().lower()
 
 
+def _plural(unit: str, n: float) -> str:
+    if not unit or n <= 1 or unit.endswith("s"):
+        return unit
+    return unit + ("es" if unit.endswith(("ch", "sh")) else "s")
+
+
+def _pantry_hit(name: str, pantry_norm: set[str]) -> str | None:
+    """Exact normalised match → 'exact'; pantry words all inside the name → that pantry item (check, don't skip)."""
+    if name in pantry_norm:
+        return "exact"
+    words = set(name.split())
+    for p in sorted(pantry_norm):
+        pw = p.split()
+        if pw and all(w in words for w in pw):
+            return p
+    return None
+
+
 @AGENT.tool
 def grocery_list(recipes: list[dict], pantry: list[str] | None = None) -> dict:
     """Merge the ingredients of several recipes into one aisle-sorted grocery list, converting units and removing pantry items.
 
-    Normalises names ("onions, diced" and "onion" merge), sums quantities in a common unit
-    (g or ml), keeps counts as counts, and lists anything that couldn't be merged separately.
+    Normalises names ("garlic cloves, minced" and "garlic" merge), sums quantities in a common
+    unit (g or ml, shown back in lb / cups when the recipes used them), keeps counts as counts
+    per unit (cans, cloves, each) and rounds them up to what you can buy. Only exact pantry
+    matches are dropped; near matches ("rice" vs "rice vinegar") stay on the list for a check.
 
     Args:
         recipes: List of {"name": "Chili", "ingredients": [{"name": "onion", "qty": 2, "unit": "each"}, ...]} (already scaled).
@@ -305,41 +357,72 @@ def grocery_list(recipes: list[dict], pantry: list[str] | None = None) -> dict:
             except (TypeError, ValueError):
                 raise ToolError(f"{ing['name']}: qty must be a number") from None
             unit = _norm_unit(ing.get("unit", ""))
+            name = _norm_name(ing["name"])
+            kind = _kind(unit)
+            if re.search(r"\bcloves?$", name) and kind in ("count", "other"):
+                name = re.sub(r"\s*\bcloves?$", "", name).strip() or name
+                if COUNT_CANON.get(unit, unit) == "each":
+                    unit = "clove"
+                    kind = "count"
             base_qty, base_unit = _to_base(qty, unit)
-            key = (_norm_name(ing["name"]), base_unit if _kind(unit) in ("mass", "volume") else ("count" if _kind(unit) == "count" else unit))
-            entry = totals.setdefault(key, {"qty": 0.0, "recipes": [], "count_unit": unit if _kind(unit) == "count" else ""})
+            if kind == "count":
+                key_unit = "count:" + COUNT_CANON.get(unit, unit)
+            elif kind in ("mass", "volume"):
+                key_unit = base_unit
+            else:
+                key_unit = unit
+            entry = totals.setdefault((name, key_unit), {"qty": 0.0, "recipes": [], "us": False})
             entry["qty"] += base_qty
-            if str(r.get("name", f"recipe {ri}")) not in entry["recipes"]:
-                entry["recipes"].append(str(r.get("name", f"recipe {ri}")))
+            entry["us"] = entry["us"] or unit in US_VOLUME or unit in US_MASS
+            rname = str(r.get("name", f"recipe {ri}"))
+            if rname not in entry["recipes"]:
+                entry["recipes"].append(rname)
     by_aisle: dict[str, list[dict]] = defaultdict(list)
-    skipped = []
+    skipped, check_pantry, units_seen = [], [], defaultdict(list)
     for (name, unit), entry in sorted(totals.items()):
-        if name in pantry_norm or any(p and p in name for p in pantry_norm if len(p) > 3):
-            skipped.append(name)
-            continue
-        aisle = next((a for a, rx in AISLES if rx.search(name)), "other")
         qty = entry["qty"]
         if unit == "g":
-            display = f"{qty / 1000:.2f} kg".replace(".00", "") if qty >= 1000 else f"{int(round(qty))} g"
+            display = f"{qty / 1000:.2f} kg".replace(".00", "") if qty >= 1000 else f"{int(math.floor(qty + 0.5))} g"
+            if entry["us"]:
+                display += f" ({qty / MASS_G['lb']:.2f} lb)" if qty >= MASS_G["lb"] * 0.5 else f" ({qty / MASS_G['oz']:.1f} oz)"
+            buy, shown_unit = round(qty, 2), "g"
         elif unit == "ml":
-            display = f"{qty / 1000:.2f} L".replace(".00", "") if qty >= 1000 else f"{int(round(qty))} ml"
-        elif unit == "count":
-            display = f"{_nice_fraction(qty, 2)} {entry['count_unit']}".strip() if qty else name
+            display = _spoons(qty) if entry["us"] else (f"{qty / 1000:.2f} L".replace(".00", "") if qty >= 1000 else f"{int(math.floor(qty + 0.5))} ml")
+            buy, shown_unit = round(qty, 2), "ml"
+        elif unit.startswith("count:"):
+            cu = unit.split(":", 1)[1]
+            buy = math.ceil(qty - 1e-9)
+            shown_unit = "" if cu == "each" else cu
+            display = (f"{buy} {_plural(shown_unit, buy)}".strip()) + (f" (recipes use {_nice_fraction(qty, 2)})" if abs(buy - qty) > 1e-9 else "")
         else:
+            buy, shown_unit = round(qty, 2), unit
             display = f"{round(qty, 2):g} {unit}".strip()
-        by_aisle[aisle].append({"item": name, "qty": round(qty, 2), "unit": unit if unit != "count" else entry["count_unit"], "display": display, "used_in": entry["recipes"]})
+        units_seen[name].append(display)
+        hit = _pantry_hit(name, pantry_norm)
+        if hit == "exact":
+            skipped.append(name)
+            continue
+        if hit:
+            check_pantry.append(f"{name} — you listed '{hit}' in the pantry; buy unless it's the same thing")
+        aisle = next((a for a, rx in AISLES if rx.search(name)), "other")
+        if aisle not in ("frozen",) and unit in ("count:can", "count:jar"):
+            aisle = "pantry"
+        by_aisle[aisle].append({"item": name, "qty": round(qty, 2), "unit": shown_unit, "buy": buy, "display": display, "used_in": entry["recipes"]})
     order = ["produce", "meat & fish", "dairy & eggs", "bakery", "pantry", "frozen", "other"]
     aisles = {a: by_aisle[a] for a in order if by_aisle.get(a)}
     total_items = sum(len(v) for v in aisles.values())
+    unit_conflicts = [f"{n}: {' + '.join(d)} — listed separately (different kinds of unit); buy the total" for n, d in units_seen.items() if len(d) > 1 and n not in skipped]
     return {
         "recipes": len(recipes),
         "raw_ingredient_lines": n_ing,
         "items": total_items,
-        "merged_away": n_ing - total_items - len(skipped),
+        "merged_away": n_ing - len(totals),
         "skipped_from_pantry": skipped,
+        "check_pantry": check_pantry,
+        "unit_conflicts": unit_conflicts,
         "by_aisle": aisles,
-        "checklist": [f"[ ] {row['display']} {row['item']}" for a in order for row in aisles.get(a, [])],
-        "summary": f"{total_items} items from {n_ing} ingredient lines across {len(recipes)} recipes; {len(skipped)} already in the pantry.",
+        "checklist": [f"[ ] {row['item']}: {row['display']}" for a in order for row in aisles.get(a, [])],
+        "summary": f"{total_items} items from {n_ing} ingredient lines across {len(recipes)} recipes; {len(skipped)} already in the pantry" + (f"; {len(check_pantry)} to check against the pantry" if check_pantry else "") + ".",
     }
 
 

@@ -6,7 +6,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
 from ...core import Agent, ToolError
-from ._common import D, ZERO, as_rate, bound_rows, money, pct, ratio_to_pct, require_nonneg, require_positive
+from ._common import D, as_pct, ZERO, as_rate, bound_rows, money, pct, ratio_to_pct, require_nonneg, require_positive
 
 AGENT = Agent(
     slug="pricing-strategist",
@@ -60,8 +60,9 @@ AGENT = Agent(
        responses, present the band as directional only.
     2. **Learn from history.** With any past price/volume observations, call
        `pricing_strategist__elasticity`. It returns arc elasticity between points, the
-       revenue-maximising and profit-maximising observed prices, and whether demand is elastic
-       (|E| > 1: price cuts grow revenue) or inelastic (|E| < 1: price rises grow revenue).
+       revenue-maximising and profit-maximising observed prices, and the price where demand turns
+       elastic (|E| > 1: price cuts grow revenue; |E| < 1: price rises grow revenue). Judge a
+       proposed change by the segment it moves through, never by the average elasticity.
     3. **Quantify the bet.** For any proposed change, call `pricing_strategist__price_change_breakeven`
        with the current price, margin and proposed change. It gives the exact volume change that keeps
        gross profit flat. A 10% rise at 70% margin breaks even at a 12.5% volume loss; if you believe
@@ -77,8 +78,11 @@ AGENT = Agent(
        decision rule (e.g. "ship if conversion drops < 12.5%").
 
     ## Frameworks
-    - **Van Westendorp PSM**: PMC = "too cheap" × "not cheap"; PME = "too expensive" × "not
-      expensive"; OPP = "too cheap" × "too expensive"; IPP = "cheap" × "expensive".
+    - **Van Westendorp PSM** (default reading, as Conjointly and most survey tools chart it):
+      PMC = "too cheap" × "expensive"; PME = "too expensive" × "cheap"; OPP = "too cheap" × "too
+      expensive"; IPP = "cheap" × "expensive". The original paper's inverted reading ("not cheap" /
+      "not expensive") gives a different band — pass `convention` only if the client's prior
+      study used it, and always state which reading the band comes from.
     - **Break-even volume change** = −Δp / (margin + Δp) for a price change Δp at gross margin m.
     - **Good/Better/Best** (Mohammed): 3 tiers, middle tier is the target, top tier anchors.
       Most revenue should come from the middle; if > 70% buy the cheapest, the middle is mispriced.
@@ -142,15 +146,17 @@ def _cross(grid: list[Decimal], a: list[Decimal], b: list[Decimal]) -> Decimal |
 
 
 @AGENT.tool
-def van_westendorp(responses: list[dict]) -> dict:
+def van_westendorp(responses: list[dict], convention: Literal["expensive_cheap", "not_cheap_not_expensive"] = "expensive_cheap") -> dict:
     """Compute Van Westendorp price points (PMC, OPP, IPP, PME) from survey responses via exact curve intersections.
 
     Each respondent gives four prices: too_cheap (quality doubt), bargain (great value), expensive
     (pricey but consider), too_expensive (would not buy). Inconsistent respondents (not
-    too_cheap <= bargain <= expensive <= too_expensive) are excluded and reported.
+    too_cheap <= bargain <= expensive <= too_expensive) are excluded and reported. Curves are the
+    empirical cumulative shares at each quoted price, linearly interpolated between prices.
 
     Args:
         responses: List of {"too_cheap": n, "bargain": n, "expensive": n, "too_expensive": n}, one per respondent.
+        convention: "expensive_cheap" (default; the common modern reading used by Conjointly and Wikipedia: PMC = too cheap x expensive, PME = too expensive x cheap) or "not_cheap_not_expensive" (the original inverted reading: PMC = too cheap x not cheap, PME = too expensive x not expensive). Say which one you used.
     """
     rows = bound_rows(responses, "responses", limit=5000)
     valid, dropped = [], 0
@@ -181,8 +187,12 @@ def van_westendorp(responses: list[dict]) -> dict:
     c_too_exp = _curve(too_exp, grid, ascending=True)
     not_cheap = [1 - x for x in c_bargain]
     not_expensive = [1 - x for x in c_expensive]
-    pmc = _cross(grid, c_too_cheap, not_cheap)
-    pme = _cross(grid, not_expensive, c_too_exp)
+    if convention == "not_cheap_not_expensive":
+        pmc = _cross(grid, c_too_cheap, not_cheap)
+        pme = _cross(grid, not_expensive, c_too_exp)
+    else:
+        pmc = _cross(grid, c_too_cheap, c_expensive)
+        pme = _cross(grid, c_bargain, c_too_exp)
     opp = _cross(grid, c_too_cheap, c_too_exp)
     ipp = _cross(grid, c_bargain, c_expensive)
     n = len(valid)
@@ -195,14 +205,15 @@ def van_westendorp(responses: list[dict]) -> dict:
         "n_valid": n,
         "n_dropped_inconsistent": dropped,
         "confidence": conf,
+        "convention": convention,
         "points": fmt,
         "acceptable_range": {"low": fmt["pmc"], "high": fmt["pme"]},
         "medians": {"too_cheap": money(sorted(too_cheap)[n // 2]), "bargain": money(median_bargain), "expensive": money(median_expensive), "too_expensive": money(sorted(too_exp)[n // 2])},
         "definitions": {
-            "pmc": "point of marginal cheapness: too_cheap x not_cheap — below this, quality doubts outweigh bargain appeal",
+            "pmc": "point of marginal cheapness: too_cheap x " + ("not_cheap" if convention == "not_cheap_not_expensive" else "expensive") + " — below this, quality doubts outweigh bargain appeal",
             "opp": "optimal price point: too_cheap x too_expensive — fewest people reject",
             "ipp": "indifference price point: bargain x expensive — perceived 'normal' price",
-            "pme": "point of marginal expensiveness: not_expensive x too_expensive — above this, resistance dominates",
+            "pme": "point of marginal expensiveness: too_expensive x " + ("not_expensive" if convention == "not_cheap_not_expensive" else "cheap") + " — above this, resistance dominates",
         },
         "verdict": (
             f"Acceptable range ${fmt['pmc']:,.2f}–${fmt['pme']:,.2f}; OPP ${fmt['opp']:,.2f}, IPP ${fmt['ipp']:,.2f} (n={n}, {conf} confidence). "
@@ -255,7 +266,7 @@ def tier_builder(
     anchor = require_positive(D(anchor_price, "anchor_price"), "anchor_price")
     if not 2 <= tiers <= 5:
         raise ToolError("tiers must be 2-5")
-    disc = as_rate(annual_discount_pct, "annual_discount_pct")
+    disc = as_pct(annual_discount_pct, "annual_discount_pct")
     if not 0 <= disc < Decimal("0.6"):
         raise ToolError("annual_discount_pct must be between 0 and 60")
     default_ratios = {2: [1, 2.5], 3: [1, 2.2, 5], 4: [1, 2, 4, 8], 5: [1, 2, 4, 8, 16]}
@@ -341,20 +352,31 @@ def elasticity(observations: list[dict], unit_cost: float = 0) -> dict:
     best_gp = max(table, key=lambda t: t["gross_profit"])
     avg_e = sum(Decimal(str(s["arc_elasticity"])) for s in segs) / len(segs) if segs else None
     overall = "elastic" if avg_e is not None and abs(avg_e) > 1 else "inelastic"
+    # The average hides the local shape: demand is usually inelastic at low prices and turns elastic higher up.
+    elastic_from = next((sg["from"] for sg in segs if abs(Decimal(str(sg["arc_elasticity"]))) > 1), None)
+    top = segs[-1] if segs else None
+    if avg_e is None:
+        verdict = "Not enough distinct prices."
+    else:
+        shape = (
+            f"inelastic below ${elastic_from:,.2f} and elastic above it" if elastic_from is not None and elastic_from > segs[0]["from"]
+            else "elastic across the observed range" if elastic_from is not None
+            else "inelastic across the observed range"
+        )
+        verdict = (
+            f"Demand is {shape} (arc elasticity {segs[0]['arc_elasticity']} at the low end, {top['arc_elasticity']} between ${top['from']:,.2f} and ${top['to']:,.2f}; average {pct(avg_e, 2)}). "
+            + (f"Moving above ${elastic_from:,.2f} loses revenue; " if elastic_from is not None else "Price rises within this range grow revenue; ")
+            + f"observed revenue-max ${best_rev['price']:,.2f}, profit-max ${best_gp['price']:,.2f} ({best_gp['label']})."
+        )
     return {
         "segments": segs,
         "average_elasticity": pct(avg_e, 2) if avg_e is not None else None,
         "overall": overall,
+        "elastic_from_price": elastic_from,
         "table": table,
         "revenue_max": best_rev,
         "profit_max": best_gp,
-        "verdict": (
-            f"Demand is {overall} (avg arc elasticity {pct(avg_e, 2)}). "
-            + ("Price cuts grow revenue here; " if overall == "elastic" else "Price rises grow revenue here; ")
-            + f"observed profit-max price ${best_gp['price']:,.2f} ({best_gp['label']}), revenue-max ${best_rev['price']:,.2f}."
-            if avg_e is not None
-            else "Not enough distinct prices."
-        ),
+        "verdict": verdict,
         "caveat": "Observational elasticity conflates price with time/mix effects; confirm with a controlled test before a large change.",
     }
 
@@ -374,7 +396,7 @@ def price_change_breakeven(current_price: float, price_change_pct: float, gross_
         current_units: Units sold per period today (optional, for absolute thresholds).
     """
     p = require_positive(D(current_price, "current_price"), "current_price")
-    dp = as_rate(price_change_pct, "price_change_pct")
+    dp = as_pct(price_change_pct, "price_change_pct")
     if dp <= -1 or dp > 5:
         raise ToolError("price_change_pct must be between -99 and 500")
     if gross_margin_pct:

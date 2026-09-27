@@ -45,8 +45,8 @@ def test_runway_default_dead_and_alive():
     dead = call("runway", cash=420000, monthly_revenue=30000, monthly_expenses=85000, revenue_growth_pct=8, start_month="2026-09-27")
     assert dead["runway_months_simple"] == 7.6
     assert dead["runway_months_with_growth"] == 11
-    assert dead["zero_cash_month"] == "2027-08"
-    assert dead["breakeven_month"] == "2027-12"
+    assert dead["zero_cash_month"] == "2027-07"  # month 1 = Sep 2026 (the input month), month 11 = Jul 2027
+    assert dead["breakeven_month"] == "2027-11"
     assert dead["status"] == "default dead"
     assert dead["additional_cash_to_breakeven"] > 40000
     alive = call("runway", cash=1000000, monthly_revenue=30000, monthly_expenses=85000, revenue_growth_pct=8, start_month="2026-09-27")

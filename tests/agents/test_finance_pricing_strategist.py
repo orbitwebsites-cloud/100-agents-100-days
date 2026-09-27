@@ -22,16 +22,23 @@ def _survey():
 def test_van_westendorp_points_and_drops_inconsistent():
     out = call("van_westendorp", responses=_survey())
     assert out["n_valid"] == 10 and out["n_dropped_inconsistent"] == 1
+    assert out["convention"] == "expensive_cheap"
     p = out["points"]
-    # by hand: at $22 too_cheap(>=22)=40% and not_cheap(1-bargain>=22)=40% → PMC 22;
+    # default (Conjointly / Wikipedia) reading, by hand:
+    # at $24 too_cheap(>=24)=30% and expensive(<=24)=30% → PMC 24;
     # at $26 bargain(>=26)=40% and expensive(<=26)=40% → IPP 26;
-    # not_expensive vs too_expensive cross between 33 (30%/20%) and 34 (20%/30%) → PME 33.5
-    assert p["pmc"] == 22.0
+    # bargain(>=p) vs too_expensive(<=p): 20%/10% at 31, 10%/20% at 32 → PME 31.5
+    assert p["pmc"] == 24.0
     assert p["ipp"] == 26.0
-    assert p["pme"] == 33.5
+    assert p["pme"] == 31.5
     assert p["pmc"] < p["ipp"] < p["pme"]
-    assert out["acceptable_range"] == {"low": 22.0, "high": 33.5}
+    assert out["acceptable_range"] == {"low": 24.0, "high": 31.5}
     assert out["confidence"] == "low"
+    # original inverted reading: at $22 too_cheap(>=22)=40% and not_cheap=40% → PMC 22;
+    # not_expensive vs too_expensive cross between 33 (30%/20%) and 34 (20%/30%) → PME 33.5
+    orig = call("van_westendorp", responses=_survey(), convention="not_cheap_not_expensive")
+    assert orig["points"]["pmc"] == 22.0 and orig["points"]["pme"] == 33.5
+    assert orig["points"]["opp"] == p["opp"] and orig["points"]["ipp"] == p["ipp"]
 
 
 def test_van_westendorp_needs_enough_rows():

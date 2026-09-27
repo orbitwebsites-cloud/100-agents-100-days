@@ -397,7 +397,7 @@ def linking_architecture(page_count: int, links_per_hub: int = 100, existing_aut
     Args:
         page_count: Number of programmatic pages to publish (1-5,000,000).
         links_per_hub: Links each hub page carries to child pages/hubs (20-300; 50-150 is the sweet spot).
-        existing_authority_pages: Strong existing pages (homepage, category pages) that can link to top-level hubs.
+        existing_authority_pages: Strong existing pages that link to the top-level hubs. 1 = the homepage itself; more than 1 = category pages one click from the homepage.
         rollout_weeks: Weeks over which to publish after phase 1 (1-52).
         first_phase_pct: Share of pages in phase 1 (1-50), chosen from the highest-demand values.
     """
@@ -417,13 +417,14 @@ def linking_architecture(page_count: int, links_per_hub: int = 100, existing_aut
     # hub levels: leaf hubs each link `fan` pages; hubs of hubs until <= auth*fan top hubs
     levels = []
     remaining = n
-    depth = 1  # leaf pages are 1 click below their hub
     while remaining > auth * fan:
         hubs = math.ceil(remaining / fan)
         levels.append(hubs)
         remaining = hubs
-        depth += 1
-    click_depth_from_home = depth + (1 if levels else 1)  # home → hub(s) → … → page
+    # entry page(s) → top hubs → … → leaf hubs → page: one click per hub level plus the final hop.
+    # A single authority page is the homepage (depth 0); several are category pages at depth 1.
+    entry_depth = 0 if auth == 1 else 1
+    click_depth_from_home = entry_depth + len(levels) + 1
     total_hubs = sum(levels)
     sitemaps = math.ceil(n / 50000)
     phase1 = math.ceil(n * p1 / 100)
@@ -437,7 +438,7 @@ def linking_architecture(page_count: int, links_per_hub: int = 100, existing_aut
         "hub_levels": levels,
         "total_hub_pages": total_hubs,
         "click_depth_from_home": click_depth_from_home,
-        "depth_ok": click_depth_from_home <= 4,
+        "depth_ok": click_depth_from_home <= 3,
         "sitemaps": sitemaps,
         "sitemap_index_needed": sitemaps > 1,
         "inbound_links_per_page_target": inbound_min,
@@ -445,7 +446,7 @@ def linking_architecture(page_count: int, links_per_hub: int = 100, existing_aut
         "rollout": {"phase_1_pages": phase1, "phase_1_gate": "≥ 60% indexed and impressions on ≥ 30% of pages at 4 weeks", "remaining_pages": rest, "weeks": weeks, "pages_per_week": per_week},
         "verdict": (
             f"{n:,} pages need {total_hubs} hub page(s) in {len(levels)} level(s) at {fan} links per hub; pages sit {click_depth_from_home} clicks from home"
-            + (" (fine)" if click_depth_from_home <= 4 else " — too deep: raise links_per_hub or add authority entry points")
+            + (" (fine)" if click_depth_from_home <= 3 else " — too deep: raise links_per_hub or add authority entry points")
             + f". {sitemaps} sitemap(s). Phase 1: {phase1:,} pages, then {per_week:,}/week for {weeks} weeks if the gate passes."
         ),
     }

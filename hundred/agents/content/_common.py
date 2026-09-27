@@ -9,6 +9,7 @@ several editors lint against.
 from __future__ import annotations
 
 import re
+import unicodedata
 from functools import lru_cache
 
 from ...core import ToolError
@@ -48,39 +49,130 @@ def is_emoji(ch: str) -> bool:
     return any(lo <= cp <= hi for lo, hi in _EMOJI_RANGES)
 
 
-def count_emoji(s: str) -> int:
-    n, glued = 0, False
-    for ch in s:
-        cp = ord(ch)
-        if cp in _EMOJI_MODIFIERS:
-            glued = cp == 0x200D
+def _is_regional(cp: int) -> bool:
+    return 0x1F1E6 <= cp <= 0x1F1FF
+
+
+def _is_emoji_trailer(cp: int) -> bool:
+    """Code points that attach to the preceding emoji: VS15/16, skin tones, keycap, tag characters."""
+    return cp in (0xFE0F, 0xFE0E, 0x20E3) or 0x1F3FB <= cp <= 0x1F3FF or 0xE0020 <= cp <= 0xE007F
+
+
+def _graphemes(s: str):
+    """Yield (cluster, is_emoji) for s, grouping emoji sequences the way X and phones render them:
+    ZWJ sequences, skin tones, flags (regional-indicator pairs), keycaps and tag sequences are ONE emoji."""
+    i, n = 0, len(s)
+    while i < n:
+        cp = ord(s[i])
+        if _is_regional(cp):
+            j = i + 2 if i + 1 < n and _is_regional(ord(s[i + 1])) else i + 1
+            yield s[i:j], True
+            i = j
             continue
-        if is_emoji(ch):
-            if not glued:
-                n += 1
-            glued = False
-        else:
-            glued = False
-    return n
+        if s[i] in "0123456789#*":  # keycap: 1⃣ / 1️⃣
+            j = i + 1
+            if j < n and ord(s[j]) == 0xFE0F:
+                j += 1
+            if j < n and ord(s[j]) == 0x20E3:
+                yield s[i:j + 1], True
+                i = j + 1
+                continue
+        emoji = is_emoji(s[i]) or (i + 1 < n and ord(s[i + 1]) == 0xFE0F and cp > 0x7F)
+        j = i + 1
+        if emoji:
+            while j < n:
+                c2 = ord(s[j])
+                if _is_emoji_trailer(c2):
+                    j += 1
+                elif c2 == 0x200D and j + 1 < n:
+                    j += 2
+                else:
+                    break
+        yield s[i:j], emoji
+        i = j
+
+
+def count_emoji(s: str) -> int:
+    """Emoji as a reader sees them: 👨‍👩‍👧‍👦, 🇺🇸 and 👍🏽 are one each."""
+    return sum(1 for _, e in _graphemes(s) if e)
+
+
+# Bare domains X turns into t.co links (twitter-text extractUrlsWithoutProtocol): labels of
+# [-a-z0-9] (plus Latin accents) ending in a known TLD, not glued to @ $ # or a preceding [-_./].
+_BARE_DOMAIN_RE = re.compile(
+    r"(?<![A-Za-z0-9@$#＠＃_./-])((?:[a-z0-9À-ÖØ-öø-ÿ-]+\.)+([a-z][a-z0-9-]*))(?![a-z0-9@+-])((?:/[^\s<>\"'`]*)?)",
+    re.I,
+)
+_URL_TAIL = ".,;:!?'\"’”)]}…"
+
+
+def _trim_url(u: str) -> str:
+    """X doesn't count trailing sentence punctuation as part of a link ("see x.com/a." → the '.' is text)."""
+    while u and u[-1] in _URL_TAIL:
+        if u[-1] == ")" and u.count("(") >= u.count(")"):
+            break
+        u = u[:-1]
+    return u
+
+
+def _valid_host(host: str) -> bool:
+    labels = host.rstrip(".").split(".")
+    for lab in labels:
+        if not lab or lab.startswith("-") or lab.endswith("-"):
+            return False
+        try:
+            if len(lab.encode("idna")) > 63:
+                return False
+        except UnicodeError:
+            return False
+    return True
+
+
+@lru_cache(maxsize=1)
+def _tlds() -> frozenset:
+    from ._tlds import CCTLDS, GTLDS
+
+    return GTLDS | CCTLDS
+
+
+def x_urls(s: str) -> list[tuple[int, int, str]]:
+    """Links X would wrap in t.co (each weighs 23): http(s)/www URLs and bare domains with a real TLD."""
+    found: list[tuple[int, int, str]] = []
+    for m in URL_RE.finditer(s):
+        u = _trim_url(m.group(0))
+        host = re.sub(r"^(?:https?://)", "", u, flags=re.I).split("/")[0].split("?")[0].split("#")[0].split(":")[0]
+        if u and _valid_host(host):
+            found.append((m.start(), m.start() + len(u), u))
+    tlds = _tlds()
+    for m in _BARE_DOMAIN_RE.finditer(s):
+        if any(a <= m.start() < b for a, b, _ in found):
+            continue
+        if m.group(2).lower() not in tlds or not _valid_host(m.group(1)):
+            continue
+        u = _trim_url(m.group(0))
+        found.append((m.start(), m.start() + len(u), u))
+    found.sort()
+    return found
 
 
 def x_length(s: str) -> int:
-    """X/Twitter weighted length: URLs = 23, basic Latin/Latin-1/etc = 1, everything else (CJK, emoji) = 2."""
-    s = URL_RE.sub("x" * 23, s)
-    total, glued = 0, False
-    for ch in s:
-        cp = ord(ch)
-        if cp in _EMOJI_MODIFIERS:
-            glued = cp == 0x200D
-            continue
-        if glued and is_emoji(ch):
-            glued = False
-            continue
-        glued = False
-        if cp <= 4351 or 8192 <= cp <= 8205 or 8208 <= cp <= 8223 or 8242 <= cp <= 8247:
-            total += 1
-        else:
+    """X's weighted length (twitter-text v3): text is NFC-normalised; every link (with or without
+    http, e.g. example.com) = 23; every emoji sequence (ZWJ family, flag, skin tone, keycap) = 2;
+    code points in U+0000-10FF, U+2000-200D, U+2010-201F, U+2032-2037 = 1; everything else = 2."""
+    s = unicodedata.normalize("NFC", s)
+    total, last, parts = 0, 0, []
+    for a, b, _ in x_urls(s):
+        parts.append(s[last:a])
+        total += 23
+        last = b
+    parts.append(s[last:])
+    for chunk, emoji in _graphemes("".join(parts)):
+        if emoji:
             total += 2
+            continue
+        for ch in chunk:
+            cp = ord(ch)
+            total += 1 if (cp <= 4351 or 8192 <= cp <= 8205 or 8208 <= cp <= 8223 or 8242 <= cp <= 8247) else 2
     return total
 
 
@@ -151,8 +243,21 @@ def links(md: str) -> list[dict]:
             continue
         url = m.group(0).rstrip(".,;:!?")
         found.append({"anchor": "", "url": url, "naked": True, "pos": m.start()})
+        spans.append((m.start(), m.start() + len(url)))
+    # bare domains (acme.com/pricing) that LinkedIn, X and most email clients auto-link
+    for m in _BARE_DOMAIN_RE.finditer(md):
+        if any(a <= m.start() < b for a, b in spans) or m.group(2).lower() not in WEB_TLDS:
+            continue
+        found.append({"anchor": "", "url": _trim_url(m.group(0)), "naked": True, "pos": m.start()})
     found.sort(key=lambda d: d["pos"])
     return found
+
+
+WEB_TLDS = frozenset(
+    "com org net edu gov io co ai dev app me tv fm us uk ca de fr es it nl eu au in jp ly gg so to "
+    "xyz info biz blog news site online store shop tech page link club design studio email"
+    .split()
+)
 
 
 def domain_of(url: str) -> str:
@@ -271,6 +376,29 @@ def find_phrases(s: str, phrases: list[str]) -> list[dict]:
     hits = [{"phrase": p, "count": n, "first_at": first[p]} for p, n in counts.items()]
     hits.sort(key=lambda h: (-h["count"], h["first_at"]))
     return hits
+
+
+# Hedge words that are not hedges in these fixed phrases ("a habit rather than a tool").
+HEDGE_EXCEPTIONS = {"rather": re.compile(r"\s+than\b", re.I), "just": re.compile(r"\s+(?:cause|deserts)\b", re.I)}
+
+
+def find_hedges(s: str) -> list[dict]:
+    """find_phrases for HEDGES, minus fixed phrases where the word isn't hedging ("rather than")."""
+    hits = find_phrases(s, HEDGES)
+    out = []
+    for h in hits:
+        exc = HEDGE_EXCEPTIONS.get(h["phrase"])
+        if not exc:
+            out.append(h)
+            continue
+        n, first = 0, None
+        for m in phrase_pattern((h["phrase"],)).finditer(s):
+            if not exc.match(s, m.end()):
+                n += 1
+                first = m.start() if first is None else first
+        if n:
+            out.append({"phrase": h["phrase"], "count": n, "first_at": first})
+    return out
 
 
 def context(s: str, pos: int, width: int = 40) -> str:

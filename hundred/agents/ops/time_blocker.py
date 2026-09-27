@@ -57,9 +57,11 @@ AGENT = Agent(
     1. **Plan a day.** Assign each task a priority (1 = must happen today … 4 = nice),
        a kind (deep / shallow / admin) and minutes (round up to 15; if unknown, 45 for
        deep, 20 for shallow). Call `time_blocker__pack_day` with the tasks, fixed events,
-       working hours and peak window. It packs deep work into peak-hour gaps first, splits
-       long tasks into ≤ 90-minute blocks, adds buffers after meetings, and returns what
-       did not fit. Present the blocks as the schedule; for the leftovers, say explicitly
+       working hours and peak window. Any task that must happen before a meeting (prep,
+       pre-reads, a deck for the 14:00) gets `due_by` = that meeting's start. It packs deep
+       work into peak-hour gaps first, splits long tasks into ≤ 90-minute blocks (never a
+       deep sliver under 25 minutes), keeps shallow work out of the peak, adds buffers after
+       meetings, and returns what did not fit. Present the blocks as the schedule; for the leftovers, say explicitly
        which day they move to. Never silently drop a task.
     2. **Find a meeting time.** Call `time_blocker__find_meeting_slots` with participants
        (name, zone, working hours), duration and the date(s). Report only windows the tool
@@ -190,9 +192,17 @@ def convert_time(when: str, from_zone: str, to_zones: list[str]) -> dict:
     src = _zone(from_zone, "from_zone")
     to_zones = require_list(to_zones, "to_zones", 50)
     naive = parse_datetime(when, "when")
+    warning = None
     if naive.tzinfo is not None:
         base = naive.astimezone(src)
     else:
+        second = naive.replace(tzinfo=src, fold=1)
+        if second.utcoffset() != naive.replace(tzinfo=src, fold=0).utcoffset():
+            warning = (
+                f"{naive.strftime('%Y-%m-%d %H:%M')} happens twice in {src.key} (clocks fall back). Using the first "
+                f"occurrence ({naive.replace(tzinfo=src).tzname()}); the second is {second.tzname()}, "
+                f"{second.astimezone(ZoneInfo('UTC')).strftime('%H:%M')} UTC — confirm which one is meant."
+            )
         base = naive.replace(tzinfo=src)
         # detect non-existent / ambiguous local times around DST transitions
         if base.astimezone(ZoneInfo("UTC")).astimezone(src).replace(tzinfo=None) != naive:
@@ -221,6 +231,7 @@ def convert_time(when: str, from_zone: str, to_zones: list[str]) -> dict:
         "utc": utc.strftime("%Y-%m-%d %H:%M"),
         "conversions": out,
         "summary": "; ".join(f"{c['zone']}: {c['weekday'][:3]} {c['local'][11:]} ({c['day_note']})" for c in out),
+        "warning": warning,
     }
 
 
@@ -362,7 +373,7 @@ def pack_day(
     """Pack tasks into concrete time blocks around fixed meetings: deep work in peak hours first, buffers, leftovers.
 
     Args:
-        tasks: List of {"name": str, "minutes": int, "priority": 1-4 (1 = must today), "kind": "deep"|"shallow"|"admin"}.
+        tasks: List of {"name": str, "minutes": int, "priority": 1-4 (1 = must today), "kind": "deep"|"shallow"|"admin", "due_by": optional "HH:MM" the block must end by (e.g. prep before a 13:00 call)}.
         fixed_events: Meetings already on the calendar: {"title": str, "start": "10:00", "end": "10:30"}.
         day_start: Workday start (HH:MM).
         day_end: Workday end (HH:MM).
@@ -406,9 +417,11 @@ def pack_day(
         mins = int(as_float(t.get("minutes", 45), f"tasks[{i}].minutes", lo=5, hi=600))
         mins = int(math.ceil(mins / 5.0) * 5)
         pr = int(as_float(t.get("priority", 2), f"tasks[{i}].priority", lo=1, hi=4))
-        norm.append({"name": as_str(t.get("name"), f"tasks[{i}].name", max_len=80), "minutes": mins, "priority": pr, "kind": kind, "n": i})
-    # within a priority: unsplittable shallow/admin first (they take off-peak gaps), then deep work fills the peak
-    order = sorted(norm, key=lambda t: (t["priority"], 1 if t["kind"] == "deep" else 0, -t["minutes"], t["n"]))
+        due_raw = t.get("due_by") or t.get("before")
+        due = parse_hhmm(due_raw, f"tasks[{i}].due_by") if due_raw not in (None, "") else None
+        norm.append({"name": as_str(t.get("name"), f"tasks[{i}].name", max_len=80), "minutes": mins, "priority": pr, "kind": kind, "n": i, "due_by": due})
+    # within a priority: deadline-bound first, then unsplittable shallow/admin (they take off-peak gaps), then deep work fills the peak
+    order = sorted(norm, key=lambda t: (t["priority"], t["due_by"] is None, 1 if t["kind"] == "deep" else 0, -t["minutes"], t["n"]))
     # free gaps
     gaps: list[list[int]] = []
     cursor = ds
@@ -429,34 +442,60 @@ def pack_day(
     for t in order:
         remaining = t["minutes"]
         deep = t["kind"] == "deep"
-        min_chunk = _KIND_MIN["deep"] if deep else min(t["minutes"], max_block_minutes)  # shallow/admin are not split
+        min_chunk = min(_KIND_MIN["deep"], t["minutes"]) if deep else min(t["minutes"], max_block_minutes)  # shallow/admin are not split
+        due = t["due_by"]
         placed_min = 0
         while remaining > 0:
+            if deep and placed_min and remaining < 25:
+                break  # a sub-25-minute tail is not a deep-work block; report it instead of scattering a sliver
             need = min(remaining, min_chunk)
-            candidates = [g for g in gaps if g[1] - g[0] >= need]
+
+            def span(g: list[int]) -> tuple[int, int]:
+                return g[0], (min(g[1], due) if due is not None else g[1])
+
+            candidates = [g for g in gaps if span(g)[1] - span(g)[0] >= need]
             if not candidates:
                 break
 
             def chunk_in(g: list[int]) -> int:
-                c = min(remaining, max_block_minutes, g[1] - g[0])
-                if deep and 0 < remaining - c < 15:  # avoid a useless orphan
-                    c = remaining if g[1] - g[0] >= remaining else c
+                a, b = span(g)
+                c = min(remaining, max_block_minutes, b - a)
+                if deep and 0 < remaining - c < min_chunk:
+                    if remaining - c < 15 and b - a >= remaining:
+                        c = remaining  # avoid a useless orphan
+                    elif remaining - min_chunk >= min_chunk:
+                        c = min(c, remaining - min_chunk)  # balance: leave a full-size last block
                 return c
 
+            def place(g: list[int]) -> int:
+                a, b = span(g)
+                c = chunk_in(g)
+                if deep:
+                    return a
+                # shallow/admin: slide to whichever end of the gap stays out of the peak (earlier on a tie)
+                return min((a, b - c), key=lambda st: (peak_overlap(st, st + c), st))
+
             if deep:
-                g = max(candidates, key=lambda g: (round(peak_overlap(g[0], g[0] + chunk_in(g)) / chunk_in(g), 2), -g[0]))
+                g = max(candidates, key=lambda g: (round(peak_overlap(place(g), place(g) + chunk_in(g)) / chunk_in(g), 2), -g[0]))
             else:
-                g = min(candidates, key=lambda g: (peak_overlap(g[0], g[0] + chunk_in(g)), g[0]))
+                g = min(candidates, key=lambda g: (peak_overlap(place(g), place(g) + chunk_in(g)), place(g)))
             c = chunk_in(g)
-            s = g[0]
+            s = place(g)
             blocks.append({"start": fmt_hhmm(s), "end": fmt_hhmm(s + c), "minutes": c, "task": t["name"], "kind": t["kind"], "priority": t["priority"], "in_peak": peak_overlap(s, s + c) >= c * 0.5})
             placed_min += c
             remaining -= c
-            g[0] = s + c + (5 if g[1] - (s + c) >= 20 else 0)
-            if g[1] - g[0] < 15:
-                gaps.remove(g)
+            pieces = []
+            if s - g[0] >= 15:
+                pieces.append([g[0], s - (5 if s - g[0] >= 20 else 0)])
+            if g[1] - (s + c) >= 15:
+                pieces.append([s + c + (5 if g[1] - (s + c) >= 20 else 0), g[1]])
+            idx = gaps.index(g)
+            gaps[idx:idx + 1] = pieces
         if remaining > 0:
-            unscheduled.append({"task": t["name"], "priority": t["priority"], "minutes_left": remaining, "reason": "no gap large enough" if placed_min == 0 else f"only {placed_min} of {t['minutes']} min fitted"})
+            reason = "no gap large enough" if placed_min == 0 else f"only {placed_min} of {t['minutes']} min fitted"
+            if due is not None and placed_min == 0:
+                reason += f" before {fmt_hhmm(due)}"
+            unscheduled.append({"task": t["name"], "priority": t["priority"], "minutes_left": remaining, "reason": reason})
     for s, e, title, k in busy:
         blocks.append({"start": fmt_hhmm(s), "end": fmt_hhmm(e), "minutes": e - s, "task": title, "kind": k, "priority": None, "in_peak": None})
     blocks.sort(key=lambda b: b["start"])
@@ -518,14 +557,20 @@ def _categorise(title: str, given: str) -> str:
 
 
 @AGENT.tool
-def audit_calendar(events: list[dict], work_start: str = "09:00", work_end: str = "18:00", focus_block_minutes: int = 90) -> dict:
+def audit_calendar(events: list[dict], work_start: str = "09:00", work_end: str = "18:00", focus_block_minutes: int = 90, period_start: str = "", period_end: str = "") -> dict:
     """Audit a calendar export: meeting load, fragmentation, back-to-back chains, longest focus block per day, category mix.
 
+    Focus/deep-work blocks the user put on their own calendar count as focus time, not meetings.
+    All-day items (all_day: true, or 00:00→00:00 / ≥ 24 h) are ignored. Every weekday in the
+    period counts toward capacity — a meeting-free Friday is capacity, not missing data.
+
     Args:
-        events: List of {"title": str, "start": "YYYY-MM-DD HH:MM", "end": "YYYY-MM-DD HH:MM", "category": optional}.
+        events: List of {"title": str, "start": "YYYY-MM-DD HH:MM", "end": "YYYY-MM-DD HH:MM", "category": optional, "all_day": optional bool}.
         work_start: Workday start (HH:MM) used to measure free time.
         work_end: Workday end (HH:MM).
         focus_block_minutes: Minimum uninterrupted free minutes that count as a focus block (default 90).
+        period_start: First day of the audited period (YYYY-MM-DD). Defaults to the first event's date.
+        period_end: Last day of the audited period (YYYY-MM-DD). Defaults to the last event's date.
     """
     events = require_list(events, "events", 2000)
     ws, we = parse_hhmm(work_start, "work_start"), parse_hhmm(work_end, "work_end")
@@ -534,14 +579,20 @@ def audit_calendar(events: list[dict], work_start: str = "09:00", work_end: str 
     if not (30 <= focus_block_minutes <= 240):
         raise ToolError("focus_block_minutes must be 30-240.")
     by_day: dict[str, list[tuple[int, int, str, str]]] = defaultdict(list)
+    focus_by_day: dict[str, int] = defaultdict(int)
+    seen_dates: set = set()
+    all_day_skipped = 0
     for i, ev in enumerate(events, 1):
         if not isinstance(ev, dict):
             raise ToolError(f"events[{i}] must be {{'title','start','end'}}.")
         s = parse_datetime(ev.get("start"), f"events[{i}].start")
-        e = parse_datetime(ev.get("end"), f"events[{i}].end")
+        e = parse_datetime(ev.get("end"), f"events[{i}].end") if ev.get("end") else s + timedelta(days=1)
         if e <= s:
             raise ToolError(f"events[{i}]: end must be after start.")
-        if (e - s) > timedelta(hours=24):
+        seen_dates.add(s.date())
+        midnight_to_midnight = s.hour == s.minute == 0 and e.hour == e.minute == 0
+        if ev.get("all_day") is True or (e - s) >= timedelta(hours=24) or midnight_to_midnight:
+            all_day_skipped += 1
             continue  # all-day / multi-day items are not meetings
         title = as_str(ev.get("title") or "Untitled", "title", required=False, max_len=120)
         cat = _categorise(title, str(ev.get("category") or ""))
@@ -550,16 +601,29 @@ def audit_calendar(events: list[dict], work_start: str = "09:00", work_end: str 
             s_min = s.hour * 60 + s.minute if d == s.date() else 0
             e_min = e.hour * 60 + e.minute if d == e.date() else 24 * 60
             if e_min > s_min:
-                by_day[d.isoformat()].append((s_min, e_min, title, cat))
+                if cat == "focus":
+                    focus_by_day[d.isoformat()] += max(0, min(e_min, we) - max(s_min, ws))
+                else:
+                    by_day[d.isoformat()].append((s_min, e_min, title, cat))
             d += timedelta(days=1)
+    if not seen_dates:
+        raise ToolError("No events found.")
+    p0 = dates.parse_date(period_start) if period_start else min(seen_dates)
+    p1 = dates.parse_date(period_end) if period_end else max(seen_dates)
+    if p1 < p0:
+        raise ToolError("period_end must be on or after period_start.")
+    if (p1 - p0).days > 92:
+        raise ToolError("Audit at most ~3 months at a time.")
+    day_list = sorted({(p0 + timedelta(days=k)).isoformat() for k in range((p1 - p0).days + 1) if (p0 + timedelta(days=k)).weekday() < 5} | set(by_day))
+    if not day_list:
+        raise ToolError("No weekdays in the period and no meetings found.")
     days_out, cat_min = [], defaultdict(int)
     tot_meet = tot_frag = tot_b2b = tot_focus_blocks = 0
-    for day in sorted(by_day):
-        evs = sorted(by_day[day])
+    for day in day_list:
+        evs = sorted(by_day.get(day, []))
         merged: list[list[int]] = []
         for s, e, title, cat in evs:
-            if cat != "focus":
-                cat_min[cat] += e - s
+            cat_min[cat] += e - s
             if merged and s <= merged[-1][1]:
                 merged[-1][1] = max(merged[-1][1], e)
             else:
@@ -576,7 +640,7 @@ def audit_calendar(events: list[dict], work_start: str = "09:00", work_end: str 
             gaps.append(we - cursor)
         gaps = [g for g in gaps if g > 0]
         frag = sum(1 for g in gaps if g < 30)
-        focus_blocks = sum(1 for g in gaps if g >= focus_block_minutes)
+        focus_blocks = sum(g // focus_block_minutes for g in gaps)  # how many full focus blocks fit
         longest = max(gaps, default=0)
         dt = datetime.fromisoformat(day)
         days_out.append(
@@ -590,16 +654,15 @@ def audit_calendar(events: list[dict], work_start: str = "09:00", work_end: str 
                 "fragments_under_30": frag,
                 "longest_free_block": longest,
                 "focus_blocks": focus_blocks,
-                "first_meeting": fmt_hhmm(evs[0][0]),
-                "last_meeting_end": fmt_hhmm(max(e for _, e, _, _ in evs)),
+                "focus_minutes_scheduled": focus_by_day.get(day, 0),
+                "first_meeting": fmt_hhmm(evs[0][0]) if evs else None,
+                "last_meeting_end": fmt_hhmm(max(e for _, e, _, _ in evs)) if evs else None,
             }
         )
         tot_meet += meet
         tot_frag += frag
         tot_b2b += b2b
         tot_focus_blocks += focus_blocks
-    if not days_out:
-        raise ToolError("No usable events found (all-day items are ignored).")
     n_days = len(days_out)
     capacity = n_days * (we - ws)
     load = round(100 * tot_meet / capacity)
@@ -613,7 +676,8 @@ def audit_calendar(events: list[dict], work_start: str = "09:00", work_end: str 
     if tot_frag >= n_days:
         recs.append(f"{tot_frag} free gaps under 30 min — dead time. Cluster meetings into one band per day to reclaim it.")
     if tot_focus_blocks < 2 * n_days:
-        recs.append(f"Only {tot_focus_blocks} focus blocks (≥ {focus_block_minutes} min) across {n_days} days; target is 2 per day. Block {best['weekday']} mornings first.")
+        thin = min(days_out, key=lambda d: (d["focus_blocks"], -d["meeting_minutes"]))
+        recs.append(f"Only {tot_focus_blocks} focus blocks (≥ {focus_block_minutes} min) across {n_days} days; target is 2 per day. Start with {thin['weekday']} {thin['date']} ({thin['focus_blocks']} block(s)): move its morning meetings into the afternoon.")
     if tot_b2b >= 3:
         recs.append(f"{tot_b2b} back-to-back transitions: switch to 25/50-minute meetings to create buffers.")
     if cats and cats[0]["category"] in ("standup/sync", "other meeting") and cats[0]["share_pct"] >= 35:
@@ -635,5 +699,8 @@ def audit_calendar(events: list[dict], work_start: str = "09:00", work_end: str 
         "by_day": days_out,
         "by_category": cats,
         "recommendations": recs,
+        "focus_minutes_scheduled": sum(focus_by_day.values()),
+        "all_day_items_ignored": all_day_skipped,
+        "meeting_free_days": [d["date"] for d in days_out if d["meetings"] == 0],
         "verdict": f"{rag}: {load}% of {n_days} workdays in meetings ({round(tot_meet / 60, 1)} h), {tot_focus_blocks} focus blocks, {tot_frag} fragments under 30 min, {tot_b2b} back-to-back transitions. Worst day {worst['weekday']} {worst['date']}.",
     }

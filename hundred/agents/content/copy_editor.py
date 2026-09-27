@@ -84,10 +84,16 @@ AGENT = Agent(
        to" → "to", "utilize" → "use"). Use its `rewritten` text as your working copy, and
        list its edits in the change log so nothing looks like magic.
     4. **Pass three — proof (mechanics).** Call `copy_editor__style_check` on your edited
-       text. Fix everything it flags: doubled words, spacing, mixed curly/straight quotes,
-       spaced hyphens used as dashes, US/UK spelling drift, numerals under ten, "it's/its",
-       Oxford-comma inconsistency. Pick the *author's majority* convention; never impose a
-       house style they didn't ask for. If they name a style (AP, Chicago), apply it.
+       text with the author's untouched draft as `original` (so US/UK spelling is judged by
+       the author's majority, not by your edit). Fix everything it flags: misspellings,
+       its/it's, agreement slips (we was, people who wasn't), stray or doubled words,
+       spacing, mixed curly/straight quotes, spaced hyphens used as dashes, US/UK spelling
+       drift, numerals under ten, Oxford-comma inconsistency. Pick the *author's majority*
+       convention; never impose a house style they didn't ask for. If they name a style (AP,
+       Chicago), apply it. The tool is pattern-based, so then **read every sentence once for
+       grammar yourself**: subject-verb agreement, tense consistency, homophones
+       (their/there, affect/effect, compliment/complement), dangling modifiers and any
+       misspelled word it doesn't list. Report each grammar fix in the change log.
     5. **Meaning check.** Reread the original and your edit side by side. Any number, name,
        claim, qualifier ("some", "most", "up to") or negation that changed is a bug. Restore it.
     6. **Prove it.** Call `copy_editor__readability_diff` with original and edited text.
@@ -199,10 +205,13 @@ REPLACEMENTS: list[tuple[str, str]] = [
     ("in the majority of cases", "usually"), ("in many cases", "often"), ("in most cases", "usually"),
     ("it is possible that", "perhaps"), ("there is no doubt that", "clearly"), ("take into account", "consider"),
     ("along the lines of", "like"), ("as to whether", "whether"), ("give rise to", "cause"), ("in the course of", "during"),
+    ("for the purposes of", "to"), ("a number of", "several"), ("a.m. in the morning", "a.m."), ("p.m. in the afternoon", "p.m."),
+    ("p.m. in the evening", "p.m."), ("am in the morning", "am"), ("pm in the afternoon", "pm"), ("pm in the evening", "pm"),
+    ("new innovations", "innovations"), ("true facts", "facts"), ("joint collaboration", "collaboration"), ("revert back", "revert"),
 ]
 for _long, _short in NOMINALISATIONS:
     REPLACEMENTS.append((_long, _short))
-JUDGEMENT_CALLS = {"approximately", "additional", "sufficient", "numerous", "assistance", "facilitate", "in terms of", "commence", "commenced", "terminate", "terminated", "in accordance with", "notwithstanding"}
+JUDGEMENT_CALLS = {"a number of", "approximately", "additional", "sufficient", "numerous", "assistance", "facilitate", "in terms of", "commence", "commenced", "terminate", "terminated", "in accordance with", "notwithstanding"}
 QUOTE_RE = re.compile(r"\"[^\"\n]{1,400}\"|“[^”\n]{1,400}”")
 
 TRANSITIONS = {
@@ -264,7 +273,7 @@ def diagnose(draft: str, genre: str = "web") -> dict:
     lens = [len(text.words(s)) for s in sents]
     passive = text.passive_sentences(plain)
     adverbs = _adverbs(ws)
-    hedges = c.find_phrases(plain, c.HEDGES)
+    hedges = c.find_hedges(plain)
     cliches = c.find_phrases(plain, c.CLICHES)
     ai = c.find_phrases(plain, c.AI_TELLS)
     nominal = c.find_phrases(plain, [n for n, _ in NOMINALISATIONS])
@@ -419,29 +428,92 @@ def find_replacements(draft: str, aggressive: bool = False) -> dict:
     }
 
 
-UK_MARKERS = re.compile(r"\b(colour|favour|honour|behaviour|labour|neighbour|centre|theatre|metre|litre|licence|defence|offence|programme|catalogue|analyse|organise|organisation|realise|recognise|travelled|travelling|cancelled|grey|cheque|tyre|kerb|aluminium|mould|plough|sceptical|practise|enquiry|whilst|amongst|learnt|spelt)\b", re.I)
-US_MARKERS = re.compile(r"\b(color|favor|honor|behavior|labor|neighbor|center|theater|meter|liter|license|defense|offense|program|catalog|analyze|organize|organization|realize|recognize|traveled|traveling|canceled|gray|check|tire|curb|aluminum|mold|plow|skeptical|inquiry|learned|spelled)\b", re.I)
+UK_MARKERS = re.compile(r"\b(colour|colours|favour|favourite|honour|behaviour|labour|neighbour|centre|centres|theatre|metre|metres|litre|licence|defence|offence|programme|programmes|catalogue|travelled|travelling|traveller|cancelled|cancelling|grey|cheque|tyre|tyres|kerb|aluminium|mould|plough|sceptical|practise|practised|whilst|amongst|learnt|spelt|fulfil|enrol|jewellery|pyjamas|manoeuvre)\b", re.I)
+US_MARKERS = re.compile(r"\b(color|colors|favor|favorite|honor|behavior|labor|neighbor|center|centers|theater|liter|defense|offense|catalog|traveled|traveling|traveler|canceled|canceling|gray|aluminum|mold|plow|skeptical|fulfill|enroll|jewelry|pajamas|maneuver)\b", re.I)
+# -ize/-ise and -yze/-yse verbs: the z form is US, the s form UK (Oxford aside). Stems that are -ise in US too
+# (advertise, exercise, promise, surprise, compromise) are deliberately absent.
+_IZE_STEMS = (
+    "organi|reali|recogni|priori|optimi|utili|apologi|customi|finali|minimi|maximi|summari|emphasi|"
+    "standardi|categori|critici|memori|visuali|personali|speciali|authori|characteri|capitali|centrali|"
+    "mobili|moderni|moneti|normali|stabili|synchroni|symboli|harmoni|economi|familiari|legali|"
+    "patroni|penali|populari|publici|rationali|revolutioni|scrutini|sympathi|theori|"
+    "operationali|internationali|digiti|incentivi|producti"
+)
+IZE_RE = re.compile(r"\b(?:" + _IZE_STEMS + r")(z|s)(?:e|es|ed|ing|ation|ations|er|ers)\b|\banaly(z|s)(?:e|es|ed|ing|er|ers)\b", re.I)
+
+
+def spelling_counts(plain: str) -> tuple[int, int, list[tuple[str, str, int]]]:
+    """(uk, us, [(word, variant, pos)]) across fixed markers and -ise/-ize verbs."""
+    hits: list[tuple[str, str, int]] = []
+    for m in UK_MARKERS.finditer(plain):
+        hits.append((m.group(0), "UK", m.start()))
+    for m in US_MARKERS.finditer(plain):
+        hits.append((m.group(0), "US", m.start()))
+    for m in IZE_RE.finditer(plain):
+        zs = (m.group(1) or m.group(2) or "").lower()
+        hits.append((m.group(0), "US" if zs == "z" else "UK", m.start()))
+    hits.sort(key=lambda h: h[2])
+    return sum(1 for h in hits if h[1] == "UK"), sum(1 for h in hits if h[1] == "US"), hits
+
+
+PREPOSITIONS = "in|of|on|for|with|from|by|at|to|into|onto|under|over|about|through|during|within|across|behind|toward|towards"
 COMMON_ERRORS = [
     (r"\balot\b", "a lot"), (r"\birregardless\b", "regardless"), (r"\bcould of\b", "could have"), (r"\bshould of\b", "should have"),
-    (r"\bwould of\b", "would have"), (r"\bit's own\b", "its own"), (r"\bits a\b", "it's a"), (r"\bits not\b", "it's not"),
-    (r"\byour welcome\b", "you're welcome"), (r"\bthen again\b", None), (r"\bless (?:people|items|things|words|days|times|users|customers)\b", "fewer …"),
+    (r"\bwould of\b", "would have"), (r"\bmust of\b", "must have"), (r"\bit's own\b", "its own"), (r"\bits a\b", "it's a"), (r"\bits not\b", "it's not"),
+    (r"\bits (?:been|going|gonna|about to|time to|too late)\b", "it's …"),
+    (r"\b(?:" + PREPOSITIONS + r")\s+it's\s+(?!(?:been|not|a|an|the|just|also|still|too|so|very|really|all|only|never|always|what|how|why|who|that|this|there)\b)(?![a-z]+(?:ing|ed)\b)[a-z]+\b", "its (possessive, no apostrophe)"),
+    (r"\b(?:we|they|you)\s+(?:was|wasn't)\b", "were / weren't (agreement)"),
+    (r"\bpeople\s+(?:who\s+|that\s+)?(?:was|wasn't|is|isn't|has|hasn't|doesn't)\b", "people … were/are/have/don't (agreement)"),
+    (r"\b(?:he|she|it)\s+don't\b", "doesn't (agreement)"),
+    (r"\b(?:more|less|better|worse|rather|other|bigger|smaller|faster|slower|higher|lower|greater|fewer)\s+then\b", "than"),
+    (r"\b(?:the|a|an)\s+(?:whole|entire|same|full|main|very)\s+(?:the|a|an)\b", "stray article (the whole the → the whole)"),
+    (r"\byour welcome\b", "you're welcome"), (r"\bless (?:people|items|things|words|days|times|users|customers|employees|mistakes|errors)\b", "fewer …"),
     (r"\bvery unique\b", "unique"), (r"\bmore unique\b", "unique"), (r"\bfor all intensive purposes\b", "for all intents and purposes"),
-    (r"\bi\b(?![.'’])", "I (capitalise)"), (r"\bthe the\b", "the"), (r"\ba a\b", "a"), (r"\bto to\b", "to"), (r"\bin in\b", "in"), (r"\bof of\b", "of"),
+    (r"\bper say\b", "per se"), (r"\bcould care less\b", "couldn't care less"), (r"\ban affect\b", "an effect"),
+    (r"\bthe the\b", "the"), (r"\ba a\b", "a"), (r"\bto to\b", "to"), (r"\bin in\b", "in"), (r"\bof of\b", "of"),
     (r"\band and\b", "and"), (r"\bis is\b", "is"), (r"\bthat that\b", "that"), (r"\bcomprised of\b", "composed of / comprises"),
-    (r"\bshould've of\b", "should have"), (r"\beveryday\s+(?:i|we|you|they|he|she)\b", "every day"), (r"\bloose\s+(?:the|a|my|our)\b", "lose"),
+    (r"\bshould've of\b", "should have"), (r"\beveryday\s+(?:i|we|you|they|he|she)\b", "every day"), (r"\bloose\s+(?:the|a|my|our|your|their)\b", "lose"),
 ]
+CASE_SENSITIVE_ERRORS = [(r"(?<![\w'’-])i(?![\w.'’-])", "I (capitalise)")]
+MISSPELLINGS = {
+    "accomodate": "accommodate", "acheive": "achieve", "acknowlege": "acknowledge", "aquire": "acquire", "adress": "address",
+    "apparantly": "apparently", "arguement": "argument", "begining": "beginning", "beleive": "believe", "buisness": "business",
+    "calender": "calendar", "commitee": "committee", "concious": "conscious", "definately": "definitely", "definatly": "definitely",
+    "embarass": "embarrass", "enviroment": "environment", "existance": "existence", "febuary": "February", "foriegn": "foreign",
+    "goverment": "government", "greatful": "grateful", "gaurantee": "guarantee", "harrass": "harass", "immediatly": "immediately",
+    "independant": "independent", "liason": "liaison", "libary": "library", "maintainance": "maintenance", "maintainence": "maintenance",
+    "millenium": "millennium", "neccessary": "necessary", "necesary": "necessary", "noticable": "noticeable", "occassion": "occasion",
+    "occured": "occurred", "occurence": "occurrence", "occuring": "occurring", "posession": "possession", "priviledge": "privilege",
+    "proffesional": "professional", "pronounciation": "pronunciation", "publically": "publicly", "questionaire": "questionnaire",
+    "recieve": "receive", "recieved": "received", "reccomend": "recommend", "recomend": "recommend", "refered": "referred",
+    "relevent": "relevant", "rythm": "rhythm", "seperate": "separate", "seperately": "separately", "succesful": "successful",
+    "sucessful": "successful", "suprise": "surprise", "threshhold": "threshold", "tommorow": "tomorrow", "tomorow": "tomorrow",
+    "truely": "truly", "untill": "until", "wierd": "weird", "wensday": "Wednesday", "writting": "writing", "wich": "which",
+    "thier": "their", "teh": "the", "becuase": "because", "beacuse": "because", "accross": "across",
+    "agressive": "aggressive", "basicly": "basically", "collegue": "colleague", "comming": "coming", "completly": "completely",
+    "curiousity": "curiosity", "dissapoint": "disappoint", "existant": "existent", "familar": "familiar", "finaly": "finally",
+    "fourty": "forty", "freind": "friend", "futher": "further", "happend": "happened", "hierachy": "hierarchy", "interupt": "interrupt",
+    "knowlege": "knowledge", "lenght": "length", "managment": "management", "mispell": "misspell",
+    "persue": "pursue", "posible": "possible", "prefered": "preferred", "reciept": "receipt", "resturant": "restaurant",
+    "sieze": "seize", "similiar": "similar", "strenght": "strength", "tendancy": "tendency", "therefor": "therefore",
+    "tounge": "tongue", "usualy": "usually", "vaccuum": "vacuum", "wether": "whether (or weather)",
+}
+MISSPELL_RE = re.compile(r"\b(" + "|".join(sorted(MISSPELLINGS, key=len, reverse=True)) + r")\b", re.I)
 
 
 @AGENT.tool
-def style_check(draft: str, style: str = "author") -> dict:
-    """Proof pass: doubled words, spacing, mixed quote/dash styles, US-vs-UK drift, numerals, its/it's, Oxford-comma consistency, common errors.
+def style_check(draft: str, style: str = "author", original: str = "") -> dict:
+    """Proof pass: common misspellings, its/it's, agreement slips, doubled words, spacing, mixed quote/dash styles, US-vs-UK drift, numerals, Oxford-comma consistency.
 
-    Run on the *edited* text as the final pass. Reports every inconsistency with a snippet
-    so you can fix it, and which convention the author uses most (so you match it).
+    Run on the *edited* text as the final pass, passing the author's untouched draft as
+    `original` so the spelling variant (US/UK) is decided by the author, not by your edit.
+    Reports every issue with a snippet. It is pattern-based: it does not replace reading
+    every sentence for grammar.
 
     Args:
         draft: The text to proof.
         style: "author" (default — match the author's majority convention), "ap" (AP style: spell out one-nine, no Oxford comma, US spelling) or "chicago" (spell out one-hundred, Oxford comma, US spelling).
+        original: The author's original draft (optional). Used to decide which spelling variant (US/UK) the author writes in, so an edit that introduces the other variant is caught.
     """
     c.guard(draft, "Draft")
     style = (style or "author").lower()
@@ -461,8 +533,12 @@ def style_check(draft: str, style: str = "author") -> dict:
         add("capitalisation", "sentence starts lowercase", m.start())
     for pat, fix in COMMON_ERRORS:
         for m in re.finditer(pat, plain, re.I):
-            if fix:
-                add("error", f"'{m.group(0)}' → {fix}", m.start())
+            add("error", f"'{m.group(0)}' → {fix}", m.start())
+    for pat, fix in CASE_SENSITIVE_ERRORS:
+        for m in re.finditer(pat, plain):
+            add("error", f"'{m.group(0)}' → {fix}", m.start())
+    for m in MISSPELL_RE.finditer(plain):
+        add("spelling", f"'{m.group(0)}' → {MISSPELLINGS[m.group(0).lower()]}", m.start())
     straight = len(re.findall(r"\"", plain))
     curly = len(re.findall(r"[“”]", plain))
     if straight and curly:
@@ -473,15 +549,18 @@ def style_check(draft: str, style: str = "author") -> dict:
         add("consistency", f"mixed dash styles: {', '.join(dash_styles)} — use one (em dash for asides, en dash for ranges)", count=em + en + spaced_hyphen + double_hyphen)
     if spaced_hyphen and not em:
         add("consistency", f"{spaced_hyphen} spaced hyphens used as dashes — use an em dash (—)", count=spaced_hyphen)
-    uk = len(UK_MARKERS.findall(plain))
-    us = len(US_MARKERS.findall(plain))
-    variant = "UK" if uk > us else "US" if us > uk else "undetermined"
+    uk, us, hits = spelling_counts(plain)
+    if original and original.strip():
+        ouk, ous, _ = spelling_counts(c.strip_markdown(original))
+        ref_uk, ref_us, basis = ouk, ous, "the original"
+    else:
+        ref_uk, ref_us, basis = uk, us, "this text"
+    variant = "UK" if ref_uk > ref_us else "US" if ref_us > ref_uk else "undetermined"
     if style in ("ap", "chicago"):
-        variant = "US"
-    if uk and us and variant != "undetermined":
-        minority = UK_MARKERS if variant == "US" else US_MARKERS
-        for m in list(minority.finditer(plain))[:10]:
-            add("spelling", f"'{m.group(0)}' is {'UK' if variant == 'US' else 'US'} spelling; text is mostly {variant}", m.start())
+        variant, basis = "US", f"{style.upper()} style"
+    if variant != "undetermined":
+        for word, v, pos in [h for h in hits if h[1] != variant][:10]:
+            add("spelling", f"'{word}' is {v} spelling; {basis} is {variant}", pos)
     spell_limit = 100 if style == "chicago" else 9
     for m in re.finditer(r"(?<![\d.,$£€%:-])\b([1-9])\b(?![\d.,:%]|\s*(?:%|percent|am|pm|a\.m\.|p\.m\.|x\b|st\b|nd\b|rd\b|th\b|/))", plain):
         add("numbers", f"numeral '{m.group(1)}' in prose — spell out numbers under {spell_limit + 1} (keep digits for data, ages, money, %)", m.start())
@@ -520,6 +599,18 @@ def style_check(draft: str, style: str = "author") -> dict:
     }
 
 
+_NUM_WORDS = {w: str(i) for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve".split())}
+
+
+def _numbers(p: str, spelled: bool = False) -> set[str]:
+    """Digit numbers in the text; with spelled=True also zero-twelve written as words, as digits
+    (so an edit that turns '3 features' into 'three features' hasn't lost a number)."""
+    found = {n.rstrip(".,") for n in re.findall(r"\d[\d,.]*%?", p)}
+    if spelled:
+        found |= {_NUM_WORDS[w.lower()] for w in re.findall(r"\b(" + "|".join(_NUM_WORDS) + r")\b", p, re.I)}
+    return found
+
+
 @AGENT.tool
 def readability_diff(before: str, after: str) -> dict:
     """Prove the edit helped: before/after words, grade, reading ease, sentence length, passive and adverb counts with deltas and warnings.
@@ -547,7 +638,7 @@ def readability_diff(before: str, after: str) -> dict:
             "fk_grade": rd["fk_grade"], "flesch_reading_ease": rd["flesch_reading_ease"],
             "passive_sentences": len(text.passive_sentences(p)),
             "adverbs": len(_adverbs(ws)),
-            "hedges": sum(h["count"] for h in c.find_phrases(p, c.HEDGES)),
+            "hedges": sum(h["count"] for h in c.find_hedges(p)),
             "cliches": sum(h["count"] for h in c.find_phrases(p, c.CLICHES)),
             "ai_tells": sum(h["count"] for h in c.find_phrases(p, c.AI_TELLS)),
         }
@@ -566,8 +657,8 @@ def readability_diff(before: str, after: str) -> dict:
         warnings.append("Reading grade went UP. Re-do the line pass: shorter sentences, shorter words.")
     if a["passive_sentences"] > b["passive_sentences"]:
         warnings.append("More passive sentences than before.")
-    nums_b = set(re.findall(r"\d[\d,.]*%?", pb))
-    nums_a = set(re.findall(r"\d[\d,.]*%?", pa))
+    nums_b = _numbers(pb)
+    nums_a = _numbers(pa, spelled=True)
     missing = sorted(nums_b - nums_a)
     if missing:
         warnings.append(f"Numbers in the original not in the edit: {', '.join(missing[:10])} — confirm each was cut on purpose.")

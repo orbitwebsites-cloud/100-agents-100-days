@@ -66,10 +66,16 @@ AGENT = Agent(
     4. **Validate against the platform** with `product_listing__check_marketplace_limits`
        on every field (title, bullets, description, backend keywords, tags, SEO title/meta).
        It knows the character limits and content rules per marketplace and reports each
-       violation with the fix; pass overrides if your category has different limits.
+       violation with the fix; pass overrides if your category has different limits. Pass
+       `brand` and any `competitor_brands` you know for the category — third-party brand
+       names in search terms (e.g. "yeti", "hydro flask") are the most common backend
+       violation, alongside subjective/temporary words ("best", "new").
     5. **Check keyword coverage** with `product_listing__keyword_coverage`: which keywords
        appear where, which are missing, what is duplicated in backend fields (wasted bytes),
-       and whether the description is stuffed. Move missing keywords into the field with
+       and whether the description is stuffed. Its `coverage_pct` is word-level (indexed)
+       coverage — how Amazon/Walmart/eBay match searches; `phrase_coverage_pct` is exact
+       phrases. Only the primary keyword needs the exact phrase (in the title); never repeat
+       phrases to raise phrase coverage. Move missing keywords into the field with
        room, highest-value field first (title → bullets → description → backend/tags).
     6. **Deliver the final listing** in the output format, every field within limits, plus
        the compliance notes (claims to verify, certifications) and the A/B suggestion for
@@ -154,6 +160,16 @@ PROMO_RE = re.compile(
 )
 CLAIM_RE = re.compile(r"\b(fda[- ]?(approved|cleared|registered)|medical grade|clinically (proven|tested)|cures?|treats?|bpa[- ]free|organic|non[- ]?toxic|eco[- ]?friendly|biodegradable|antibacterial|hypoallergenic|certified|patented)\b", re.I)
 HTML_RE = re.compile(r"<[^>]{1,50}>")
+# Amazon search-terms policy: no subjective claims ("best", "amazing") and no temporary statements ("new", "on sale").
+BACKEND_BANNED_RE = re.compile(r"\b(best|cheapest|cheap|amazing|perfect|top rated|#\s?1|number one|new|latest|now|on sale|sale|discount|limited time|free shipping)\b", re.I)
+# Well-known third-party brands that sellers commonly (and illegally, per Amazon policy) stuff into search terms.
+# Not exhaustive — pass competitor_brands for the category.
+KNOWN_BRANDS = [
+    "yeti", "hydro flask", "hydroflask", "stanley", "owala", "contigo", "camelbak", "thermos", "nalgene", "simple modern", "s'well", "swell",
+    "tervis", "zojirushi", "apple", "iphone", "airpods", "samsung", "galaxy", "anker", "nike", "adidas", "lego", "dyson", "instant pot", "ninja",
+    "keurig", "kitchenaid", "cuisinart", "fitbit", "garmin", "bose", "sony", "logitech", "under armour", "lululemon", "crocs", "oxo",
+    "rubbermaid", "ziploc", "tupperware", "pyrex", "lodge", "le creuset", "vitamix", "nespresso", "gopro", "kindle", "fire tv", "roku",
+]
 EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF☀-➿]")
 
 
@@ -172,6 +188,8 @@ def check_marketplace_limits(
     seo_title: str = "",
     meta_description: str = "",
     overrides: dict | None = None,
+    brand: str = "",
+    competitor_brands: list[str] | None = None,
 ) -> dict:
     """Validate every listing field against the marketplace's character limits and content rules (promo words, special characters, word repeats, HTML, backend bytes, tag counts) and list each violation with its fix.
 
@@ -185,6 +203,8 @@ def check_marketplace_limits(
         seo_title: Shopify SEO/page title.
         meta_description: Shopify meta description.
         overrides: Optional limit overrides, e.g. {"bullet_chars_max": 500, "title_max": 150} for categories with different rules.
+        brand: Your own brand name (its presence in backend keywords is flagged as wasted bytes).
+        competitor_brands: Competitor brand names for this category; any found in backend keywords, title or bullets is a policy violation. A built-in list of well-known brands is always checked too.
     """
     mp = marketplace.lower().strip()
     if mp not in LIMITS:
@@ -264,6 +284,9 @@ def check_marketplace_limits(
             allowed = {"br"} if mp == "amazon" else set()
             if set(tags_found) - allowed:
                 fails.append(f"description contains HTML ({', '.join(tags_found[:6])}) — not allowed on {mp}" + (" except <br>" if mp == "amazon" else ""))
+        promo_d = sorted({m.group(0).lower() for m in PROMO_RE.finditer(re.sub(r"<[^>]*>", " ", description))})
+        if promo_d:
+            (fails if mp in ("amazon", "walmart") else warns).append(f"description promo/subjective words: {', '.join(promo_d[:6])}")
         if mp == "etsy":
             fields["description"]["meta_preview"] = description[: lim["meta_description_chars"]]
             if not re.search(r"[a-z]", description[:160].lower()):
@@ -288,6 +311,25 @@ def check_marketplace_limits(
             warns.append(f"backend keywords repeated within field: {', '.join(dup_self[:6])}")
         if re.search(r"\b[A-Z0-9]{10}\b", b):
             fails.append("backend keywords contain an ASIN-like token — not allowed")
+        banned_bk = sorted({m.group(0).lower() for m in BACKEND_BANNED_RE.finditer(b)})
+        if banned_bk:
+            fails.append(f"backend keywords contain subjective/temporary terms (not allowed in search terms): {', '.join(banned_bk)}")
+        if brand.strip() and re.search(r"(?<!\w)" + re.escape(brand.strip().lower()) + r"(?!\w)", b.lower()):
+            warns.append(f"backend keywords repeat your own brand “{brand.strip()}” — already indexed, wasted bytes")
+
+    # ── third-party brand names (trademark / search-term policy) ──
+    own = brand.strip().lower()
+    brand_list = [x.strip().lower() for x in (competitor_brands or []) if str(x).strip()] + KNOWN_BRANDS
+    brand_hits: dict[str, list[str]] = {}
+    for fname, val in (("backend_keywords", backend_keywords), ("title", title), ("bullets", " ".join(bullets)), ("description", description)):
+        low_val = val.lower()
+        for br in dict.fromkeys(brand_list):
+            if br and br != own and br not in own and re.search(r"(?<!\w)" + re.escape(br) + r"(?!\w)", low_val):
+                brand_hits.setdefault(fname, []).append(br)
+    for fname, hits in brand_hits.items():
+        fails.append(f"{fname} contains third-party brand name(s): {', '.join(hits)} — not allowed (search-terms policy / trademark)")
+    if brand_hits:
+        fields["third_party_brands"] = brand_hits
 
     # ── tags (Etsy) ──
     if tags or lim.get("tags_max"):
@@ -338,6 +380,12 @@ def check_marketplace_limits(
 def keyword_coverage(keywords: list[str], title: str, bullets: list[str] | None = None, description: str = "", backend_keywords: str = "", tags: list[str] | None = None) -> dict:
     """Map each target keyword to where it appears (title, bullets, description, backend, tags), find missing and partially covered ones, wasted backend duplicates and stuffing.
 
+    coverage_pct is *indexed* coverage: Amazon, Walmart and eBay index individual words across
+    the title, bullets and search terms, so a keyword whose words all appear somewhere is
+    searchable even if the exact phrase is not written out. phrase_coverage_pct gives exact
+    phrases full credit and word-only matches half — use it for the primary keyword and title
+    relevance, never as a reason to repeat phrases (that is stuffing).
+
     Args:
         keywords: Target search terms/phrases, primary first (≤ 40).
         title: Product title.
@@ -358,19 +406,24 @@ def keyword_coverage(keywords: list[str], title: str, bullets: list[str] | None 
         raise ToolError("A field is absurdly long (200k chars max).")
     lows = {k: v.lower() for k, v in fields.items()}
     words_by_field = {k: {w.lower() for w in text.words(v)} for k, v in fields.items()}
+    all_words = set().union(*words_by_field.values())
     weights = {"title": 3, "bullets": 2, "description": 1, "backend": 1, "tags": 2}
-    rows, score, max_score = [], 0.0, 0.0
+    rows, score, max_score, indexed_score = [], 0.0, 0.0, 0.0
     for i, kw in enumerate(kws):
         kl = kw.lower()
         kwords = [w.lower() for w in text.words(kw)]
         exact = [f for f, v in lows.items() if v and re.search(r"(?<!\w)" + re.escape(kl) + r"(?!\w)", v)]
         partial = [f for f, ws in words_by_field.items() if f not in exact and kwords and all(w in ws for w in kwords)]
+        if not exact and not partial and kwords and all(w in all_words for w in kwords):
+            partial = ["across fields"]
         weight = 3 if i == 0 else (2 if i <= 4 else 1)
         max_score += weight
         if exact:
             score += weight
+            indexed_score += weight
         elif partial:
             score += weight * 0.5
+            indexed_score += weight
         title_pos = lows["title"].find(kl) if "title" in exact else None
         status = "exact" if exact else ("partial (all words present, not the phrase)" if partial else "MISSING")
         suggestion = None
@@ -396,6 +449,7 @@ def keyword_coverage(keywords: list[str], title: str, bullets: list[str] | None 
             }
         )
     coverage = score / max_score if max_score else 0.0
+    indexed = indexed_score / max_score if max_score else 0.0
     primary = rows[0]
     stuffing = []
     if description:
@@ -413,13 +467,14 @@ def keyword_coverage(keywords: list[str], title: str, bullets: list[str] | None 
     if backend_waste:
         warnings.append(f"backend words already in title/bullets (wasted bytes): {', '.join(backend_waste[:10])}")
     return {
-        "coverage_pct": pct(coverage),
+        "coverage_pct": pct(indexed),
+        "phrase_coverage_pct": pct(coverage),
         "keywords": rows,
         "missing": missing,
         "partial": [r["keyword"] for r in rows if r["status"].startswith("partial")],
         "backend_wasted_words": backend_waste,
         "warnings": warnings,
-        "verdict": f"Coverage {100 * coverage:.0f}% (weighted). {len(missing)} missing, {len([r for r in rows if r['status'].startswith('partial')])} partial. " + ("Primary keyword in title at char " + str(primary["title_char_position"]) + "." if primary["title_char_position"] is not None else "Primary keyword NOT in the title as a phrase."),
+        "verdict": f"Indexed coverage {100 * indexed:.0f}% (weighted; exact-phrase {100 * coverage:.0f}%). {len(missing)} missing, {len([r for r in rows if r['status'].startswith('partial')])} partial. " + ("Primary keyword in title at char " + str(primary["title_char_position"]) + "." if primary["title_char_position"] is not None else "Primary keyword NOT in the title as a phrase."),
     }
 
 
@@ -607,6 +662,9 @@ def bullet_lint(bullets: list[str], description: str = "", marketplace: str = "a
     if description.strip():
         if len(description) > 200_000:
             raise ToolError("description too long (200k chars max).")
+        # Amazon/Etsy descriptions use <br> (and Shopify HTML) for layout: treat breaks and block tags as newlines
+        description = re.sub(r"(?i)<\s*(br|/p|/li|/h\d|/div)\s*/?>", "\n", description)
+        description = re.sub(r"<[^>]{1,50}>", " ", description)
         rd = text.readability(description)
         paras = [p for p in re.split(r"\n\s*\n|\n", description) if p.strip()]
         long_paras = [len(text.words(p)) for p in paras if len(text.words(p)) > 80]

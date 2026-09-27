@@ -62,8 +62,10 @@ AGENT = Agent(
        per 1,000 users, K implied by the funnel, and the step with the biggest lift
        potential — fix that step first.
     4. **Compare structures.** Call `referral_program__compare_rewards` with 2-5 candidate
-       structures (one-sided, two-sided, tiered, credit vs cash). It ranks them by expected
-       cost per customer and payback given assumed conversion rates per structure.
+       structures (one-sided, two-sided, tiered, credit vs cash). It ranks them by net value
+       per 100 invites given assumed conversion rates, but only among structures that pass the
+       guardrails (≤ LTV/3, < paid CAC, payback ≤ 6 months, reward on payment); failures sink
+       and are named. Never recommend a failing structure because its raw net is higher.
     5. **Write the spec:** mechanics (trigger moment, share surfaces, reward timing —
        reward on *activation/payment*, never on signup), rewards, caps, fraud rules,
        messaging (ask copy ≤ 15 words, benefit-first), tracking plan, and the 30/60/90-day
@@ -342,7 +344,7 @@ def referral_funnel(active_users: int = 1000, share_rate: float = -1, invites_pe
         "upside_by_step": upside,
         "fix_first": weakest["step"] if weakest else None,
         "verdict": (
-            f"{base['qualified']:.0f} referred customers from {users:,} users (K ≈ {k:.2f}). "
+            f"{base['qualified']:.0f} referred customers from {users:,} users (K ≈ {k:.3g}). "
             + (f"Biggest lever: {weakest['step']} ({weakest['current']:g} vs benchmark {weakest['benchmark_range']}) — worth +{weakest['lift_to_top_of_range_adds']} customers." if weakest else "All steps at or above top-of-range benchmarks.")
             + (f" {len(assumed)} step(s) assumed from benchmarks — replace with measured data." if assumed else "")
         ),
@@ -392,15 +394,30 @@ def compare_rewards(structures: list[dict], ltv: float, paid_cac: float, contrib
                 "within_ltv_third": cost <= ltv_v / 3,
             }
         )
-    # rank by net value per 100 invites = customers × (LTV − cost); structures over LTV/3 sink to the bottom
+    # rank by net value per 100 invites = customers × (LTV − cost), but only among structures that pass the
+    # playbook's guardrails; failures (over LTV/3, ≥ paid CAC, payback > 6 months, rewarded at signup) sink.
     for r in rows:
         r["net_value_per_100_invites"] = round(100 * r["expected_conversion"] * (ltv_v - r["cost_per_customer"]), 2)
-    rows.sort(key=lambda r: (not r["within_ltv_third"], -r["net_value_per_100_invites"]))
+        fails = []
+        if not r["within_ltv_third"]:
+            fails.append("cost over LTV/3")
+        if r["beats_paid_cac"] is False:
+            fails.append("cost ≥ paid CAC")
+        if r["payback_months"] is not None and r["payback_months"] > 6:
+            fails.append(f"payback {r['payback_months']} months > 6")
+        if r["paid_on"] == "signup":
+            fails.append("rewards paid at signup (fraud magnet; pay on first payment)")
+        r["guardrail_failures"] = fails
+    rows.sort(key=lambda r: (bool(r["guardrail_failures"]), not r["within_ltv_third"], -r["net_value_per_100_invites"]))
     for i, r in enumerate(rows, 1):
         r["rank"] = i
     best = rows[0]
+    higher_net_but_failing = [r["name"] for r in rows if r["guardrail_failures"] and r["net_value_per_100_invites"] > best["net_value_per_100_invites"]]
     return {
         "ranked": rows,
         "recommended": best["name"],
-        "summary": f"'{best['name']}' wins: ${best['cost_per_customer']:,.0f} per customer ({best['ltv_return']}× LTV" + (f", payback {best['payback_months']} mo" if best["payback_months"] else "") + f") at {best['expected_conversion']:.0%} invite→customer → net ${best['net_value_per_100_invites']:,.0f} per 100 invites. Ranked by net value per 100 invites; structures over LTV/3 sink to the bottom.",
+        "summary": f"'{best['name']}' wins: ${best['cost_per_customer']:,.0f} per customer ({best['ltv_return']}× LTV" + (f", payback {best['payback_months']} mo" if best["payback_months"] else "") + f") at {best['expected_conversion']:.0%} invite→customer → net ${best['net_value_per_100_invites']:,.0f} per 100 invites."
+        + (f" Higher raw net but failing guardrails: {', '.join(higher_net_but_failing)}." if higher_net_but_failing else "")
+        + (" No structure passes every guardrail — fix the economics before launching." if best["guardrail_failures"] else "")
+        + " Ranked by net value per 100 invites among structures that pass the guardrails (≤ LTV/3, < paid CAC, payback ≤ 6 months, paid on payment).",
     }

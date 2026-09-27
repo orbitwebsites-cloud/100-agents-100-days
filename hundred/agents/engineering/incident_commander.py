@@ -148,7 +148,7 @@ EVENT_RE = re.compile(
 )
 MILESTONES = [
     ("impact_start", re.compile(r"\b(impact (started|began)|started (failing|erroring|returning)|began|deploy(ed|ment)?\b|released?|rollout|rolled out|first (error|failure)|latency spike|errors? spike|outage began|went down)\b", re.I)),
-    ("detected", re.compile(r"\b(alert(ed|s)?|alarm|page[ds]?|paged|detect(ed|ion)|noticed|monitor(ing)? fired|customer(s)? report(ed|s)?|support ticket|reported)\b", re.I)),
+    ("detected", re.compile(r"\b(alert(ed|s)?|alarm|(?<!status )page[ds]?|paged|detect(ed|ion)|noticed|monitor(ing)? fired|customer(s)? report(ed|s)?|support ticket|reported)\b", re.I)),
     ("acknowledged", re.compile(r"\b(ack(ed|nowledged)?|joined|incident (declared|opened|created)|declared|on[- ]call (responding|engaged)|war ?room|bridge (opened|started)|IC assigned|took (command|IC))\b", re.I)),
     ("identified", re.compile(r"\b(root cause|identified|traced (it )?to|narrowed (it )?down|culprit|found (the|that)|cause (is|was)|correlated|confirmed .*cause)\b", re.I)),
     ("mitigated", re.compile(r"\b(mitigat(ed|ion)|roll(ed)? ?back|revert(ed)?|fail(ed)? ?over|disabled|feature flag|flag(ged)? off|scaled (up|out)|restart(ed)?|hotfix(ed)?|drained|error rate (dropping|recovering|falling)|recovering)\b", re.I)),
@@ -229,6 +229,9 @@ def build_timeline(events: list[str], incident_date: str = "") -> dict:
         tags = [name for name, rx in MILESTONES if rx.search(e["text"])]
         if "impact_start" in tags and "mitigated" in tags and re.search(r"roll(ed)? ?back|revert", e["text"], re.I):
             tags.remove("impact_start")
+        if "comms" in tags:
+            # a status-page post *about* detection/resolution is communication, not the milestone itself
+            tags = [t for t in tags if t not in ("detected", "resolved", "mitigated", "identified")]
         for tag in tags:
             if tag not in milestones or tag in ("resolved", "mitigated") and tag == "resolved":
                 milestones.setdefault(tag, e["t"])

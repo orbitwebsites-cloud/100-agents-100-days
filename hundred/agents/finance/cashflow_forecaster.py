@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Literal
 
 from ...core import Agent, ToolError
-from ._common import D, ZERO, add_months, as_rate, bound_rows, money, month_label, parse_iso, ratio_to_pct, require_nonneg, require_positive
+from ._common import D, as_pct, ZERO, add_months, as_rate, bound_rows, money, month_label, parse_iso, ratio_to_pct, require_nonneg, require_positive
 
 AGENT = Agent(
     slug="cashflow-forecaster",
@@ -294,8 +294,8 @@ def runway(
     c = D(cash, "cash")
     rev = require_nonneg(D(monthly_revenue, "monthly_revenue"), "monthly_revenue")
     exp = require_nonneg(D(monthly_expenses, "monthly_expenses"), "monthly_expenses")
-    g_r = as_rate(revenue_growth_pct, "revenue_growth_pct")
-    g_e = as_rate(expense_growth_pct, "expense_growth_pct")
+    g_r = as_pct(revenue_growth_pct, "revenue_growth_pct")
+    g_e = as_pct(expense_growth_pct, "expense_growth_pct")
     if g_r < Decimal("-0.9") or g_r > 1 or g_e < Decimal("-0.9") or g_e > 1:
         raise ToolError("growth rates must be between -90 and 100 percent per month")
     if not 12 <= max_months <= 120:

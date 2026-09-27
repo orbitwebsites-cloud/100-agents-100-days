@@ -50,7 +50,8 @@ AGENT = Agent(
 
     ## Procedure
     1. **Anchor the dates.** Call `onboarding_planner__build_30_60_90` with the start date, role
-       and any company holidays. It returns day 1, end of week 1, day 30/60/90 (moved off
+       and any company holidays. It returns day 1, end of week 1, day 5 (the 5th working day —
+       differs from end of week 1 in a holiday week; read `warnings`), day 30/60/90 (moved off
        weekends/holidays), the probation end, every weekly 1:1 date and the three phase windows.
        Use those dates verbatim; never estimate "about a month in".
     2. **Build the pre-boarding list.** Call `onboarding_planner__preboarding_checklist` with
@@ -141,7 +142,7 @@ def _next_business_day(d: date, hol: set[date]) -> date:
 
 @AGENT.tool
 def build_30_60_90(start_date: str, role: str, manager: str = "", holidays: list[str] | None = None, probation_days: int = 90, one_on_one_weeks: int = 13) -> dict:
-    """Compute every onboarding date: day 1, end of week 1, day 30/60/90 moved off weekends and holidays, probation end, weekly 1:1 dates and the three phase windows.
+    """Compute every onboarding date: day 1, end of week 1 (and the 5th working day), day 30/60/90 moved off weekends and holidays, probation end, weekly 1:1 dates and the three phase windows.
 
     Args:
         start_date: First day of work, YYYY-MM-DD.
@@ -162,7 +163,20 @@ def build_30_60_90(start_date: str, role: str, manager: str = "", holidays: list
     if start.weekday() >= 5 or start in hol:
         warnings.append(f"start date {start} is a {'weekend' if start.weekday() >= 5 else 'holiday'} — next business day is {_next_business_day(start, hol)}")
     day1 = start
-    week1_end = dates.add_business_days(day1, 4, hol)
+    # End of the first CALENDAR week (last working day on or before the Sunday of day 1's week),
+    # and the fifth working day (the "day 5" manager check-in) — these differ in a holiday week.
+    week1_last = day1 + timedelta(days=6 - day1.weekday())
+    while week1_last > day1 and (week1_last.weekday() >= 5 or week1_last in hol):
+        week1_last -= timedelta(days=1)
+    week1_end = week1_last
+    day5 = dates.add_business_days(day1, 4, hol)
+    week1_bdays = dates.business_days_between(day1, week1_last, hol) + 1
+    if week1_bdays < 5 and day1.weekday() == 0:
+        hol_in_week = sorted(h.isoformat() for h in hol if day1 <= h <= day1 + timedelta(days=6))
+        warnings.append(
+            f"week 1 has only {week1_bdays} working day(s) (holidays {', '.join(hol_in_week) or 'none'}) — keep day 1-{week1_bdays} to access, manager and buddy; "
+            f"the day-5 check-in lands on {day5} ({day5.strftime('%a')})"
+        )
 
     def milestone(n: int) -> dict:
         raw = day1 + timedelta(days=n - 1)
@@ -190,7 +204,8 @@ def build_30_60_90(start_date: str, role: str, manager: str = "", holidays: list
         "role": role,
         "manager": manager or None,
         "day_1": {"date": day1.isoformat(), "weekday": day1.strftime("%A")},
-        "week_1_end": {"date": week1_end.isoformat(), "weekday": week1_end.strftime("%a")},
+        "week_1_end": {"date": week1_end.isoformat(), "weekday": week1_end.strftime("%a"), "working_days": week1_bdays},
+        "day_5": {"date": day5.isoformat(), "weekday": day5.strftime("%a"), "note": "fifth working day — manager's end-of-first-week check-in"},
         "day_30": d30,
         "day_60": d60,
         "day_90": d90,
