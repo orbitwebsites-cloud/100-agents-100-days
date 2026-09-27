@@ -417,22 +417,27 @@ def intro_meeting_schedule(start_date: str, stakeholders: list[dict], max_per_da
             raise ToolError(f"stakeholder #{i}: priority must be 1, 2 or 3.")
         people.append({"name": str(s["name"]).strip(), "role": str(s.get("role", "")).strip(), "priority": pr, "minutes": int(s.get("minutes") or minutes_default), "why": str(s.get("why", "")).strip(), "order": i})
     people.sort(key=lambda p: (p["priority"], p["order"]))
-    # Business days of the first 4 weeks, starting day 2 (day 1 is the manager + agenda).
-    days = []
+    # Business days of the first 4 calendar weeks, starting day 2 (day 1 is the manager + agenda).
+    days: list[tuple[date, int]] = []
     d = start
-    while len(days) < 20:
+    while True:
         d = _next_business_day(d + timedelta(days=1), hol)
-        days.append(d)
-    windows = {1: range(0, 5), 2: range(5, 10), 3: range(10, 20)}
+        week = (d - start).days // 7 + 1
+        if week > 4:
+            break
+        days.append((d, week))
+    windows = {1: (1,), 2: (2,), 3: (3, 4)}
     load = {i: 0 for i in range(len(days))}
     scheduled, unscheduled = [], []
     for p in people:
+        preferred = [i for i, (_, wk) in enumerate(days) if wk in windows[p["priority"]]]
+        later = [i for i, (_, wk) in enumerate(days) if wk > max(windows[p["priority"]])]
         placed = False
-        for idx in list(windows[p["priority"]]) + [i for i in range(len(days)) if i not in windows[p["priority"]] and i > max(windows[p["priority"]])]:
+        for idx in preferred + later:
             if load[idx] < max_per_day:
                 load[idx] += 1
-                dd = days[idx]
-                scheduled.append({**p, "date": dd.isoformat(), "weekday": dd.strftime("%a"), "day": (dd - start).days + 1, "week": idx // 5 + 1, "slot": load[idx]})
+                dd, wk = days[idx]
+                scheduled.append({**p, "date": dd.isoformat(), "weekday": dd.strftime("%a"), "day": (dd - start).days + 1, "week": wk, "slot": load[idx]})
                 placed = True
                 break
         if not placed:

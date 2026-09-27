@@ -44,7 +44,7 @@ def test_detect_next_steps_resolves_dates_and_agreement():
     assert out["next_step_agreed"] is True
     first = out["agreed_next_steps"][0]
     assert first["speaker"] == "Sam" and first["resolved_date"] == "2026-09-24"
-    assert "2026-09-29" in first["all_resolved_dates"]  # next Tuesday
+    assert "2026-10-06" in first["all_resolved_dates"]  # next Tuesday (same convention as meeting-ops)
     assert first["prospect_agreed"] is True
     none = call("detect_next_steps", transcript="Sam: Great chat.\nDana: Yes, thanks.", call_date="2026-09-23")
     assert none["next_step_agreed"] is False and "No next step agreed" in none["verdict"]

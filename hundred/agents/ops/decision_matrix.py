@@ -316,7 +316,7 @@ def sensitivity_check(options: list[dict], criteria: list[dict], scale_max: floa
                 needed = (totals[winner] - totals[runner]) / per_point
                 room = matrix[i][j]
                 if needed <= room:
-                    cell_flips.append({"option": opts[i]["name"], "criterion": crit[j]["name"], "change": -round(needed, 2), "becomes_winner": opts[runner]["name"]})
+                    cell_flips.append({"option": opts[i]["name"], "criterion": crit[j]["name"], "change": round(-needed, 2) + 0.0, "becomes_winner": opts[runner]["name"]})
             else:
                 needed = (totals[winner] - totals[i]) / per_point
                 room = scale_max - matrix[i][j]

@@ -40,7 +40,7 @@ GOOD_BODY = (
 def test_audit_email_body_scores_good_email_and_counts():
     out = call("audit_email_body", body=GOOD_BODY)
     assert out["score"] >= 80 and out["grade"] == "send"
-    assert out["words"] == 43
+    assert out["words"] == 37
     assert out["cta_count"] == 1 and out["cta_type"] == "interest"
     assert out["links"] == 0 and out["spam_words"] == [] and out["unresolved_tokens"] == []
 

@@ -36,7 +36,7 @@ def test_cadence_dates_bad_input():
 
 def test_next_touch_decision_branches():
     now = call("next_touch_decision", stage="proposal", last_contact="2026-09-18", touches_since_reply=1, today="2026-09-27")
-    assert now["decision"] == "follow_up_now" and now["business_days_since_last_touch"] == 6
+    assert now["decision"] == "follow_up_now" and now["business_days_since_last_touch"] == 5
     wait = call("next_touch_decision", stage="proposal", last_contact="2026-09-25", touches_since_reply=1, today="2026-09-27")
     assert wait["decision"] == "wait" and wait["wait_until"] == "2026-10-01"
     breakup = call("next_touch_decision", stage="proposal", last_contact="2026-09-25", last_reply="2026-09-01", touches_since_reply=4, today="2026-09-27")
@@ -80,17 +80,17 @@ def test_stale_deals_thresholds_and_priority():
         deals=[
             {"name": "Acme", "stage": "Proposal Sent", "amount": 50000, "last_activity": "2026-09-10"},
             {"name": "Beta", "stage": "discovery", "amount": 8000, "last_activity": "2026-09-25"},
-            {"name": "Gamma", "stage": "negotiation", "amount": 20000, "last_activity": "2026-09-14", "touches_since_reply": 5, "close_date": "2026-09-20"},
+            {"name": "Gamma", "stage": "negotiation", "amount": 20000, "last_activity": "2026-09-11", "touches_since_reply": 5, "close_date": "2026-09-20"},
         ],
         today="2026-09-27",
     )
     rows = {r["name"]: r for r in out["deals"]}
-    assert rows["Acme"]["quiet_business_days"] == 13 and rows["Acme"]["threshold_business_days"] == 5 and rows["Acme"]["status"] == "at_risk"
+    assert rows["Acme"]["quiet_business_days"] == 11 and rows["Acme"]["threshold_business_days"] == 5 and rows["Acme"]["status"] == "at_risk"
     assert rows["Beta"]["status"] == "fresh" and rows["Beta"]["action"] == "none"
     assert rows["Gamma"]["status"] == "at_risk" and rows["Gamma"]["action"] == "breakup email" and "close date passed" in rows["Gamma"]["flags"]
     assert [r["name"] for r in out["chase_today"]] == ["Acme", "Gamma"]
     assert out["stale_amount"] == 70000.0 and out["counts"]["at_risk"] == 2
-    override = call("stale_deals", deals=[{"name": "B", "stage": "discovery", "amount": 1, "last_activity": "2026-09-25"}], today="2026-09-27", thresholds={"discovery": 1})
+    override = call("stale_deals", deals=[{"name": "B", "stage": "discovery", "amount": 1, "last_activity": "2026-09-24"}], today="2026-09-27", thresholds={"discovery": 1})
     assert override["deals"][0]["status"] == "stale"
 
 

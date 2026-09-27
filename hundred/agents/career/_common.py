@@ -58,23 +58,42 @@ def money(x: float) -> float:
 # ── lexicon scanning ──────────────────────────────────────────────────────
 
 
-def scan_lexicon(body: str, lexicon: dict[str, str]) -> list[dict]:
-    """Find every lexicon term (word-bounded, case-insensitive) in body.
+_LEXICON_CACHE: dict[tuple[str, ...], tuple[re.Pattern, dict[str, str]]] = {}
 
-    lexicon maps term -> suggestion/reason. Terms are ours (not user input), so
-    the compiled regex is safe. Returns [{term, count, suggestion, sample}] sorted by count.
+
+def _lexicon_regex(lexicon: dict[str, str]) -> tuple[re.Pattern, dict[str, str]]:
+    key = tuple(lexicon)
+    hit = _LEXICON_CACHE.get(key)
+    if hit:
+        return hit
+    terms = sorted(lexicon, key=len, reverse=True)  # longest first so "hard worker" beats "hard"
+    pat = re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(t) for t in terms) + r")(?![\w-])", re.I)
+    lookup = {t.lower(): t for t in terms}
+    _LEXICON_CACHE[key] = (pat, lookup)
+    return pat, lookup
+
+
+def scan_lexicon(body: str, lexicon: dict[str, str]) -> list[dict]:
+    """Find every lexicon term (word-bounded, case-insensitive) in body in one pass.
+
+    lexicon maps term -> suggestion/reason. Terms are ours (not user input), so the
+    compiled regex is safe. Returns [{term, count, suggestion, sample}] sorted by count.
     """
     if not body or not lexicon:
         return []
+    pat, lookup = _lexicon_regex(lexicon)
+    counts: Counter = Counter()
+    first: dict[str, int] = {}
+    for m in pat.finditer(body):
+        term = lookup[m.group(0).lower()]
+        counts[term] += 1
+        first.setdefault(term, m.start())
     hits = []
-    for term, why in lexicon.items():
-        pat = re.compile(r"(?<![\w-])" + re.escape(term) + r"(?![\w-])", re.I)
-        found = list(pat.finditer(body))
-        if found:
-            m = found[0]
-            lo, hi = max(0, m.start() - 40), min(len(body), m.end() + 40)
-            sample = re.sub(r"\s+", " ", body[lo:hi]).strip()
-            hits.append({"term": term, "count": len(found), "suggestion": why, "sample": f"…{sample}…"})
+    for term, n in counts.items():
+        pos = first[term]
+        lo, hi = max(0, pos - 40), min(len(body), pos + len(term) + 40)
+        sample = re.sub(r"\s+", " ", body[lo:hi]).strip()
+        hits.append({"term": term, "count": n, "suggestion": lexicon[term], "sample": f"…{sample}…"})
     hits.sort(key=lambda h: (-h["count"], h["term"]))
     return hits
 

@@ -246,7 +246,7 @@ def detect_clauses(contract_text: str, my_role: str = "customer") -> dict:
     }
 
 
-_DEADLINE_CTX = re.compile(rf"([^.;\n]{{0,120}}?\b(?:within|no later than|not later than|at least|not less than|no less than|prior to|before|after|following|upon|net|for a period of|term of|minimum of)\b[^.;\n]{{0,40}}?)?({DURATION_RE.pattern})([^.;\n]{{0,100}})", re.I)
+_DEADLINE_CTX = re.compile(rf"(?P<before>[^.;\n]{{0,120}}?\b(?:within|no later than|not later than|at least|not less than|no less than|prior to|before|after|following|upon|net|for a period of|term of|minimum of)\b[^.;\n]{{0,40}}?)?(?P<dur>{DURATION_RE.pattern})(?P<after>[^.;\n]{{0,100}})", re.I)
 _EXPLICIT_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b|\b((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})\b|\b(\d{1,2}/\d{1,2}/\d{4})\b", re.I)
 _MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"], 1)}
 
@@ -284,7 +284,7 @@ def extract_deadlines(contract_text: str, effective_date: str = "") -> dict:
     base = parse_date(effective_date, "effective_date") if effective_date else None
     items, seen = [], set()
     for m in _DEADLINE_CTX.finditer(text):
-        before, dur, after = m.group(1) or "", m.group(2), m.group(3) or ""
+        before, dur, after = m.group("before") or "", m.group("dur"), m.group("after") or ""
         dm = DURATION_RE.search(dur)
         if not dm:
             continue
@@ -301,7 +301,15 @@ def extract_deadlines(contract_text: str, effective_date: str = "") -> dict:
         days = duration_days(n, unit, business)
         resolved = None
         if base:
-            resolved = (dates.add_business_days(base, n) if business and unit.lower().startswith("day") else base + timedelta(days=days)).isoformat()
+            u = unit.lower()
+            if business and u.startswith("day"):
+                resolved = dates.add_business_days(base, n).isoformat()
+            elif u.startswith("month"):
+                resolved = add_months(base, n).isoformat()
+            elif u.startswith("year"):
+                resolved = add_months(base, 12 * n).isoformat()
+            else:
+                resolved = (base + timedelta(days=days)).isoformat()
         items.append({"duration": f"{n} {'business ' if business else ''}{unit.lower().rstrip('s')}{'s' if n != 1 else ''}", "days": days, "type": _classify(ctx), "context": ctx[:220], "from_effective_date": resolved})
     explicit = []
     for m in _EXPLICIT_DATE.finditer(text):

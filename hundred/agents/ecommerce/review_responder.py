@@ -142,6 +142,11 @@ NEG_WORDS = re.compile(r"\b(terrible|awful|horrible|worst|disappoint(ed|ing)|use
 POS_WORDS = re.compile(r"\b(love|great|excellent|amazing|perfect|fantastic|wonderful|awesome|recommend|happy|pleased|impressed|best|quality|sturdy|beautiful|fast|easy|works)\b", re.I)
 
 
+def _ceil(x: float) -> int:
+    """ceil that ignores float noise (3.2/0.8 = 4.000000000000001 → 4, not 5)."""
+    return math.ceil(round(x, 9))
+
+
 def _sentiment(txt: str, rating: float | None) -> str:
     neg, pos = len(NEG_WORDS.findall(txt)), len(POS_WORDS.findall(txt))
     lex = "negative" if neg > pos else ("positive" if pos > neg else "neutral")
@@ -391,12 +396,12 @@ def rating_math(current_average: float, review_count: int, target_average: float
         raise ToolError(f"New reviews at {new_rating} can never lift the average to {target_average}.")
     total = current_average * review_count
     k_pure = review_count * (target_average - current_average) / (new_rating - target_average)
-    k_pure = math.ceil(k_pure)
+    k_pure = _ceil(k_pure)
     share = positive_share_pct / 100 if positive_share_pct > 1 else positive_share_pct
     if not 0 < share <= 1:
         raise ToolError("positive_share_pct must be between 1 and 100.")
     blended = share * new_rating + (1 - share) * 2.5
-    k_real = math.ceil(review_count * (target_average - current_average) / (blended - target_average)) if blended > target_average else None
+    k_real = _ceil(review_count * (target_average - current_average) / (blended - target_average)) if blended > target_average else None
     one_star = (total + 1) / (review_count + 1) if review_count >= 0 else None
     one_five = (total + 5) / (review_count + 1)
     out = {
@@ -407,15 +412,15 @@ def rating_math(current_average: float, review_count: int, target_average: float
         "reviews_needed_realistic": k_real,
         "average_after_one_1_star": round(one_star, 3),
         "average_after_one_5_star": round(one_five, 3),
-        "five_stars_to_offset_one_1_star": math.ceil((current_average - 1) / (5 - current_average)) if current_average < 5 else None,
+        "five_stars_to_offset_one_1_star": _ceil((current_average - 1) / (5 - current_average)) if current_average < 5 else None,
         "formula": "k = n·(T − A) ÷ (R − T)",
         "verdict": f"{k_pure} straight {new_rating:g}★ reviews (or ~{k_real} at a realistic {blended:.2f} blend) take {current_average:.2f} → {target_average:.2f}. One more 1★ drops you to {one_star:.2f}.",
     }
     if monthly_reviews > 0 and k_real:
         months = k_real / monthly_reviews
         out["months_at_current_velocity"] = round(months, 1)
-        out["monthly_reviews_to_hit_in_3_months"] = math.ceil(k_real / 3)
-        out["verdict"] += f" At {monthly_reviews}/month that is {months:.1f} months; to do it in 3 months you need {math.ceil(k_real / 3)}/month."
+        out["monthly_reviews_to_hit_in_3_months"] = _ceil(k_real / 3)
+        out["verdict"] += f" At {monthly_reviews}/month that is {months:.1f} months; to do it in 3 months you need {_ceil(k_real / 3)}/month."
     return out
 
 
