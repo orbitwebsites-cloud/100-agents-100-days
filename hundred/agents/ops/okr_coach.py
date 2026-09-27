@@ -74,7 +74,8 @@ AGENT = Agent(
        reaches target, and the slope required vs the current slope (e.g. "need 2.1/week,
        running at 1.3/week"). Trust a forecast only when R² ≥ 0.6; below that, say the
        data is too noisy and look at the last 3 points.
-    6. **Set the cadence.** Call `okr_coach__okr_calendar` with the period. Output the
+    6. **Set the cadence.** Call `okr_coach__okr_calendar` with the period and the
+       team's public holidays in the window (a Q4 cycle scores in early January). Output the
        check-in dates (weekly, 15 min: score confidence 1-10 per KR, one blocker each),
        the mid-cycle review (re-plan, don't re-write), next-cycle drafting window, scoring
        date, and retro. Put them in the calendar via connector if available.
@@ -394,7 +395,7 @@ _WD = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4}
 
 
 @AGENT.tool
-def okr_calendar(period_start: str, period_end: str, checkin: str = "weekly", checkin_weekday: str = "monday", as_of: str = "") -> dict:
+def okr_calendar(period_start: str, period_end: str, checkin: str = "weekly", checkin_weekday: str = "monday", as_of: str = "", holidays: list[str] = []) -> dict:
     """Build the OKR cycle calendar: check-in dates, mid-cycle review, next-cycle drafting window, scoring day, retro.
 
     Args:
@@ -403,8 +404,10 @@ def okr_calendar(period_start: str, period_end: str, checkin: str = "weekly", ch
         checkin: "weekly" or "biweekly".
         checkin_weekday: Weekday for check-ins (monday-friday).
         as_of: Today's date (YYYY-MM-DD) to compute days-until; defaults to today.
+        holidays: Non-working dates (YYYY-MM-DD). Check-ins that land on one move to the next working day; drafting, scoring and retro dates skip them (e.g. pass 2027-01-01 for a Q4 cycle).
     """
     p0, p1 = dates.parse_date(period_start), dates.parse_date(period_end)
+    hol = {dates.parse_date(h) for h in as_str_list(holidays, "holidays", 100)}
     if p1 <= p0:
         raise ToolError("period_end must be after period_start.")
     if (p1 - p0).days > 400:
@@ -422,16 +425,20 @@ def okr_calendar(period_start: str, period_end: str, checkin: str = "weekly", ch
     checkins = []
     d = first
     while d <= p1 - timedelta(days=3):
-        checkins.append(d)
+        c = d
+        while c in hol or c.weekday() >= 5:
+            c += timedelta(days=1)
+        if c <= p1:
+            checkins.append(c)
         d += timedelta(days=step)
     total = (p1 - p0).days
     mid_target = p0 + timedelta(days=total // 2)
     mid = min(checkins, key=lambda c: abs((c - mid_target).days)) if checkins else mid_target
-    draft_start = dates.add_business_days(p1, -15)
-    draft_final = dates.add_business_days(p1, -5)
-    scoring = dates.add_business_days(p1, 1)
-    retro = dates.add_business_days(p1, 4)
-    kickoff = p0 if p0.weekday() < 5 else dates.add_business_days(p0, 1)
+    draft_start = dates.add_business_days(p1, -15, hol)
+    draft_final = dates.add_business_days(p1, -5, hol)
+    scoring = dates.add_business_days(p1, 1, hol)
+    retro = dates.add_business_days(p1, 4, hol)
+    kickoff = p0 if p0.weekday() < 5 and p0 not in hol else dates.add_business_days(p0, 1, hol)
     events = [
         {"event": "Kickoff: publish OKRs, confirm baselines", "date": kickoff.isoformat()},
         *({"event": f"Check-in {i}", "date": c.isoformat()} for i, c in enumerate(checkins, 1)),

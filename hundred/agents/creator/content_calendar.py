@@ -55,11 +55,14 @@ AGENT = Agent(
     1. **Check capacity before cadence.** Call `content_calendar__capacity_check` with the
        hours available and each platform's desired posts per week. It costs every post at a
        realistic production time and tells you whether the plan fits. If the plan is over
-       capacity, use the tool's `fit_plan` (the cadence scaled down to fit) — do not
-       schedule what cannot be made. Present the trade-off, don't hide it.
+       capacity, use the tool's `fit_plan` (the cadence scaled down to fit, using the spare
+       hours; a heavy format like YouTube may go to every other week, `posts_per_week: 0.5`)
+       — do not schedule what cannot be made. Present the trade-off, don't hide it.
     2. **Generate the dated slots.** Call `content_calendar__build_schedule` with the
        start date, number of weeks, the (fitted) platform cadences, pillars and timezone.
-       It spreads posts across the best default days per platform, assigns posting times,
+       It spreads posts across the best default days per platform, assigns posting times
+       (default times are set in the audience's timezone and converted to the creator's clock
+       per date, so DST changes in either country are handled),
        rotates pillars so no two consecutive posts share a pillar, converts each slot to the
        audience timezone if given, and returns a per-day load table plus creation deadlines.
        Never hand-build dates: weekday arithmetic is exactly where calendars go wrong.
@@ -93,6 +96,8 @@ AGENT = Agent(
       consolidate platforms rather than spread thin. Two platforms done well beat five done badly.
     - **Batching:** create in 1-2 blocks per week, at least 2 days ahead of the posting date.
       The schedule tool's `create_by` dates enforce this.
+    - **Hashtags:** Instagram allows at most 5 per post/Reel (since Dec 2025); 3-5 specific
+      tags beat broad ones everywhere. The fit checker enforces each platform's cap.
     - **Timing:** posting time matters far less than consistency and the first line of the
       caption. Default to the platform's typical mid-morning/lunch windows in the *audience's*
       timezone, then let the creator's own analytics override after 4 weeks.
@@ -290,6 +295,9 @@ def build_schedule(
     heavy = [(d, c) for d, c in sorted(load.items()) if c >= 4]
     if heavy:
         warnings.append(f"{len(heavy)} day(s) carry 4+ posts (e.g. {heavy[0][0]}: {heavy[0][1]}). Spread or batch-create them.")
+    late = [r for r in rows if not 7 <= int(r["time_local"][:2]) <= 21]
+    if late:
+        warnings.append(f"{len(late)} slot(s) are between 22:00 and 07:00 on your clock (to hit the audience's hours) — schedule them in advance with the platform's native scheduler or Buffer/Later.")
     if aud_zone:
         odd = [r for r in rows if not 7 <= int(r["time_audience"][:2]) <= 21]
         if odd:

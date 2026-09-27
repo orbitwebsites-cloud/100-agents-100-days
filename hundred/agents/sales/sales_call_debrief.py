@@ -134,12 +134,12 @@ AGENT = Agent(
 
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 DATE_PHRASE_RE = re.compile(
-    r"\b(today|tomorrow|eod|end of (?:the )?(?:day|week|month|quarter)|eow|eom|this week|next week|next month|"
+    r"\b(today|tomorrow|eod|end of (?:the )?(?:day|week|month|quarter)|end of next (?:week|month)|eow|eom|this week|next week|next month|"
     r"(?:next |this )?(?:mon|tues|wednes|thurs|fri|satur|sun)day|in (?:a|one|two|three|four|\d+) (?:days?|weeks?|months?)|"
     r"by (?:the )?\d{1,2}(?:st|nd|rd|th)?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2}|\d{1,2}/\d{1,2}|q[1-4])\b",
     re.I,
 )
-COMMIT_RE = re.compile(r"\b(i'?ll|i will|we'?ll|we will|let'?s|can you|could you|will you|you'?ll|send (?:you|over|me)|schedule|set up|book|calendar|invite|loop in|introduce|intro|share|get back|circle back|follow up|next step|pilot|trial|proposal|pricing|quote|contract|redline|legal|procurement|sign)\b", re.I)
+COMMIT_RE = re.compile(r"\b(i'?ll|i will|we'?ll|we will|let'?s|can you|could you|will you|can we|could we|shall we|should we|you'?ll|send (?:you|over|me)|schedule|set up|book|calendar|invite|loop in|introduce|intro|share|get back|circle back|follow up|next step|pilot|trial|proposal|pricing|quote|contract|redline|legal|procurement|sign)\b", re.I)
 AGREE_RE = re.compile(r"\b(sounds good|works for me|perfect|great|yes|sure|let'?s do (?:that|it)|deal|agreed|that works|ok(?:ay)?|i'?ll be there|i'?ll join|i'?ll make sure)\b", re.I)
 
 
@@ -153,6 +153,12 @@ def _resolve_phrase(phrase: str, base: date) -> date | None:
         return base + (timedelta(days=1) * ((4 - base.weekday()) % 7))
     if p in ("next week",):
         return base + timedelta(days=1) * (7 - base.weekday())
+    if p == "end of next week":
+        # Friday of the following calendar week
+        return base + timedelta(days=1) * (7 - base.weekday() + 4)
+    if p == "end of next month":
+        first_next = (base.replace(day=28) + timedelta(days=1) * 4).replace(day=1)
+        return (first_next.replace(day=28) + timedelta(days=1) * 4).replace(day=1) - timedelta(days=1)
     m = re.match(r"in (a|one|two|three|four|\d+) (day|week|month)s?", p)
     if m:
         n = {"a": 1, "one": 1, "two": 2, "three": 3, "four": 4}.get(m.group(1)) or int(m.group(1))
@@ -168,9 +174,11 @@ def _resolve_phrase(phrase: str, base: date) -> date | None:
         return (d.replace(day=28) + timedelta(days=1) * 4).replace(day=1) - timedelta(days=1)
     for i, day in enumerate(WEEKDAYS):
         if re.search(rf"\b{day[:3]}", p):
+            if p.startswith("next"):
+                # "next Tuesday" = the Tuesday of the following calendar week (said on a Thursday
+                # that is 5 days away, said on a Monday it is 8 days away) — never 12+ days out
+                return base + timedelta(days=1) * (7 - base.weekday() + i)
             ahead = (i - base.weekday()) % 7 or 7
-            if p.startswith("next") and ahead < 7:
-                ahead += 7
             return base + timedelta(days=1) * ahead
     m = re.match(r"q([1-4])", p)
     if m:
@@ -219,7 +227,7 @@ def call_metrics(transcript: str, rep_name: str = "", call_minutes: int = 0, cal
     Args:
         transcript: Raw transcript text.
         rep_name: The seller's name as labelled in the transcript.
-        call_minutes: Actual call length in minutes (0 = estimate at 150 wpm).
+        call_minutes: Actual call length in minutes (0 = from line timestamps if present, else estimated at 150 wpm).
         call_type: discovery (default), demo or negotiation — sets the talk-ratio benchmark.
     """
     ct = call_type.strip().lower()
@@ -258,13 +266,13 @@ def call_metrics(transcript: str, rep_name: str = "", call_minutes: int = 0, cal
             interruptions += 1
         prev_len, prev_spk = n, spk
     total = sum(words_by.values()) or 1
-    minutes = call_minutes if call_minutes > 0 else max(1, round(total / 150))
+    minutes, minutes_source, duration_warnings = c.call_minutes_for(transcript, total, call_minutes)
     rep_pct = c.pct(words_by[rep], total)
     bench = {"discovery": (43, 46, 55), "demo": (60, 65, 75), "negotiation": (45, 50, 60)}[ct]
     prospect_words = total - words_by[rep]
     story_share = c.pct(prospect_story_words, prospect_words) if prospect_words else 0.0
     rep_fill = sum(fillers_by[rep].values())
-    flags = []
+    flags = list(duration_warnings)
     if rep_pct > bench[2]:
         flags.append(f"rep talk {rep_pct}% — well above the {bench[0]}-{bench[1]}% benchmark for a {ct} call")
     elif rep_pct > bench[1] + 5:
@@ -287,6 +295,7 @@ def call_metrics(transcript: str, rep_name: str = "", call_minutes: int = 0, cal
         "call_type": ct,
         "speakers": order,
         "estimated_minutes": minutes,
+        "minutes_source": minutes_source,
         "total_words": total,
         "talk_share_pct": {s: c.pct(w, total) for s, w in words_by.most_common()},
         "turns": dict(turns_by),
@@ -392,7 +401,7 @@ NEGATIVE = {
     "just exploring": r"\b(just (?:exploring|looking|curious|researching|browsing)|early (?:days|stage)|no (?:rush|urgency|timeline)|not (?:a )?priority|someday|down the road|nothing (?:planned|decided))\b",
     "send info / stall": r"\b(send (?:me|us|over) (?:some|more|the) (?:info|information|details|material)|think about it|get back to you|circle back|revisit (?:next|in)|let me think)\b",
     "competitor praise": r"\b(happy with|works (?:well|fine|great) for us|love (?:our current|the current|what we have)|no complaints|why (?:would|should) we (?:switch|change))\b",
-    "price shock": r"\b(too expensive|way more than|out of (?:our )?(?:budget|range)|can'?t justify|double what|sticker shock)\b",
+    "price concern": r"\b(too expensive|way more than|(?:a bit |a little |bit |much )?(?:more|higher) than (?:we|our|what we) ?(?:budget(?:ed)?|planned|expected|pay|were expecting)|over (?:our )?budget|out of (?:our )?(?:budget|range)|can'?t justify|double what|sticker shock|(?:a bit|pretty|quite) (?:steep|pricey|expensive))\b",
     "decision far away": r"\b(next year|next fiscal|in (?:6|six|9|nine|12|twelve) months|after (?:the )?(?:reorg|merger|acquisition|audit|budget cycle)|when (?:we|things) (?:settle|calm))\b",
 }
 _POS = {k: re.compile(v, re.I) for k, v in POSITIVE.items()}
@@ -463,7 +472,9 @@ def buying_signals(transcript: str, rep_name: str = "") -> dict:
 CRM_SCHEMAS = {
     "hubspot": {
         "object": "deal",
-        "fields": {"stage": "dealstage", "amount": "amount", "close_date": "closedate", "next_step": "hs_next_step", "name": "dealname", "notes": "description", "owner": "hubspot_owner_id", "competitors": "competitors", "champion": "champion", "risks": "risks", "pipeline": "pipeline"},
+        "fields": {"stage": "dealstage", "amount": "amount", "close_date": "closedate", "next_step": "hs_next_step", "name": "dealname", "notes": "description", "owner": "hubspot_owner_id", "competitors": "competitors", "champion": "champion", "risks": "risks", "pipeline": "pipeline", "probability": "hs_forecast_probability"},
+        # not HubSpot default deal properties — they must be created in the portal first
+        "custom": {"competitors", "champion", "risks"},
         "stages": ["appointmentscheduled", "qualifiedtobuy", "presentationscheduled", "decisionmakerboughtin", "contractsent", "closedwon", "closedlost"],
         "stage_aliases": {"appointment": "appointmentscheduled", "qualified": "qualifiedtobuy", "discovery": "qualifiedtobuy", "demo": "presentationscheduled", "presentation": "presentationscheduled", "evaluation": "presentationscheduled", "proposal": "decisionmakerboughtin", "decision": "decisionmakerboughtin", "negotiation": "contractsent", "contract": "contractsent", "won": "closedwon", "lost": "closedlost"},
         "required": ["dealname", "dealstage", "amount", "closedate"],
@@ -472,6 +483,7 @@ CRM_SCHEMAS = {
     "salesforce": {
         "object": "Opportunity",
         "fields": {"stage": "StageName", "amount": "Amount", "close_date": "CloseDate", "next_step": "NextStep", "name": "Name", "notes": "Description", "owner": "OwnerId", "competitors": "Competitor__c", "champion": "Champion__c", "risks": "Risks__c", "probability": "Probability"},
+        "custom": {"competitors", "champion", "risks"},
         "stages": ["Prospecting", "Qualification", "Needs Analysis", "Value Proposition", "Id. Decision Makers", "Perception Analysis", "Proposal/Price Quote", "Negotiation/Review", "Closed Won", "Closed Lost"],
         "stage_aliases": {"prospecting": "Prospecting", "qualification": "Qualification", "qualified": "Qualification", "discovery": "Needs Analysis", "demo": "Value Proposition", "evaluation": "Perception Analysis", "decision": "Id. Decision Makers", "proposal": "Proposal/Price Quote", "negotiation": "Negotiation/Review", "contract": "Negotiation/Review", "won": "Closed Won", "lost": "Closed Lost"},
         "required": ["Name", "StageName", "CloseDate"],
@@ -479,7 +491,8 @@ CRM_SCHEMAS = {
     },
     "pipedrive": {
         "object": "deal",
-        "fields": {"stage": "stage_id", "amount": "value", "close_date": "expected_close_date", "next_step": "next_activity_subject", "name": "title", "notes": "note", "owner": "user_id", "competitors": "competitors (custom)", "champion": "champion (custom)", "risks": "risks (custom)", "currency": "currency"},
+        "fields": {"stage": "stage_id", "amount": "value", "close_date": "expected_close_date", "next_step": "next_activity_subject", "name": "title", "notes": "note", "owner": "user_id", "competitors": "competitors", "champion": "champion", "risks": "risks", "currency": "currency", "probability": "probability"},
+        "custom": {"competitors", "champion", "risks"},
         "stages": ["Qualified", "Contact Made", "Demo Scheduled", "Proposal Made", "Negotiations Started", "Won", "Lost"],
         "stage_aliases": {"qualified": "Qualified", "qualification": "Qualified", "discovery": "Contact Made", "demo": "Demo Scheduled", "evaluation": "Demo Scheduled", "proposal": "Proposal Made", "negotiation": "Negotiations Started", "contract": "Negotiations Started", "won": "Won", "lost": "Lost"},
         "required": ["title", "stage_id", "value"],
@@ -508,6 +521,8 @@ def map_crm_fields(fields: dict, crm: str = "hubspot", call_date: str = "") -> d
     schema = CRM_SCHEMAS[crm_key]
     base = c.to_date(call_date)
     payload, issues, notes = {}, [], []
+    custom_props: dict = {}
+    next_due: str | None = None
     fmap = schema["fields"]
     for key, val in fields.items():
         k = str(key).strip().lower()
@@ -528,8 +543,14 @@ def map_crm_fields(fields: dict, crm: str = "hubspot", call_date: str = "") -> d
             else:
                 payload[fmap["stage"]] = match
         elif k == "amount":
+            raw_amt = str(val).replace(",", "").replace("$", "").replace("€", "").replace("£", "").strip().lower()
+            mult = 1.0
+            m_suffix = re.match(r"^([\d.]+)\s*(k|m|mm|million|thousand)?$", raw_amt)
+            if m_suffix and m_suffix.group(2):
+                mult = 1_000.0 if m_suffix.group(2) in ("k", "thousand") else 1_000_000.0
+                raw_amt = m_suffix.group(1)
             try:
-                amt = float(str(val).replace(",", "").replace("$", "").replace("k", "000").strip())
+                amt = float(raw_amt) * mult
             except ValueError:
                 issues.append(f"amount {val!r} is not a number")
                 continue
@@ -549,7 +570,7 @@ def map_crm_fields(fields: dict, crm: str = "hubspot", call_date: str = "") -> d
                 if (d - base).days > 365:
                     issues.append("close date more than a year out — is this real pipeline?")
             else:
-                payload["next_step_due"] = d.isoformat()
+                next_due = d.isoformat()
         elif k == "next_step":
             ns = str(val).strip()
             if len(ns) > 80:
@@ -561,7 +582,9 @@ def map_crm_fields(fields: dict, crm: str = "hubspot", call_date: str = "") -> d
             payload[fmap["next_step"]] = ns
         elif k in ("competitors", "risks"):
             items = val if isinstance(val, list) else [x.strip() for x in re.split(r"[,;]", str(val)) if x.strip()]
-            payload[fmap[k]] = "; ".join(str(x) for x in items)
+            custom_props[fmap[k]] = "; ".join(str(x) for x in items)
+        elif k in schema["custom"]:
+            custom_props[fmap[k]] = str(val).strip()
         elif k == "probability":
             try:
                 p = float(val)
@@ -572,7 +595,12 @@ def map_crm_fields(fields: dict, crm: str = "hubspot", call_date: str = "") -> d
                 p *= 100
             if not 0 <= p <= 100:
                 issues.append("probability must be 0-100")
-            payload[fmap.get("probability", "probability")] = round(p)
+            if crm_key == "hubspot":
+                # HubSpot's "Forecast probability" is a 0-1 number; "Deal probability" is set by the stage and can't be written
+                payload[fmap["probability"]] = round(p / 100, 2)
+                notes.append("probability written to hs_forecast_probability (0-1); HubSpot's deal-stage probability follows the stage")
+            else:
+                payload[fmap.get("probability", "probability")] = round(p)
         elif k in fmap:
             payload[fmap[k]] = str(val).strip()
         else:
@@ -581,14 +609,23 @@ def map_crm_fields(fields: dict, crm: str = "hubspot", call_date: str = "") -> d
     missing = [r for r in schema["required"] if r not in payload]
     if missing:
         issues.append(f"required for {crm_key}: {', '.join(missing)}")
+    if custom_props:
+        notes.append(
+            f"{', '.join(sorted(custom_props))} are not standard {crm_key} fields — create them as custom properties "
+            "(or append them to the notes/description) before pushing, or the API rejects the update"
+        )
+    if next_due:
+        notes.append(f"next-step date {next_due} is not a deal field in {crm_key} — create a task/activity due that day")
     return {
         "crm": crm_key,
         "object": schema["object"],
         "payload": payload,
+        "custom_properties": custom_props,
+        "next_step_task_due": next_due,
         "missing_required": missing,
         "issues": issues,
         "notes": notes,
         "date_format": schema["date_format"],
         "ready": not issues,
-        "verdict": f"{len(payload)} {crm_key} propert(ies) mapped; " + (f"{len(issues)} issue(s): {issues[0]}" if issues else "valid and ready to push."),
+        "verdict": f"{len(payload)} standard {crm_key} propert(ies) mapped" + (f" + {len(custom_props)} custom" if custom_props else "") + "; " + (f"{len(issues)} issue(s): {issues[0]}" if issues else ("valid; push once the custom properties exist." if custom_props else "valid and ready to push.")),
     }

@@ -65,9 +65,10 @@ AGENT = Agent(
        Titles: 3-8 words, benefit or question, no "Part 1 / Intro".
     3. **Place the ads** if the show is monetised: call `podcast_producer__plan_ad_breaks`
        with the duration, ad load and downloads (and the CPM the show actually gets, if
-       known). It places pre/mid/post-rolls at retention-safe points (never inside the cold
-       open, never in the last 10%, mid-rolls at natural thirds) and estimates revenue. Then
-       snap each mid-roll to the nearest chapter boundary from step 2.
+       known) and the chapter start times from step 2. It places pre/mid/post-rolls at
+       retention-safe points (never inside the cold open, never in the last 10%), snaps each
+       mid-roll to the nearest chapter boundary, and estimates revenue per slot (post-rolls
+       earn about half a mid-roll; say so if the host asks why the total is lower).
     4. **Write show notes** in the output format: a 2-sentence hook, 3-5 "you'll learn"
        bullets with timestamps, guest bio + links, resources mentioned (every book, tool,
        person named in the transcript — no omissions), and a transcript-grounded quote.
@@ -298,18 +299,23 @@ def plan_ad_breaks(
     downloads_per_episode: int = 0,
     cpm: float = 25.0,
     cold_open_seconds: int = 60,
+    chapter_starts: list[str] | None = None,
 ) -> dict:
     """Place pre/mid/post-roll ad breaks at retention-safe points and estimate per-episode revenue.
 
     Light = pre + 1 mid, standard = pre + mids every ~20 min, heavy = pre + mids every ~12 min + post.
-    Mid-rolls never land inside the cold open/intro or the last 10% of the episode.
+    Mid-rolls never land inside the cold open/intro or the last 10% of the episode, and snap to
+    the nearest chapter boundary when chapter_starts are given. Revenue prices each slot by
+    placement: the CPM given is the 60-s mid-roll rate; a 30-s pre-roll earns 0.75× and a
+    post-roll 0.5× of it (published benchmarks: pre $18-25, mid $25-40, post $10-15 CPM).
 
     Args:
         duration: Episode length as "58:20", "1:02:10" or seconds.
         ad_load: none, light, standard (default) or heavy.
         downloads_per_episode: Expected downloads in the first 30 days (0 to skip revenue).
-        cpm: Revenue per 1,000 downloads per ad slot in your currency; default 25 (a commonly cited host-read benchmark — use your own).
+        cpm: 60-second mid-roll revenue per 1,000 downloads in your currency; default 25 (a commonly cited host-read benchmark — use your own). Pre-roll is priced at 0.75× and post-roll at 0.5× of it.
         cold_open_seconds: Length of cold open + intro that mid-rolls must not interrupt (default 60).
+        chapter_starts: Optional chapter start times ("12:15", "1:02:10" or seconds) to snap each mid-roll to the nearest topic boundary inside the safe window.
     """
     total = parse_timestamp(duration)
     if total < 120:
@@ -329,17 +335,34 @@ def plan_ad_breaks(
         n_mid = max(1, int(total // spacing)) if total >= 15 * 60 else 0
         n_mid = min(n_mid, 6)
     breaks = [{"type": "pre-roll", "at": "0:00", "at_s": 0, "seconds": 30, "note": "Before the cold open or right after it — never over it."}]
+    bounds = sorted({parse_timestamp(c) for c in (chapter_starts or [])})
     if n_mid:
         window = latest - earliest
+        used: set[int] = set()
         for k in range(1, n_mid + 1):
             pos = earliest + int(window * k / (n_mid + 1))
-            breaks.append({"type": f"mid-roll {k}", "at": fmt_timestamp(pos), "at_s": pos, "seconds": 60, "note": "Snap to the nearest chapter boundary after this point."})
+            ideal = pos
+            options = [b for b in bounds if earliest <= b <= latest and b not in used]
+            if options:
+                pos = min(options, key=lambda b: (abs(b - ideal), b))
+                used.add(pos)
+                note = f"Snapped from {fmt_timestamp(ideal)} to the chapter boundary at {fmt_timestamp(pos)}."
+            else:
+                note = "Snap to the nearest chapter boundary after this point."
+            breaks.append({"type": f"mid-roll {k}", "at": fmt_timestamp(pos), "at_s": pos, "seconds": 60, "note": note})
+        breaks[1:] = sorted(breaks[1:], key=lambda b: b["at_s"])
     if ad_load == "heavy" or total >= 40 * 60:
         breaks.append({"type": "post-roll", "at": fmt_timestamp(total - 20), "at_s": total - 20, "seconds": 30, "note": "After the outro CTA; lowest completion, price accordingly."})
     ad_seconds = sum(b["seconds"] for b in breaks)
     load_pct = round(100 * ad_seconds / total, 1)
     slots = len(breaks)
-    revenue = round(downloads_per_episode / 1000 * cpm * slots, 2) if downloads_per_episode else None
+    placement_factor = {"pre-roll": 0.75, "post-roll": 0.5}
+    for b in breaks:
+        f = placement_factor.get(b["type"], 1.0)
+        b["cpm"] = round(cpm * f, 2)
+        if downloads_per_episode:
+            b["revenue"] = round(downloads_per_episode / 1000 * cpm * f, 2)
+    revenue = round(sum(b["revenue"] for b in breaks), 2) if downloads_per_episode else None
     flags = []
     if load_pct > 10:
         flags.append(f"Ad load {load_pct}% exceeds the ~10% norm; drop a slot or shorten reads.")
@@ -354,7 +377,7 @@ def plan_ad_breaks(
         "ad_load_pct": load_pct,
         "mid_roll_window": [fmt_timestamp(earliest), fmt_timestamp(latest)],
         "estimated_revenue": revenue,
-        "revenue_basis": f"{downloads_per_episode} downloads × {cpm} CPM × {slots} slots" if revenue is not None else "no downloads given",
+        "revenue_basis": (f"{downloads_per_episode} downloads × " + " + ".join(f"{b['cpm']:g} ({b['type']})" for b in breaks) + " CPM") if revenue is not None else "no downloads given",
         "flags": flags,
         "verdict": f"{slots} slot(s), {load_pct}% ad load" + (f", ≈{revenue:,.0f} per episode" if revenue else "") + ("; " + " ".join(flags) if flags else "."),
     }

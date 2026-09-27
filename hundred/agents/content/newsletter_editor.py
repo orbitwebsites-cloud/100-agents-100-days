@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from ...core import Agent, ToolError
 from ...lib import text
@@ -163,6 +163,9 @@ def issue_audit(markdown: str, target_minutes: float = 5.0) -> dict:
         })
     content_rows = [r for r in rows if r["level"] > 0]
     intro = next((r for r in rows if r["level"] == 0), None)
+    opener = c.strip_markdown(markdown).strip()[:120]
+    if re.match(r"^(?:hi|hey|hello|happy (?:monday|tuesday|wednesday|thursday|friday|weekend)|hope (?:you|you're|you are|this finds|everyone)|welcome (?:back|to)|good (?:morning|afternoon)|in this (?:issue|week's issue)|it's been a (?:busy|crazy|long|big))\b", opener, re.I):
+        flags.append(f"Opens with a greeting/throat-clearing ('{opener[:40]}…') — start with the lead story or its one-line why.")
     if intro and intro["words"] > 120:
         flags.append(f"Intro is {intro['words']} words — cut to ≤ 120; the lead story must start on screen one.")
     if minutes > target_minutes * 1.25:
@@ -251,9 +254,12 @@ def subject_line_check(subject: str, preheader: str = "") -> dict:
         pen = min(30, 10 * len(spam))
         score -= pen
         reasons.append(f"-{pen} spam trigger(s): {', '.join(h['phrase'] for h in spam[:4])}")
-    if re.search(r"\d", s):
+    label_num = re.compile(r"(?:#|\b(?:issue|no\.?|vol\.?|volume|edition|ep\.?|episode|week)\s*#?)\s*\d+", re.I)
+    if re.search(r"\d", label_num.sub("", s)):
         score += 10
         reasons.append("+10 contains a number")
+    elif re.search(r"\d", s):
+        reasons.append("+0 the only number is an issue/volume number — not a reason to open")
     caps = [w for w in text.words(s) if len(w) > 2 and w.isupper()]
     if caps:
         score -= 8
@@ -364,6 +370,12 @@ def link_audit(markdown: str) -> dict:
         if "utm_" not in url.lower():
             untagged += 1
             issues.append("no UTM tags")
+        else:
+            have = set(re.findall(r"[?&](utm_[a-z]+)=", url.lower()))
+            missing = [k for k in ("utm_source", "utm_medium", "utm_campaign") if k not in have]
+            if missing:
+                untagged += 1
+                issues.append(f"partial UTM tags (missing {', '.join(missing)}) — re-tag with overwrite=true")
         key = re.split(r"[?#]", url, 1)[0].rstrip("/").lower()
         if key in seen:
             dupes += 1
@@ -394,7 +406,7 @@ def link_audit(markdown: str) -> dict:
         "unique_destinations": len(seen),
         "links_per_100_words": per100,
         "by_domain": dict(sorted(domains.items(), key=lambda kv: -kv[1])),
-        "urls_to_tag": [r["url"] for r in rows if r["domain"] and "utm_" not in r["url"].lower()],
+        "urls_to_tag": [r["url"] for r in rows if r["domain"] and any("UTM" in i for i in r["issues"])],
         "flags": flags,
         "verdict": "Links are clean." if not flags else f"{len(flags)} link issue(s).",
     }
@@ -447,14 +459,18 @@ def tag_links(urls: list[str], source: str = "newsletter", medium: str = "email"
             results.append({"original": u, "tagged": u, "status": "skipped: could not parse"})
             skipped_n += 1
             continue
-        existing = parse_qsl(parts.query, keep_blank_values=True)
-        has_utm = any(k.lower().startswith("utm_") for k, _ in existing)
+        # work on the raw query so existing values keep their exact encoding (%20 stays %20, commas stay)
+        pairs = [p for p in parts.query.split("&") if p]
+        utm_keys = {p.split("=", 1)[0].lower() for p in pairs if p.lower().startswith("utm_")}
+        has_utm = bool(utm_keys)
         if has_utm and not overwrite:
-            results.append({"original": u, "tagged": u, "status": "already tagged — left alone"})
+            missing = [k for k in ("utm_source", "utm_medium", "utm_campaign") if k not in utm_keys]
+            status = "already tagged — left alone" + (f" (but missing {', '.join(missing)}; pass overwrite=true to re-tag)" if missing else "")
+            results.append({"original": u, "tagged": u, "status": status})
             skipped_n += 1
             continue
-        kept = [(k, v) for k, v in existing if not k.lower().startswith("utm_")]
-        query = urlencode(kept + list(params.items()))
+        kept = [p for p in pairs if not p.lower().startswith("utm_")]
+        query = "&".join(kept + [urlencode([(k, v)]) for k, v in params.items()])
         new = urlunsplit((parts.scheme, parts.netloc, parts.path or "/", query, parts.fragment))
         results.append({"original": u, "tagged": new, "status": "tagged" if not has_utm else "re-tagged"})
         tagged_n += 1

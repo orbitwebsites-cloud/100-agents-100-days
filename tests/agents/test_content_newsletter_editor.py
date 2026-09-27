@@ -71,7 +71,8 @@ def test_tag_links_preserves_query_and_fragment():
     out = call("tag_links", urls=["https://example.com/fees?ref=x#top", "mailto:a@b.com", "https://x.com/?utm_source=old", "foo.com/bar"], campaign="Issue 42")
     assert out["tagged"][0] == "https://example.com/fees?ref=x&utm_source=newsletter&utm_medium=email&utm_campaign=issue-42#top"
     assert out["results"][1]["status"] == "skipped: not a web link"
-    assert out["results"][2]["status"] == "already tagged — left alone"
+    assert out["results"][2]["status"].startswith("already tagged — left alone")
+    assert "missing utm_medium, utm_campaign" in out["results"][2]["status"]
     assert out["tagged"][3] == "https://foo.com/bar?utm_source=newsletter&utm_medium=email&utm_campaign=issue-42"
     assert out["tagged_count"] == 2 and out["skipped_count"] == 2
     re_tagged = call("tag_links", urls=["https://x.com/?utm_source=old&page=2"], campaign="c", overwrite=True)
