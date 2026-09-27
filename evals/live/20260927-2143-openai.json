@@ -1,0 +1,188 @@
+[
+ {
+  "scenario": "cold-email",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": false,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "cold-email"
+  ],
+  "tools": [],
+  "tool_errors": [],
+  "turns": 2,
+  "cost": 0.0028435,
+  "error": "",
+  "answer": "Quick follow-up before I write the sequence \u2014 I need up to 3 quick facts so the emails can pass the personalization gate.\n\n1) Proof: do you have a named customer or short case line I should cite? e.g. \u201cAcme Logistics saved 12% on fuel in 90 days.\u201d If not, is it OK to use anonymous peer-proof (\u201ca mid\u2011size carrier cut fuel costs ~12%\u201d)?\n\n2) Trigger: any observable reason to reach out now you want used (recent funding, new fleet hire/job post, new regional hub, switched TMS, exec hire, etc.)? If you don\u2019t have one I\u2019ll use a peer-proof angle (\u201c3 mid\u2011size logistics ops teams in [region] use us\u2026\u201d).\n\n3) Start date for the sequence (YYYY\u2011MM\u2011DD) or \u201cASAP\u201d \u2014 default will be next Tuesday.\n\nAnswer any or all (1\u20133). I\u2019ll then draft subjects, score them, and produce the 3-email sequence.",
+  "passed": false
+ },
+ {
+  "scenario": "ab-test",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "ab-test-analyst"
+  ],
+  "tools": [
+   "ab-test-analyst/srm_check",
+   "ab-test-analyst/significance_test",
+   "ab-test-analyst/sample_size"
+  ],
+  "tool_errors": [],
+  "turns": 5,
+  "cost": 0.01175575,
+  "error": "",
+  "answer": "# Experiment readout \u2014 (unnamed A/B test)\n**Hypothesis:** (not provided) \u2014 I assumed a single pre\u2011planned two\u2011sided test at \u03b1 = 0.05 and 80% power (stated assumption; tell me if you had a different pre-registered hypothesis or MDE).  \n**Primary metric:** signups (conversion rate) \u00b7 **Runtime:** (not provided) \u00b7 **Looks:** 1 (assumed) \u00b7 **\u03b1 (corrected):** 0.05 (no peeking reported)\n\n| Arm | Visitors | Conversions | Rate |\n|---|---:|---:|---:|\n| Control | 2,400 | 120 | 5.000% |\n| Variant | 2,380 | 151 | 6.345% |\n\n**SRM:** PASS (split consistent with 50/50, p = 0.772)\n\n**Result:** relative lift 26.89% (95% CI 0.53% to 60.17%), p = 0.04445, P(variant > control) = 97.8%\n\n**Sample check:** For a common MDE of +10% relative (control 5.0% \u2192 5.5%) you would need 31,234 visitors per arm (62,468 total) at 80% power, \u03b1=0.05. You have ~2.4k/arm \u2192 underpowered to reliably detect a 10% lift (current sample << needed).\n\n## Recommendation: KEEP RUNNING until you reach an adequate sample (\u224831,234 visitors/arm) \u2014 and do instrumentation QA first\nWhy: The variant shows a nominally statistically significant uplift (p < 0.05) and the 95% CI lower bound is slightly above 0, which meets the mechanical \"p and CI\" ship rule. However:\n- The achieved sample is far smaller than what you'd need to reliably detect a realistic MDE (e.g., +10%): this makes the result unstable and prone to change on replication.\n- The observed relative lift is large (+26.9%). Per Twyman\u2019s law, very large lifts on mature funnels are often instrumentation bugs or edge-case behavior. Verify conversion tracking and edge cases (bot filtering, duplicate events, server logging differences) before any rollout.\nRisk of being wrong: nominal false-positive rate ~5% if you truly had a single look \u2014 but with small samples, unknown peeking, or unverified instrumentation the real risk is higher. Replication reduces that risk.\n\n## What this does NOT tell us\n- Segment behavior (this is pooled). Post-hoc segment \"wins\" are hypotheses to re-test.  \n- Long-term retention / downstream metrics (revenue, refunds, support).  \n- Whether the lift is novelty/primacy (it could decay).  \n\n## Next test\n1) Do instrumentation QA: sanity-check event logs, compare raw server-side counts, ensure no arm-specific logging differences.  \n2) Replicate the test as a pre-registered experiment: same variant, pre-specify MDE (I recommend 10% relative unless you care about a different threshold), 2-week minimum runtime (or until ~31,234 visitors/arm at current traffic), and no interim peeking (or use alpha correction if you will peek). If you prefer a faster confirmation, run a smaller, targeted holdout (e.g., a longer holdout of a random 5% population) to guard against novelty.\n\nIf you want, I can:\n- Recompute required sample sizes for other MDEs you care about (e.g., 5%, 15%, absolute pp), or\n- Re-run the readout assuming you had interim looks (tell me how many) or a different planned split.",
+  "passed": true
+ },
+ {
+  "scenario": "stack-trace",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "bug-hunter"
+  ],
+  "tools": [
+   "bug-hunter/parse_stack_trace"
+  ],
+  "tool_errors": [],
+  "turns": 3,
+  "cost": 0.00795975,
+  "error": "",
+  "answer": "## Diagnosis: compute_total assumes cart.discount is non-null; cart.discount is None at app/billing/totals.py:41 (root cause: wrong assumption / missing validation)\n\n**Error:** `AttributeError: 'NoneType' object has no attribute 'amount'` \u00b7 **Blame frame:** `app/billing/totals.py:41 in compute_total` \u00b7 **Family:** assumption / data validation\n\n### What the evidence says\n- The stack trace points to the subtraction expression in compute_total: `... - cart.discount.amount`. The exception text `'NoneType' has no attribute 'amount'` means `cart.discount` is None.\n- Hint from the parser: a function upstream returned/produced None (a lookup miss or optional field).\n- This is not a Python runtime/version issue \u2014 it's a None value being used where code expects an object with an `amount` attribute.\n\n### Hypotheses (ranked)\n1. **compute_total assumes discount always exists (most likely).**\n   - Mechanism: `cart.discount` is optional (no coupon applied) but compute_total unconditionally accesses `.amount`.\n   - For: direct match to the failing line; very common mistake.\n   - Against: If discount was always set previously, a recent change made it optional \u2014 need deploy info.\n   - Test (cheap): Add or run a unit test: call compute_total with a cart whose discount is `None` and assert it doesn't raise and returns subtotal. Example test below.\n\n2. **Upstream code now sets cart.discount to None for certain carts (data/state change).**\n   - Mechanism: code that constructs or fetches Cart (from DB, cache or API) now stores `discount = None` when no coupon applies, whereas previous code supplied an object with `amount = 0`.\n   - For: explains why the consumer sees None.\n   - Against: If other consumers handle `None`, but not compute_total, this is still consistent.\n   - Test (cheap): Reproduce by creating/fetching a cart in the same codepath that returns `discount = None` and call compute_total.\n\n3. **Intermittent race or mutation removed discount between read and compute (less likely).**\n   - Mechanism: cart.discount existed when read, but another thread/process set it to None before compute_total runs.\n   - For: would explain intermittent failures only under load.\n   - Against: unusual for typical request-local cart objects; requires concurrent mutation.\n   - Test (cheap): Add a short log immediately before compute_total and assert consistency; reproduce under load.\n\nI would run hypothesis 1 first (unit test + code fix), because it's quickest and will both reproduce and fix for the general case.\n\n### Reproduce\nMinimal pytest-style test (paste into your tests, or run interactively):\n\n- Test name: test_compute_total_with_no_discount\n\nPython snippet:\n```\nfrom types import SimpleNamespace\nfrom app.billing.totals import compute_total\n\ndef test_compute_total_with_no_discount():\n    cart = SimpleNamespace(\n        items=[SimpleNamespace(price=10, qty=2)],\n        discount=None\n    )\n    assert compute_total(cart) == 20\n```\nRun: pytest tests/path_to_test.py::test_compute_total_with_no_discount -q\n\nExpected: test fails today (raises AttributeError). After the fix it should pass.\n\n### Fix (at the cause)\nPrefer validating the boundary (compute_total) so invalid states don't crash. Keep semantics explicit: missing discount \u2192 zero.\n\nSuggested change (unified diff):\n\nBefore (approx):\n```\ndef compute_total(cart):\n    return sum(i.price * i.qty for i in cart.items) - cart.discount.amount\n```\n\nAfter:\n```\ndef compute_total(cart):\n    subtotal = sum(i.price * i.qty for i in cart.items)\n    # defensive: treat missing discount as zero\n    discount_amount = 0\n    if getattr(cart, \"discount\", None) is not None:\n        # if discount.amount could be None, coerce to 0 as well\n        discount_amount = getattr(cart.discount, \"amount\", 0) or 0\n    total = subtotal - discount_amount\n    # optional: ensure we don't return negative totals\n    return max(total, 0)\n```\n\nAlternative succinct one-liner:\n```\ndiscount_amount = getattr(getattr(cart, \"discount\", None), \"amount\", 0) or 0\n```\n\nAdd a regression test: test_compute_total_with_no_discount (see above). Also add tests for a positive discount and discount greater than subtotal if you clamp to 0.\n\n**Blast radius:** Any code that currently assumes `cart.discount` is non-null and accesses attributes (e.g., `.amount`, `.currency`, `.type`) can crash. Search the repo for `.discount.` or `cart.discount` and apply the same defensive handling or ensure the cart builder always provides a zero discount object.\n\n### Quick mitigation for prod\n- Deploy the small defensive change to compute_total (and any other consumer sites) immediately \u2014 it's a low-risk fix.\n- Add logging around the create_order path to capture cart.id and whether discount is None for failed requests to help root-cause why it is None.\n\n### Self-check / next steps\n- Does this explain every symptom? Yes: the stack trace and exception message are fully explained by cart.discount being None.\n- Remaining questions to confirm \"why now\" and scope:\n  1. When did this start? (timestamp or deploy) \u2014 helps tell if regression.\n  2. Is `discount` expected to be optional in the Cart model (i.e., should it be Optional[Discount])? Or did a recent change make it None when previously it was a zero-valued Discount object?\n  3. Are there multiple places that access discount without checks? If so, we should patch all or normalize cart creation to always set a zero discount.\n\nIf you want, I can:\n- Provide an exact git patch (git diff) for your repo layout.\n- Search the codebase for other unsafe `.discount` accesses (if you can give me the repo or the list of files).\n- Draft the unit test file and CI command to add to your test suite.\n\nWhich would you like me to do next? Also: did this error start after a recent deploy or change?",
+  "passed": true
+ },
+ {
+  "scenario": "meeting",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "meeting-ops"
+  ],
+  "tools": [
+   "meeting-ops/transcript_stats",
+   "meeting-ops/resolve_due_dates",
+   "meeting-ops/format_action_items",
+   "meeting-ops/resolve_due_dates",
+   "meeting-ops/format_action_items"
+  ],
+  "tool_errors": [],
+  "turns": 7,
+  "cost": 0.011418000000000001,
+  "error": "",
+  "answer": "# Quick sync \u2014 2026-09-28\n**Attendees:** Priya \u00b7 Marcus \u00b7 Dana \u00b7 **Length:** ~0 min \u00b7 **Talk share:** Priya 65%, Marcus 32%, Dana 3%  \n**Topics:** pricing deck \u00b7 Stripe migration \u00b7 churned accounts\n\n## TL;DR\nThree clear commitments: Priya will send the revised pricing deck, Marcus will finish the Stripe migration, and Dana will email three churned accounts tomorrow.\n\n## Decisions\n- None recorded.\n\n## Action items\n| # | Task (imperative) | Owner | Due | Source |\n|---|---|---:|---:|---|\n| 1 | Send revised pricing deck | Priya | 2026-10-01 | \"I'll send the revised pricing deck by Thursday.\" |\n| 2 | Complete Stripe migration | Marcus | 2026-10-09 | \"I can get the Stripe migration done end of next week.\" |\n| 3 | Email three churned accounts (include reasons for churn and any offer) | Dana | 2026-09-29 | \"Someone needs to email the three churned accounts \u2014 Dana, can you take that tomorrow?\" |\n\n## Open questions\n- None.\n\n## Follow-up email (draft)\nSubject: Quick follow-up \u2014 pricing deck, Stripe migration, churn outreach\n\nRecap: Priya will send the revised pricing deck; Marcus will finish the Stripe migration; Dana will email the three churned accounts.\n\nPriya \u2192 Send revised pricing deck (due 2026-10-01)  \nMarcus \u2192 Complete Stripe migration (due 2026-10-09)  \nDana \u2192 Email three churned accounts (due 2026-09-29)\n\nThanks \u2014 let me know once items are done or if you need help with any of them.\n\nReady to file/create tasks: I didn't create issues because no connectors are linked here. I can create Asana/Linear/Notion tasks or a Gmail draft if you connect one \u2014 tell me which and I will file these.",
+  "passed": true
+ },
+ {
+  "scenario": "seo-meta",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": false,
+  "started": [
+   "meta-writer"
+  ],
+  "tools": [
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description",
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description",
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/serp_preview"
+  ],
+  "tool_errors": [],
+  "turns": 10,
+  "cost": 0.016308,
+  "error": "",
+  "answer": "",
+  "passed": false
+ },
+ {
+  "scenario": "x-thread",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "x-thread-builder"
+  ],
+  "tools": [
+   "x-thread-builder/score_hook",
+   "x-thread-builder/score_hook",
+   "x-thread-builder/score_hook",
+   "x-thread-builder/lint_thread"
+  ],
+  "tool_errors": [],
+  "turns": 6,
+  "cost": 0.02005425,
+  "error": "",
+  "answer": "**Hook score:** 91/100 (numbered list) \u2014 specific result + contrast + clear promise (strong scroll-stopper)\n\n1/ How we got 25k subscribers in 11 months without paying for ads \u2014 3 things that mattered and 1 tactic that backfired: which is which?\n\n2/ Cross\u2011promos with 40 similar newsletters.  \nWe arranged reciprocal mentions so every issue reached a highly targeted audience. Result: steady referral growth that scaled month over month. (Attach swap screenshot.)\n\n3/ A free template library gated by email.  \nPractical, reusable templates drew organic traffic and converted people who actually used our content into engaged subscribers.\n\n4/ Posting the best issue excerpts on LinkedIn every weekday.  \nShort, useful excerpts drove profile visits, reshares, and a steady trickle of signups \u2014 consistency compounded reach.\n\n5/ What didn\u2019t work: giveaways.  \nThey drove ~6,000 signups but almost none opened. Lesson: quantity \u2260 quality \u2014 freebies can bloat your list and kill engagement.\n\n6/ How to copy this quickly:  \n1) Find 10 similar newsletters and propose a swap.  \n2) Build one gated asset (a single-template PDF) and require an email.  \n3) Post 3\u20135 short excerpts on LinkedIn each week.\n\n7/ Recap: 25k in 11 months with $0 ads \u2014 wins: cross\u2011promos x40, gated template library, daily LinkedIn excerpts. Flop: giveaways = ~6k low-quality subs. Subscribe for the full playbook: https://yournewsletter.link \u2014 RT the first post if this helped.\n\n---\n**Lint:** \u2705 all posts \u2264 280 \u00b7 no links before N \u00b7 numbering OK  \n**Alt hooks (scored):** \"We grew our newsletter from 0 to 25,000 subscribers in 11 months with zero ad spend. Here are the 3 tactics that did the heavy lifting:\" \u2014 87 \u00b7 \"25,000 newsletter subscribers in 11 months \u2014 with $0 in ads. The 3 tactics that scaled us (and 1 that wasted 6,000 leads):\" \u2014 87\n\n**Posting notes:** Best to quote-tweet post 2 (cross\u2011promo screenshot) so it can be screenshotted; attach a screenshot of a real swap and a sample template from the library; if reach drops, reply to the hook with a short testimonial or the link rather than editing the thread. Replace the placeholder link with your actual signup URL.",
+  "passed": true
+ },
+ {
+  "scenario": "sql",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "sql-wizard"
+  ],
+  "tools": [
+   "sql-wizard/explain_structure",
+   "sql-wizard/lint_sql",
+   "sql-wizard/suggest_indexes"
+  ],
+  "tool_errors": [],
+  "turns": 5,
+  "cost": 0.0062445,
+  "error": "",
+  "answer": "**Grain:** one row per order (joined to customers) \u00b7 **Dialect:** PostgreSQL (assumed) \u00b7 **Assumptions:** orders.customer_id \u2192 customers.id is the join key (customers.id is primary key/indexed); orders is the large table the planner will likely drive.\n\nWhy it's slow (most likely)\n- The planner probably does a sequential scan of orders because the WHERE predicates and ORDER BY can't be satisfied by an existing index. Scanning a large orders table for rows in the last 7 days and status = 'pending' is expensive.\n- ORDER BY o.created_at DESC then forces a sort over the matched rows unless an index already provides rows in that order.\n- SELECT * prevents the planner from using a covering index to avoid fetching full table rows (heap fetches).\n\nWhat index would help\n- Suggested index:\n  CREATE INDEX CONCURRENTLY idx_orders_status_created_at ON orders (status, created_at);\n  - Reason: status is used with equality (status = 'pending') and created_at is used both in a range filter (created_at > \u2026) and in ORDER BY. Placing equality first, then the range/sort column follows the ESR rule (equality \u2192 sort \u2192 range). This lets PostgreSQL:\n    - Use the index to find only rows with status='pending' and created_at in the recent 7 days, and\n    - Avoid a separate sort because the index orders by created_at (allowing an index scan in descending order if needed).\n- Notes:\n  - If you frequently SELECT only a few columns (e.g., id, customer_id, created_at, status), list them explicitly in the SELECT and consider including them in the index as included (Postgres supports covering via INCLUDE): \n    CREATE INDEX CONCURRENTLY idx_orders_status_created_at_include_customer ON orders (status, created_at) INCLUDE (customer_id, id);\n    This can avoid heap lookups entirely for those columns.\n  - If status has very low cardinality (few distinct values) but \"pending\" is selective enough in practice, the partial index can be even better:\n    CREATE INDEX CONCURRENTLY idx_orders_pending_created_at ON orders (created_at) WHERE status = 'pending';\n    This index is smaller and directly serves the filter + ORDER BY for pending rows only.\n  - customers.id is assumed indexed (primary key). No index change needed on customers for this query.\n\nCorrectness notes\n- The suggested indexes don't change results. Be mindful of timezone semantics for now() \u2014 if your created_at is UTC and application uses local time, ensure the filter matches intended timezone boundaries.\n- SELECT * semantics: if you add INCLUDE columns to the index or switch to explicit columns, make sure you still select the fields your app needs.\n\nHow to verify\n- Run EXPLAIN (ANALYZE, BUFFERS) for the query before and after adding the index. Expect:\n  - Before \u2192 Seq Scan on orders (or large index scan + Sort).\n  - After \u2192 Index Scan using idx_orders_status_created_at (or index-only scan for a covering index) and no large Sort step.\n- Look for rows returned vs. rows estimated; heap read (shared hit/read) drop; and that there is no external sort.\n\nSanity check\n- Count of matching rows should be identical:\n  SELECT count(*) FROM orders o WHERE o.status = 'pending' AND o.created_at > now() - interval '7 days';\n\nIf you want, tell me:\n- approximate row counts for orders and how many pending in a typical 7-day window,\n- which columns you actually need in SELECT,\nand I will give the exact CREATE INDEX statement I'd run and a tailored verification checklist (EXPLAIN output lines to expect).",
+  "passed": true
+ },
+ {
+  "scenario": "pricing",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "ecom-pricing"
+  ],
+  "tools": [
+   "ecom-pricing/price_for_target_margin",
+   "ecom-pricing/unit_economics"
+  ],
+  "tool_errors": [],
+  "turns": 4,
+  "cost": 0.010908500000000002,
+  "error": "",
+  "answer": "CM2 = 45.2% ($17.60 per order) \u00b7 Break-even ROAS = 2.21\u00d7\n\n# Pricing \u2014 product \u00b7 recommended price $38.95\n## Unit economics at $38.95 (per order)\n| Line | $ | % of price |\n| Price | 38.95 | 100.0% |\n| COGS (landed) | 11.40 | 29.3% |\n| Outbound shipping (you pay) | 6.20 | 15.9% |\n| Packaging | 0.00 | 0.0% |\n| Payment fees (3.2% + $0.30) | 1.55 | 4.0% |\n| Expected return cost (8% return rate) | 2.20 | 5.6% |\n| Contribution margin (CM2) | 17.60 | 45.2% |\n\nAdditional metrics\n- Gross profit (price \u2212 COGS): $27.55 (70.7% gross margin)\n- Contribution before returns (CM1): $19.80\n- Break-even ROAS: 2.21\u00d7\n- Max CPA (first order): $17.60\n- Floor price to hit 45% CM2: $38.79\n\n## Recommendation\nCharge $38.95 (x.95 charm price). At $38.95 you clear your 45% contribution-margin target (CM2 = 45.2%), giving a breakeven ROAS \u2248 2.21\u00d7 and a first-order max CPA of $17.60. x.95 is the lowest charm price that meets the target.\n\n## Promo guardrails\n- Cap standard discount depth at ~10% or less: a 10% discount would require \u2248 +28% unit lift just to break even (using current CM2).  \n- 15% off requires \u2248 +50% lift; 20% off requires \u2248 +79% lift \u2014 these are high and risky unless this SKU is a traffic driver.  \n- Preferred non-price levers: free-shipping threshold, bundle (buy 2 save $X), gift-with-purchase, targeted retention offers.\n\n## Assumptions & formulas\n- Assumptions used: COGS $11.40, outbound shipping $6.20, payment fees 3.2% + $0.30, packaging $0, marketplace/fulfillment fees 0, return rate 8% (default), no extra per-return write-off entered beyond the tool's expected-return treatment. All percentage fees applied to price (not to cost). Shipping charged to customer = $0 (free shipping).\n- Formula used (simplified): Price must cover (COGS + shipping + packaging + payment fees + expected return costs) so that (Price \u2212 those items) \u00f7 Price = target contribution margin. The tool solved the exact fee-inclusive equation.\n- If you want a different target (e.g., 50%) or to include a per-return write-off (e.g., 15% of COGS) or any marketplace fees, I can recalc.\n\nWant me to save this pricing profile for future recalculations or test a few alternate prices (e.g., $34.99, $39.99, $44.95) so you can see their CM2 and ROAS quickly?",
+  "passed": true
+ }
+]

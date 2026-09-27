@@ -1,0 +1,120 @@
+[
+ {
+  "scenario": "stack-trace",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "bug-hunter"
+  ],
+  "tools": [
+   "bug-hunter/parse_stack_trace"
+  ],
+  "tool_errors": [],
+  "turns": 3,
+  "cost": 0.00942875,
+  "error": "",
+  "answer": "## Diagnosis: cart.discount is None in compute_total (app/billing/totals.py:41)\n**Error:** `AttributeError: 'NoneType' object has no attribute 'amount'` \u00b7 **Blame frame:** app/billing/totals.py:41 in compute_total \u00b7 **Family:** data / wrong-assumption\n\n### What the evidence says\n- The exception text literally says a None was accessed for `.amount` \u2192 the expression `cart.discount` (or something returning discount) is None.\n- Blame frame is compute_total at line 41, which shows the consumer of the value; the producer of `cart.discount` is somewhere earlier (cart construction/population).\n- Hint from parser: \"If the message says 'NoneType', a function up the call chain returned None (usually a lookup miss or an early return). Trace the variable back to its source.\"\n\n### Hypotheses (ranked)\n1. **cart.discount is optional / absent for carts without a discount** \u2014 compute_total assumes discount exists.\n   - For: aligning with many codebases where discount is optional; simplest explanation.\n   - Against: If previously discount was always present (default object), this would be a regression.\n   - Test: call compute_total with a Cart whose discount is None and assert it raises the error. Quick test: add unit test below; instrument prod to log carts where discount is None.\n   - I would run this first.\n\n2. **Recent change removed the default Discount object when creating carts** (regression).\n   - For: explains \"why now\" if this started after a deploy.\n   - Against: if no recent deploy, then data migration or new code path could cause it.\n   - Test: check git history for changes around cart/discount defaults; run a test that constructs a Cart via the same code path used by create_order and inspect discount.\n\n3. **Race/clearing: discount was removed between retrieval and compute_total** (less likely).\n   - For: intermittent failures under concurrency; would explain sporadic errors.\n   - Against: trivial code path in single-threaded request unlikely to mutate cart mid-request.\n   - Test: add a log before compute_total showing id and discount object id, and search for concurrent mutations.\n\n### Reproduce\nMinimal pytest-style test:\n- test file: tests/test_totals.py\n- command: pytest tests/test_totals.py::test_compute_total_handles_missing_discount\n\nTest snippet:\n```\nclass DummyItem:\n    def __init__(self, price, qty): self.price = price; self.qty = qty\n\nclass Cart:\n    def __init__(self, items, discount): self.items = items; self.discount = discount\n\ndef test_compute_total_handles_missing_discount():\n    cart = Cart([DummyItem(10, 2)], None)  # discount is None\n    # expect compute_total to treat missing discount as 0 or raise a specific error\n    # (this test should fail before the fix)\n    total = compute_total(cart)\n    assert total == 20\n```\n\n### Fix (preferred)\nMake the boundary explicit. Two good options \u2014 pick according to project invariants:\n\nA) If a cart legitimately can have no discount (common): handle None in compute_total and add tests.\n- Change in app/billing/totals.py:\n```\n- return sum(i.price * i.qty for i in cart.items) - cart.discount.amount\n+ items_total = sum(i.price * i.qty for i in cart.items)\n+ discount_amount = cart.discount.amount if cart.discount is not None else 0\n+ return items_total - discount_amount\n```\n- Add unit test: tests/test_totals.py::test_compute_total_handles_missing_discount (see above).\nRationale: fixes the consumer and documents the assumption that \"no discount\" == 0.\n\nB) If the domain intends every cart to always have a Discount object (amount=0 by default): enforce at creation time.\n- Ensure Cart initialization or the DB model always sets discount = Discount(amount=0) (or use a non-nullable relation with default).\n- Add a test asserting newly created carts have discount.amount == 0 and add a migration if needed.\nRationale: makes invalid state unrepresentable and would avoid needing checks across many call sites.\n\nWhich to choose: if many call sites use cart.discount.amount without checks, prefer B (set default Discount). If this is an isolated place or carts legitimately lack discounts, choose A.\n\n### Minimal patch + regression test\nSuggested patch (defensive, option A \u2014 smallest safe change):\n\napp/billing/totals.py\n```\ndef compute_total(cart):\n    items_total = sum(i.price * i.qty for i in cart.items)\n    discount_amount = cart.discount.amount if cart.discount is not None else 0\n    return items_total - discount_amount\n```\n\ntests/test_totals.py\n```\ndef test_compute_total_handles_missing_discount():\n    cart = Cart(items=[Item(price=10, qty=2)], discount=None)\n    assert compute_total(cart) == 20\n```\n\nRegression test name: test_compute_total_handles_missing_discount\n\n### Cheap experiments / instrumentation (run in <5 minutes)\n1. Add a log line right before compute_total in app/api/orders.py to capture cart.id (or user), and whether cart.discount is None. Example:\n   - logger.info(\"create_order: cart=%s discount=%s\", cart.id, bool(cart.discount))\n   Expectation: you'll see entries where discount is false for failing requests.\n\n2. Run the unit test above locally \u2014 it should fail pre-fix and pass after the patch.\n\n3. Grep repo for other uses of `.discount.amount` and add quick asserts or handle None if found. Command:\n   - git grep -n \"\\.discount\\.amount\"\n\n### Blast radius\n- Any other code that assumes cart.discount is always present (accesses discount.amount without a guard) will fail similarly. Grep recommended above.\n- If you choose option B (make discount always present), ensure migrations and factories/fixtures are updated.\n\n### Unexplained\n- If errors only occur under high load or intermittently, the \"why now\" might be a race or a new code path that sometimes builds the cart without a discount. If you see intermittent logs showing discount present and then suddenly None, we need to investigate concurrency. Otherwise, \"why now\" is likely a recent deploy that changed Cart creation or defaults.\n\n---\n\nIf you want, I can:\n- Produce the exact git diff for the patch and the pytest file.\n- Search the repository for other .discount.amount usages (I can run a repo grep if you paste code or allow repo access).\n- Generate the minimal instrumentation snippet to deploy to prod and a query to find the first failing cart IDs. Which would you like next?",
+  "passed": true
+ },
+ {
+  "scenario": "meeting",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "meeting-ops"
+  ],
+  "tools": [
+   "meeting-ops/transcript_stats",
+   "meeting-ops/resolve_due_dates",
+   "meeting-ops/format_action_items"
+  ],
+  "tool_errors": [],
+  "turns": 5,
+  "cost": 0.01083625,
+  "error": "",
+  "answer": "# Meeting \u2014 2026-09-28\n**Attendees:** Priya \u00b7 Marcus \u00b7 Dana \u00b7 **Length:** ~0 min \u00b7 **Talk share:** Priya 64.7%, Marcus 32.4%, Dana 2.9%  \n**Topics:** pricing deck, Stripe migration, churned accounts outreach\n\n## TL;DR\nThree clear commitments were made: Priya will send a revised pricing deck, Marcus will finish the Stripe migration, and Dana will email the three churned accounts.\n\n## Decisions\n- No explicit decisions recorded.\n\n## Action items\n| # | Task (imperative) | Owner | Due | Source |\n|---|---|---:|---:|---|\n| 1 | Send revised pricing deck | Priya | 2026-10-01 | \"I'll send the revised pricing deck by Thursday.\" |\n| 2 | Complete Stripe migration | Marcus | 2026-10-09 | \"I can get the Stripe migration done end of next week.\" |\n| 3 | Email the three churned accounts (contact each and log outcome) | Dana | 2026-09-29 | \"Someone needs to email the three churned accounts \u2014 Dana, can you take that tomorrow?\" |\n\n(For task 3 I expanded \"email\" to include logging outcomes so \"done\" is concrete.)\n\n## Open questions\n- None \u2014 every commitment had an owner and a resolved date.\n\n## Follow-up email (draft)\nSubject: Quick recap & actions \u2014 pricing deck, Stripe migration, churn outreach\n\nTeam \u2014 quick recap from today:\n- Priya \u2192 Send revised pricing deck (due 2026-10-01)  \n- Marcus \u2192 Complete Stripe migration (due 2026-10-09)  \n- Dana \u2192 Email the three churned accounts and log responses (due 2026-09-29)\n\nThanks \u2014 please reply if any dates need changing.\n\nWhat I filed/created: action items normalised and grouped by owner (ready to file). To automate this into tasks create Asana/Linear/Jira issues or add to Notion/Google Docs; connected Gmail could turn the draft into a sent email.",
+  "passed": true
+ },
+ {
+  "scenario": "seo-meta",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": false,
+  "started": [
+   "meta-writer"
+  ],
+  "tools": [
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description",
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description",
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/serp_preview"
+  ],
+  "tool_errors": [],
+  "turns": 10,
+  "cost": 0.0246155,
+  "error": "",
+  "answer": "",
+  "passed": false
+ },
+ {
+  "scenario": "tax",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "freelance-tax"
+  ],
+  "tools": [
+   "freelance-tax/quarterly_estimate",
+   "freelance-tax/safe_harbor",
+   "freelance-tax/payment_deadlines",
+   "freelance-tax/safe_harbor"
+  ],
+  "tool_errors": [],
+  "turns": 6,
+  "cost": 0.02297275,
+  "error": "",
+  "answer": "Tax estimate \u2014 2026 \u2014 single\n\nNext payment: $5,210.06 due 2027-01-15 (110 days) \u00b7 Set aside: 21.9% of every net dollar \u00b7 Safe harbor: NOT available (prior-year tax $0) \u2014 you\u2019re liable for the projected $20,840.24 this year\n\nProjection\n| Line | Amount |\n| Net SE profit | $95,000.00 |\n| SE tax (total) | $13,423.07 |\n| Taxable income (after half\u2011SE, standard deduction, QBI) | $57,750.77 |\n| Federal income tax | $7,417.17 |\n| State (placeholder) | $0.00 |\n| Total federal tax (SE + income) | $20,840.24 |\n| \u201cEven\u201d quarterly payment (total \u00f7 4) | $5,210.06 |\n\nShort explanation\n- Your modelled total federal tax for the year is about $20,840. That breaks into SE tax \u2248 $13,423 and federal income tax \u2248 $7,417.\n- The even quarterly amount is $5,210.06. If you pay that each quarter you\u2019ll cover the projection.\n- Because you reported prior-year tax = $0, the usual safe-harbor (pay last year\u2019s tax) gives no protection. That means missed/late payments can trigger underpayment penalties \u2014 see notes below.\n\nDeductions (you didn\u2019t give expenses)\n| Item | Claimed | Deductible | Tax saved |\n| \u2014 | \u2014 | \u2014 | \u2014 |\nNo expense list provided. Useful rates for valuing deductions if you want:\n- Income-tax marginal after half\u2011SE & QBI: 16.36% (this is the marginal federal income-tax saving per $1 deduction)\n- Effective SE tax saved per $1 deduction: 14.13%\n- Combined marginal saving \u2248 30.5% per deductible dollar (16.36 + 14.13)\n\nDeadlines (federal estimated payments for tax year 2026 \u2014 weekend/holiday adjusted)\n| Q | Period covered | Due date | Status | Typical per-quarter amount |\n| Q1 | Jan 1 \u2013 Mar 31, 2026 | 2026-04-15 | past | $5,210.06 |\n| Q2 | Apr 1 \u2013 May 31, 2026 | 2026-06-15 | past | $5,210.06 |\n| Q3 | Jun 1 \u2013 Aug 31, 2026 | 2026-09-15 | past | $5,210.06 |\n| Q4 | Sep 1 \u2013 Dec 31, 2026 | 2027-01-15 | upcoming | $5,210.06 |\n\nWhat this means for you right now\n- If you had been paying each quarter you would have paid $5,210.06 on each due date. Since it\u2019s now after the first three due dates, you are behind $15,630.18 (3 \u00d7 $5,210.06).\n- To cover the full projected federal tax for the year you need to have paid a total of $20,840.24. Practical options:\n  - Catch up now and pay the full remaining $20,840.24 by 2027-01-15 (this covers the missed three plus Q4), or\n  - If you prefer to split: pay the missed $15,630.18 as soon as possible and then pay $5,210.06 by 2027-01-15 \u2014 note late payments may incur underpayment penalty on the earlier missed quarters.\n- Because prior-year tax was $0, you are not automatically protected by the safe-harbor rule \u2014 paying the projected total (or using the annualized method, see below) is the safe way to avoid surprises and penalties.\n\nPractical recommendations\n- Set aside 21.9% of every net dollar you receive into a separate \u201ctax\u201d savings account immediately.\n- If cash allows: transfer $20,840.24 into that account now (or as a single estimated payment before 2027-01-15) to fully cover the projection.\n- Otherwise: pay the $15,630.18 you\u2019re behind on as soon as you can, and $5,210.06 by 2027-01-15.\n- Use EFTPS or IRS Direct Pay (or your tax software) to make payments and keep receipts.\n- Track quarterly so you don\u2019t build up a late-payment/penalty problem next year.\n\nNotes, assumptions & verify list\n- Defaults used (estimate only \u2014 please verify current-year figures on IRS.gov):\n  - Federal brackets and standard deduction = 2026 defaults used by this estimator (standard deduction $16,100).\n  - Social Security wage base = $184,500 (2026 default used).\n  - QBI deduction applied (simplified; phaseouts not modelled).\n- This is an estimate, not tax advice. If you have unusual items (other income, W\u20112 wages, big one-off gains/losses, multi\u2011state work, or want to reduce penalty risk via Form 2210 annualized method) consult a CPA or EA.\n- If your income is very lumpy, you can use the annualized method (Form 2210 Schedule AI) to compute required payments more fairly across quarters \u2014 I can run that if you provide month-by-month receipts.\n\nIf you\u2019d like I can:\n- Calculate the penalty estimate for late/missed payments.\n- Run an annualized/\u201clumpy income\u201d schedule (Form 2210 style) if your receipts vary by month.\n- Save this profile so next year I can pre-fill your numbers and deadlines. Which of those do you want next?",
+  "passed": true
+ },
+ {
+  "scenario": "okr",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "okr-coach"
+  ],
+  "tools": [
+   "okr-coach/lint_okrs"
+  ],
+  "tool_errors": [],
+  "turns": 3,
+  "cost": 0.00970025,
+  "error": "",
+  "answer": "Good start \u2014 you picked a sensible objective and three candidate KRs, but all three KRs are task-shaped / missing numbers. I linted them.\n\n# OKRs \u2014 Product (draft)            Lint score: 70/100\n\nO1: Improve the product.  (suggested rewrite: \"Deliver a noticeably better product experience\")\n\n| KR (original) | Issues |\n|---|---|\n| Launch dark mode. | Task-shaped (not a measurable outcome). No baseline/target. |\n| Make onboarding better. | Vague \u2014 no metric, baseline or target. |\n| Increase activation. | Missing metric, baseline and target. |\n\nRewrites \u2014 follow the pattern: \"<verb> <metric> from <baseline> to <target> [by <date>]\"\n\n- ~~Launch dark mode.~~ \u2192 **Increase dark-mode adoption from [baseline] to [target %] by quarter end**  \n  - Why: \"Launching\" is an initiative. The KR should measure product impact/adoption (e.g., % of DAUs who enable dark mode, or % of sessions in dark mode).\n  - Suggested example KRs:\n    - \"Increase dark-mode adoption from 0% \u2192 25% of DAUs by 2026-12-31\" (if you ship in Q4 and expect adoption).\n    - If you only care about shipping and tracking: \"Ship dark mode and reach instrumentation coverage = 100% (events firing) by release\" \u2014 but prefer adoption metric over shipping.\n\n- ~~Make onboarding better.~~ \u2192 **Reduce time-to-first-success for new users from [baseline minutes] to [target minutes] by quarter end**  \n  - Alternative measurable onboarding KRs:\n    - \"Increase new-user completion of onboarding checklist from 18% \u2192 45% by quarter end\"\n    - \"Increase week-1 retention for new signups from 22% \u2192 35% by quarter end\"\n\n- ~~Increase activation.~~ \u2192 **Increase activation rate (define: signup \u2192 activated) from [baseline %] to [target %] by quarter end**  \n  - Example: \"Increase 7-day activation (signup \u2192 performed X core action) from 18% \u2192 30% by 2026-12-31\"\n\nNotes on balance and guardrails\n- Pair outcome KRs with a quality guardrail: e.g., \"Keep NPS for new users \u2265 X\" or \"Keep onboarding completion support requests \u2264 Y per 100 users\" to avoid growth at cost of quality.\n- Keep 2\u20135 KRs per objective; 3 is fine.\n- Label KRs as committed vs aspirational when you set targets (committed if you expect to hit 1.0).\n\nInitiatives (these are tasks \u2014 not KRs)\n- Dark mode engineering: design \u2192 implementation \u2192 QA \u2192 release + analytics events to measure adoption.\n- Onboarding experiments: audit flows, run 3 A/B tests on first-run checklist and in-app tips.\n- Activation funnel work: instrument events, identify top drop-off step, run targeted experiments (email, coach marks) to move activation.\n\nNext actions I need from you (two quick questions)\n1) OKR period (start and end dates for the quarter). Example: 2026-10-01 \u2192 2026-12-31.  \n2) Baselines (if you have them): current activation rate (define activation for me if you use a custom metric), current week-1 retention or time-to-first-success, and whether you want dark-mode measured by adoption % or just \"released + instrumented\".\n\nIf you don't have baselines, say \"no baselines\" \u2014 I'll mark them \"baseline unknown \u2014 measure in week 1\" and give recommended targets based on typical benchmarks.\n\nWhat I'll do once you reply\n- Convert the rewritten KRs into a final OKR set (with committed vs aspirational labels).  \n- If you give period + start/current/target values, I'll call the OKR coach grade_progress tool to compute progress, status and concrete recovery actions.  \n- I can also produce the OKR cadence calendar (weekly check-ins, mid-cycle review, score date) once I have the period.\n\nWould you like me to propose concrete target numbers (e.g., target % increases) based on typical SaaS benchmarks, or do you prefer I wait for your real baselines?",
+  "passed": true
+ }
+]

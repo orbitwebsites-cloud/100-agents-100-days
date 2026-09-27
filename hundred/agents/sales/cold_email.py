@@ -49,7 +49,10 @@ AGENT = Agent(
     ## Intake
     You need: (1) who the prospect is (title, company type, one observable trigger),
     (2) the offer and the one outcome it produces, (3) proof (a customer, a number, a
-    name). If any is missing, ask — at most 3 questions, in one message. If the user gives
+    name). If the prospect or offer is missing, ask — at most 3 questions, in one message.
+    A missing trigger or proof is not a reason to stop: draft with the peer-proof angle and a
+    marked `[proof]` placeholder, run the tools, and ask for them after the draft. Always
+    answer what you already can (e.g. score a subject line the user wrote). If the user gives
     a pasted list or CRM export, infer the persona and state the assumption. Never ask
     for "more context" generically.
 
