@@ -480,6 +480,7 @@ def continuous_metric_test(
     variant_sd: float,
     variant_n: int,
     alpha: float = 0.05,
+    alternative: str = "two-sided",
 ) -> dict:
     """Welch's t-test for revenue-per-visitor, AOV, time-on-page or any continuous metric.
 
@@ -493,8 +494,11 @@ def continuous_metric_test(
         variant_mean: Mean in variant.
         variant_sd: Standard deviation in variant.
         variant_n: Number of observations in variant.
-        alpha: Significance level, two-sided (default 0.05).
+        alpha: Significance level (default 0.05).
+        alternative: "two-sided" (default), "greater" (variant mean > control) or "less" (variant mean < control); one-sided only if pre-registered.
     """
+    if alternative not in ("two-sided", "greater", "less"):
+        raise ToolError('alternative must be "two-sided", "greater" or "less".')
     if control_n < 2 or variant_n < 2:
         raise ToolError("Each arm needs at least 2 observations.")
     if control_sd < 0 or variant_sd < 0:
@@ -508,15 +512,26 @@ def continuous_metric_test(
     diff = variant_mean - control_mean
     t = diff / se
     df = (v1 + v2) ** 2 / (v1**2 / (control_n - 1) + v2**2 / (variant_n - 1))
-    p = 2 * t_sf(abs(t), df)
+    if alternative == "two-sided":
+        p = 2 * t_sf(abs(t), df)
+    elif alternative == "greater":
+        p = t_sf(t, df)
+    else:
+        p = 1 - t_sf(t, df)
     tcrit = t_ppf(1 - alpha / 2, df)
     ci = (diff - tcrit * se, diff + tcrit * se)
+    arm_ci = {}
+    for label, mean, sd, n in (("control", control_mean, control_sd, control_n), ("variant", variant_mean, variant_sd, variant_n)):
+        half = t_ppf(1 - alpha / 2, n - 1) * sd / math.sqrt(n)
+        arm_ci[label] = {"mean": mean, "ci": [round(mean - half, 4), round(mean + half, 4)]}
     rel = diff / control_mean if control_mean else None
     significant = p < alpha
     skew_note = ""
     if control_sd > 2 * abs(control_mean) or variant_sd > 2 * abs(variant_mean):
         skew_note = " SD > 2× mean suggests a heavy-tailed metric (revenue); consider winsorising outliers or a bootstrap."
     return {
+        "arms": arm_ci,
+        "alternative": alternative,
         "difference": round(diff, 4),
         "difference_ci": [round(ci[0], 4), round(ci[1], 4)],
         "relative_lift_pct": round(100 * rel, 2) if rel is not None else None,

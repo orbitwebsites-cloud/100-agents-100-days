@@ -108,7 +108,7 @@ Then I ran runway (revenue $128k growing 4%/mo, expenses $170.6k growing 1%/mo),
 Collections came in $13,550 short (26.1%) and vendors ran $3,380 over forecast (35.6%). Net −$16,390. Collections assumption moved from due date to +12 days.
 
 ## Levers (ranked by speed)
-1. Chase INV-2027/INV-2019 now: $50,955 expected in wk 1–2 → protects the wk-6 buffer in the combined case
+1. Chase INV-2027 and INV-2019 now — $50,955 expected wk 1–2; the combined shock breaches the buffer in wk 6 if receipts like these slip
 ```
 
 **Traps in this scenario the tools handled** (no plain-AI run; these are traps in the data):
@@ -287,7 +287,7 @@ Payback (18.7 mo) and burn multiple (2.18) are the constraint, not retention: GR
 still lose ~1 pt/month after month 5. CAC of $6,240 against $334/mo gross profit is the lever.
 
 ## Levers
-1. Annual prepay at 2 months free — moves payback from 18.7 toward ~7 months of cash
+1. Annual prepay at 2 months free — collects $4,120 upfront per account against $6,240 CAC
 2. Expansion packaging — NRR 103% → 110% needs +$340k expansion/yr
 ```
 
