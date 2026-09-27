@@ -7,7 +7,9 @@ from datetime import timedelta
 
 from ...core import Agent, ToolError
 from ...lib import dates
-from ._common import DURATION_RE, SCOPE_NOTE, add_months, check_text, duration_days, excerpt, money, parse_date, parse_number, to_float
+from ._common import DURATION_RE, SCOPE_NOTE, add_months, check_text, duration_days, excerpt, money, parse_date, parse_number
+from ._common import term_end as _term_end
+from ._common import to_float
 
 AGENT = Agent(
     slug="contract-reviewer",
@@ -251,12 +253,12 @@ _EXPLICIT_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b|\b((?:January|February|Mar
 _MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"], 1)}
 
 
-def _classify(ctx: str) -> str:
+def _classify_ctx(ctx: str) -> str:
     c = ctx.lower()
-    if re.search(r"notice|notify|terminat|non-?renew|cancel", c):
-        return "notice / termination"
     if re.search(r"cure|remedy", c):
         return "cure period"
+    if re.search(r"notice|notify|terminat|non-?renew|cancel", c):
+        return "notice / termination"
     if re.search(r"invoice|pay|net\b|fees|due", c):
         return "payment"
     if re.search(r"renew", c):
@@ -269,6 +271,17 @@ def _classify(ctx: str) -> str:
         return "confidentiality / survival"
     if re.search(r"warrant|defect|claim|dispute", c):
         return "warranty / claims"
+    return "other"
+
+
+def _classify(before: str, dur_after: str) -> str:
+    """Classify by the words *before* the duration first (they carry the trigger), then what follows."""
+    if re.search(r"successive|renewal (?:term|period)|renew(?:al|s)? for", before[-40:] + " " + dur_after[:40], re.I):
+        return "renewal"
+    for ctx in (before, dur_after):
+        t = _classify_ctx(ctx)
+        if t != "other":
+            return t
     return "other"
 
 
@@ -310,7 +323,7 @@ def extract_deadlines(contract_text: str, effective_date: str = "") -> dict:
                 resolved = add_months(base, 12 * n).isoformat()
             else:
                 resolved = (base + timedelta(days=days)).isoformat()
-        items.append({"duration": f"{n} {'business ' if business else ''}{unit.lower().rstrip('s')}{'s' if n != 1 else ''}", "days": days, "type": _classify(ctx), "context": ctx[:220], "from_effective_date": resolved})
+        items.append({"duration": f"{n} {'business ' if business else ''}{unit.lower().rstrip('s')}{'s' if n != 1 else ''}", "days": days, "type": _classify(before, dur + after), "context": ctx[:220], "from_effective_date": resolved})
     explicit = []
     for m in _EXPLICIT_DATE.finditer(text):
         raw = m.group(0)
@@ -357,7 +370,7 @@ def renewal_calendar(effective_date: str, initial_term_months: int, notice_days:
     for name, v, lo, hi in (("initial_term_months", initial_term_months, 1, 240), ("notice_days", notice_days, 0, 365), ("renewal_term_months", renewal_term_months, 1, 240), ("reminder_days_before_notice", reminder_days_before_notice, 0, 180), ("renewals_to_show", renewals_to_show, 0, 10)):
         if not isinstance(v, int) or not lo <= v <= hi:
             raise ToolError(f"{name} must be an integer between {lo} and {hi}.")
-    term_end = add_months(start, initial_term_months) - timedelta(days=1)
+    term_end = _term_end(start, initial_term_months)
     notice_deadline = term_end - timedelta(days=notice_days)
     reminder = notice_deadline - timedelta(days=reminder_days_before_notice)
     today = dates.date.today()
@@ -366,7 +379,7 @@ def renewal_calendar(effective_date: str, initial_term_months: int, notice_days:
         cur_start, cur_end = start, term_end
         for i in range(renewals_to_show):
             nxt_start = cur_end + timedelta(days=1)
-            nxt_end = add_months(nxt_start, renewal_term_months) - timedelta(days=1)
+            nxt_end = _term_end(nxt_start, renewal_term_months)
             cycles.append({"renewal": i + 1, "starts": nxt_start.isoformat(), "ends": nxt_end.isoformat(), "notice_deadline": (nxt_end - timedelta(days=notice_days)).isoformat()})
             cur_start, cur_end = nxt_start, nxt_end
     days_to_notice = (notice_deadline - today).days
