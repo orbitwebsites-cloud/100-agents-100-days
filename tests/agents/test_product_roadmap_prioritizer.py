@@ -104,13 +104,13 @@ def test_rice_score_groups_fragile_ranks_into_tiers():
 
 
 def test_wsjf_and_ice_scores():
-    w = call("wsjf_ice_score", items=[{"name": "SSO", "business_value": 13, "time_criticality": 13, "risk_reduction": 5, "job_size": 8},
+    w = call("framework_score", items=[{"name": "SSO", "business_value": 13, "time_criticality": 13, "risk_reduction": 5, "job_size": 8},
                                       {"name": "Audit log", "business_value": 5, "time_criticality": 8, "risk_reduction": 8, "job_size": 3}])
     assert [r["name"] for r in w["ranked"]] == ["Audit log", "SSO"] and w["ranked"][1]["score"] == 3.88
-    i = call("wsjf_ice_score", method="ice", items=[{"name": "x", "impact": 8, "confidence": 5, "ease": 6}])
+    i = call("framework_score", method="ice", items=[{"name": "x", "impact": 8, "confidence": 5, "ease": 6}])
     assert i["ranked"][0]["score"] == 240.0
     with pytest.raises(ToolError):
-        call("wsjf_ice_score", method="rice", items=[{"name": "x"}])
+        call("framework_score", method="rice", items=[{"name": "x"}])
 
 
 def test_kano_worse_is_never_negative_zero():
@@ -121,3 +121,15 @@ def test_kano_worse_is_never_negative_zero():
 def test_capacity_check_overflowing_coulds_are_the_contingency():
     out = call("capacity_check", capacity_weeks=10, items=[{"name": "a", "moscow": "must", "effort": 5}, {"name": "b", "moscow": "should", "effort": 3}, {"name": "c", "moscow": "could", "effort": 2}])
     assert out["problems"] == [] and out["below_the_line"] == ["c"] and "contingency" in out["notes"][0]
+
+
+def test_framework_score_value_effort_and_weighted_drivers():
+    ve = call("framework_score", method="value_effort", items=[{"name": "a", "value": 8, "effort": 2}, {"name": "b", "value": 9, "effort": 3}])
+    assert [(r["name"], r["score"]) for r in ve["ranked"]] == [("a", 4.0), ("b", 3.0)]
+    wt = call("framework_score", method="weighted", weights={"retention": 3, "expansion": 1},
+              items=[{"name": "SSO", "scores": {"retention": 2, "expansion": 5}}, {"name": "Exports", "scores": {"retention": 4}}])
+    # SSO: (3·2 + 1·5)/4 = 2.75 ; Exports: (3·4 + 0)/4 = 3.0 (missing driver counted as 0 and noted)
+    assert [(r["name"], r["score"]) for r in wt["ranked"]] == [("Exports", 3.0), ("SSO", 2.75)]
+    assert "no score for expansion" in wt["ranked"][0]["notes"][0]
+    with pytest.raises(ToolError):
+        call("framework_score", method="weighted", items=[{"name": "x", "scores": {}}])

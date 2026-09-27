@@ -411,7 +411,7 @@ def test_roadmap_capacity_check_by_hand():
 
 
 def test_roadmap_wsjf_by_hand():
-    out = run("roadmap-prioritizer", "wsjf_ice_score", items=[
+    out = run("roadmap-prioritizer", "framework_score", items=[
         {"name": "SSO (SAML)", "business_value": 13, "time_criticality": 13, "risk_reduction": 5, "job_size": 8},
         {"name": "Audit log", "business_value": 5, "time_criticality": 8, "risk_reduction": 8, "job_size": 3},
         {"name": "Recurring tasks", "business_value": 8, "time_criticality": 3, "risk_reduction": 1, "job_size": 5}])

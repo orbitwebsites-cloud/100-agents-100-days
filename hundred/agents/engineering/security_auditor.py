@@ -397,7 +397,7 @@ def lint_risky_code(source: str, language: Literal["auto", "python", "javascript
             findings.append({"line": ln, "rule": name, "cwe": cwe, "severity": sev, "code": line_text.strip()[:160], "fix": fix})
     uniq = {}
     for f in findings:
-        uniq.setdefault((f["line"], f["rule"]), f)
+        uniq.setdefault((f["line"], f["cwe"]), f)  # one finding per sink line and weakness
     findings = sorted(uniq.values(), key=lambda f: ({"high": 0, "medium": 1, "low": 2}[f["severity"]], f["line"]))
     counts = Counter(f["severity"] for f in findings)
     score = max(0, 100 - 20 * counts["high"] - 8 * counts["medium"] - 2 * counts["low"])
