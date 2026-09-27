@@ -224,7 +224,7 @@ industry: saas, fintech (w4) · size: 51-500 (w4) · seniority: vp, director (w3
 ## What changed since Aug 25
 In-period $645,000 → $545,000: won $40k (Juniper), lost $70k (Lumen), pushed out $30k (Oriole), pulled in $52k (Harbor), vanished $22k (Pax)
 ## By rep  Dana $150,000 · Luis $86,500 · Priya $0
-## Calibration  4 quarters over-forecast by 11.1% → ×0.907 = $214,506 → plan for a ~$75k-85k miss
+## Calibration  4 quarters over-forecast by 11.1% → ×0.907 = $214,506 → against the $290k gap, plan for a ~$75k miss
 ```
 
 **Remaining gaps.** No activity capture or ML. Close-date history ("slipped twice") must be supplied as `slips`. No dashboard.
@@ -405,7 +405,7 @@ Style read (guess): analytical — leads with a comparison and a justification p
 12 clerks × 4 h/week × 48 weeks × $38 = $87,552 + $9,000 errors avoided = $96,552/yr on a $38,400 price
 → ROI 151% steady-state (128% year 1), payback 5.3 months, each month of waiting ≈ $8,046. Break-even: 1.75 h/clerk/week.
 Price: $12.80 per clerk per working day; +$18,600/yr vs Tipalti buys back ~2,300 clerk-hours.
-## Response (email, 96 words)
+## Response (email, 76 words)
 Fair challenge — Tipalti is cheaper on licence. The comparison that matters for your CFO is total cost: your team
 estimated ~4 hours a week per clerk still goes to manual coding. Across 12 clerks that's about $87k a year, plus
 ~$9k in duplicate payments. At $38.4k we pay back in about 5 months. Would it help if I put those numbers into a
@@ -452,7 +452,7 @@ one-page CFO summary using your own inputs, and we review it together Thursday?
 Cheap gives: 10 extra seats, net-60 · Protect: 99.95% SLA · Pairs: if seats → case study + reference; if net-60 → annual prepay
 ## Script
 _Style read (guess): direct — short procurement emails, a single number ask._
-**Open:** restate the agreed value, hold $120k with its reason (9-clinic scope). Never go above it.
+**Open:** restate the agreed value, hold $120k with its reason (the scope and SLA it prices). Never go above it.
 **When they ask for 25%:** silence → "What would the 25% need to buy you?" → "If you can prepay annually, I can get to $108,603."
 **Walk-away line:** "Below $96k we'd both be better served by the other quote — the door stays open."
 ```
@@ -479,7 +479,7 @@ _Style read (guess): direct — short procurement emails, a single number ask._
 | Headline claim below the name line | found | found | missed ✗ |
 | Pitchy note length | 214 chars | 214 | 214 |
 | Fits a free account (LinkedIn help: 200 chars) | no, over by 14 | fits = false, over_by 14 | "fits" (limit 300) ✗ |
-| Rewritten note | 150 chars ≤ 200 | 150, score 100 | — |
+| Rewritten note | 148 chars ≤ 200 | 148, score 100 | — |
 | Touch dates (8) | 10-05, 10-06, 10-08, 10-13, 10-15, 10-19, 10-23, 10-26 | same | same |
 | Enrolment 140 at 20/day | 7 business days, last cohort 10-14 | same | same |
 | Capacity for 12 meetings | ⌈12 / (0.35×0.25×0.30)⌉ = 458 invites, 5 weeks, 2 accounts/month | same | same |
@@ -488,10 +488,10 @@ _Style read (guess): direct — short procurement emails, a single number ask._
 ```
 ## Hook
 New role: VP Marketing at Quillbase since Jul 2026 (~3 months) — plus her post: "MQLs are a vanity metric… cut our MQL target by 40%"
-## Connection note (150/200 chars — fits free and Premium)
+## Connection note (148/200 chars — fits free and Premium)
 Rachel, your post on cutting the MQL target 40% and still growing pipeline stuck with me. Curious what replaced MQLs on your dashboard at Quillbase.
-## Message 1 — after acceptance (196 chars)
-Thanks for connecting, Rachel. Congrats on the first quarter at Quillbase. When you swapped the MQL target for pipeline quality, what did you start measuring instead, and who owns that number now?
+## Message 1 — after acceptance (166 chars, score 100)
+Thanks for connecting, Rachel. Congrats on the first quarter at Quillbase. When you swapped the MQL target for pipeline quality, what did you start measuring instead?
 ## Touch plan
 | 0 | Mon 10-05 | LinkedIn | view + comment on the MQL post |  1 | Tue 10-06 | connect |
 | 3 | Thu 10-08 | message 1 | 6 | Tue 10-13 | message 2 (Oct 12 holiday) | 10 | Thu 10-15 | email bridge |
@@ -500,7 +500,6 @@ Thanks for connecting, Rachel. Congrats on the first quarter at Quillbase. When 
 140 prospects at 20/day = 7 business days (last cohort 10-14). 12 meetings ≈ 458 invites = 5 weeks on one
 account → split across 2 reps or move part of the list to email.
 ```
-(Message 1 as first drafted carried two questions. The playbook allows one; the checker allows up to two, so tighten it by hand.)
 
 **Remaining gaps.** Everything Sales Navigator is paid for (search, filters across the member base, alerts, InMail credits) is data we don't have, hence **BELOW** on the overlapping job. Some third-party guides state 300 chars for all accounts; LinkedIn's own help page states 200. The tool follows LinkedIn and exposes `premium`.
 

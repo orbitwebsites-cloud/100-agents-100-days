@@ -32,7 +32,7 @@ workspaces and version history.
 | ux-writer | Frontitude UX Writing Assistant seat, $25/mo | 5 / 6 | 15/15 planted copy problems found, 0 false positives, 5/5 decoys clean (before: 11/15, 5 FP). Localisation checked against 18 real UI translations: the old estimate came in too short on 9/18; the new layout budget on 2/18 | **AT PAR** | 7: Title Case detection ("Log In"); nouns used as verbs on buttons ("Logout"); "Are you sure?"; no false error codes or blame; inflection- and hyphen-aware synonym matching; sign-in/out pairing; W3C/IBM length budget; glossary block-list |
 | pitch-deck-coach | PitchBob AI deck feedback, $29.90 | 5 / 7 | TAM/SAM/SOM 648M / 226.8M / 6.804M and 1,418 customers by hand. Dilution 20.83%, effective pre-money $8.3M, runway 15.9 mo (= ln 1.6 / ln 1.03), 18-month need $3,278,021, all by hand. Structure 12/12 with the AI's slide types | **AT PAR** | 5: `slide_types` (claim-style titles no longer reported "missing"); word-boundary section matching; `existing_cash` and burn-growth-aware raise advice; TAM ratio wording; "we only need 1% of the market" flag |
 
-Test summary: `pytest -q tests/agents -k product tests/scenarios/test_product.py` → 161 passed;
+Test summary: `pytest -q tests/agents -k product tests/scenarios/test_product.py` → 159 passed;
 `pytest -q tests/test_library.py` → 303 passed.
 
 **Where a plain AI (no tools) would likely slip: not measured.** We did not run a no-tools baseline, so
@@ -47,7 +47,7 @@ tools before they were fixed):
 
 **Core/lib notes (described, not edited).**
 - `python -m hundred.admin brief … | head` raises `BrokenPipeError` in `hundred/admin.py` (cosmetic).
-- The tests deselected by `-k product` grew between runs (888 → 968) because other categories were being edited in parallel. No product test was affected.
+- The tests deselected by `-k product` grew between runs (888 → 969) because other categories were being edited in parallel. No product test was affected.
 
 ---
 
@@ -184,7 +184,7 @@ By segment: Pro 25.5 (±23, n=47) · Starter n=27 and Enterprise n=6 — not rep
    "Takes 10 seconds to load a project, my team gave up waiting." (Pro, 5)
 2. Export crashes / truncation — 5 (7.5%) — 2.8 vs 7.63 — 100% (25% of detractors)
    "Export to CSV crashes the app every single time." (Pro, 0)
-3. Pricing: the Starter→Pro step — 9 (13.4%) — 6.22 vs 7.43 — 44%; 8 of 9 are Starter
+3. Pricing: the Starter→Pro step — 9 (13.4%) — 6.22 vs 7.43 — 44%; 7 of 9 are Starter
 ## Top praise (say this in marketing)
 - Support — 8 responses, mean 9.5 · Ease of use — 12, mean 9.2 · Templates — 6, mean 9.5
 ## Fix list (ranked)
