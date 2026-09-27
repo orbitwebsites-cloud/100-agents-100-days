@@ -282,6 +282,9 @@ def score_against_profile(draft: str, profile: dict, banned_terms: list[str] = [
         if target is None or actual is None:
             continue
         band = abs(target) * tol if kind == "rel" else tol
+        if key.endswith("_per_100"):
+            # One extra "?" or "!" in a short draft is not a drift: widen the band to one occurrence.
+            band = max(band, 100 / max(1, m["words"]))
         diff = actual - target
         if abs(diff) > band:
             severity = min(3.0, abs(diff) / band)

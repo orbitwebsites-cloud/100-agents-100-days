@@ -337,8 +337,15 @@ def format_jtbd(situation: str, motivation: str, outcome: str, persona: str = ""
     mw = text.words(mot)
     if mw and mw[0].lower().endswith("ing"):
         lint.append("Motivation should start with a base verb ('reconcile', not 'reconciling').")
-    ow = set(w.lower() for w in text.words(out)) - text.STOPWORDS
-    mwset = set(w.lower() for w in mw) - text.STOPWORDS
+    def stem(w: str) -> str:
+        w = w.lower()
+        for suf in ("ing", "ed", "es", "s"):
+            if len(w) > len(suf) + 3 and w.endswith(suf):
+                return w[: -len(suf)]
+        return w
+
+    ow = {stem(w) for w in text.words(out) if w.lower() not in text.STOPWORDS}
+    mwset = {stem(w) for w in mw if w.lower() not in text.STOPWORDS}
     if ow and mwset and len(ow & mwset) / len(ow | mwset) > 0.5:
         lint.append("Outcome restates the motivation — the outcome is the bigger progress (why it matters).")
     if not re.search(r"\b(without|before|faster|less|more|confident|sure|avoid|stop|never|keep|show|prove|hit|on time|in time)\b", out, re.I) and not re.search(r"\d", out):
