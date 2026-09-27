@@ -168,7 +168,7 @@ def extract_requirements(job_description: str, top_n: int = 3) -> dict:
         job_description: Full job description text.
         top_n: How many requirements the letter should answer directly (default 3, max 5).
     """
-    require_text(job_description, "job_description")
+    require_text(job_description, "job_description", max_chars=60_000)
     if not 1 <= top_n <= 5:
         raise ToolError("top_n must be between 1 and 5 — a letter can't answer more than five deeply.")
     reqs = split_requirements(job_description)
@@ -231,7 +231,7 @@ def requirement_coverage(letter: str, requirements: list[str]) -> dict:
         letter: The cover letter draft.
         requirements: The requirement texts to check (the top 3-5 from extract_requirements).
     """
-    require_text(letter, "letter")
+    require_text(letter, "letter", max_chars=20_000)
     require_list(requirements, "requirements", max_items=20)
     reqs = [str(r) for r in requirements if str(r).strip()]
     if not reqs:
@@ -260,7 +260,7 @@ def check_letter(letter: str, job_description: str = "", company: str = "", role
         company: Company name as it should appear (optional; checked for presence).
         role: Job title as posted (optional; checked for presence).
     """
-    require_text(letter, "letter")
+    require_text(letter, "letter", max_chars=20_000)
     sents = text.sentences(letter)
     n_words = len(text.words(letter))
     i_starts = sum(1 for s in sents if I_START_RE.match(s))

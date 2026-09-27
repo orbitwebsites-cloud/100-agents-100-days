@@ -205,7 +205,7 @@ def check_inclusive_language(job_description: str) -> dict:
     Args:
         job_description: The full posting text.
     """
-    require_text(job_description, "job_description")
+    require_text(job_description, "job_description", max_chars=60_000)
     masc = scan_lexicon(job_description, MASCULINE)
     fem = scan_lexicon(job_description, FEMININE)
     excl = scan_lexicon(job_description, EXCLUSIONARY)
@@ -266,7 +266,7 @@ def check_structure(job_description: str) -> dict:
     Args:
         job_description: The full posting text.
     """
-    require_text(job_description, "job_description")
+    require_text(job_description, "job_description", max_chars=60_000)
     jd = job_description
     low = jd.lower()
     n_words = len(text.words(jd))

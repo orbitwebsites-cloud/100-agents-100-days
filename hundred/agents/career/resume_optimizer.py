@@ -215,8 +215,8 @@ def match_keywords(resume: str, job_description: str, job_title: str = "") -> di
         job_description: Full job description text.
         job_title: The posting's title, e.g. "Senior Product Manager" (optional; used for the title check).
     """
-    require_text(resume, "resume")
-    require_text(job_description, "job_description")
+    require_text(resume, "resume", max_chars=60_000)
+    require_text(job_description, "job_description", max_chars=60_000)
     jd_terms = extract_skill_terms(job_description)
     if not jd_terms:
         raise ToolError("No skill/keyword terms found in the job description — paste the full posting, including requirements.")
@@ -392,7 +392,7 @@ def check_ats_format(resume: str, years_experience: float = -1) -> dict:
         resume: Full resume text, pasted as plain text (copy from the document).
         years_experience: Candidate's total years of experience, for the page-count rule. Omit if unknown.
     """
-    require_text(resume, "resume")
+    require_text(resume, "resume", max_chars=60_000)
     lines = [ln for ln in resume.splitlines()]
     n_words = len(text.words(resume))
     pages = round(n_words / 550, 1)

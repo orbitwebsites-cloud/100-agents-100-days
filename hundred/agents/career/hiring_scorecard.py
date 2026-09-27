@@ -424,7 +424,7 @@ def check_feedback_bias(feedback: str, interviewer: str = "") -> dict:
         feedback: The interviewer's written feedback text.
         interviewer: Interviewer name (optional; echoed in the report).
     """
-    require_text(feedback, "feedback")
+    require_text(feedback, "feedback", max_chars=30_000)
     sents = text.sentences(feedback)
     n = len(sents) or 1
     evidence = [s for s in sents if EVIDENCE_RE.search(s)]

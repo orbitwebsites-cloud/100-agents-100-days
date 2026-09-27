@@ -254,7 +254,7 @@ def check_review_language(review: str, cycle_start: str = "", cycle_end: str = "
         cycle_start: Review period start, YYYY-MM-DD (optional, needed for the recency check).
         cycle_end: Review period end, YYYY-MM-DD (optional, needed for the recency check).
     """
-    require_text(review, "review")
+    require_text(review, "review", max_chars=60_000)
     personality = scan_lexicon(review, PERSONALITY)
     vague = scan_lexicon(review, VAGUE_PRAISE)
     absolutes = ABSOLUTE_RE.findall(review)

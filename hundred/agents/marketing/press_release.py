@@ -179,11 +179,11 @@ def ap_style_check(content: str) -> dict:
     # Months with a date should be abbreviated (Jan., Feb., Aug., Sept., Oct., Nov., Dec.)
     for m in re.finditer(r"\b(January|February|August|September|October|November|December)\s+\d{1,2}\b", t):
         add("dates: abbreviate month with a date", m, f"'{m.group(1)}' → '{MONTHS_ABBR[m.group(1).lower()]}'")
-    for m in re.finditer(r"\b(Jan|Feb|Aug|Sept|Sep|Oct|Nov|Dec)\b(?!\.)\s+\d{1,2}\b", t):
+    for m in re.finditer(r"\b(Jan|Feb|Aug|Sept|Sep|Oct|Nov|Dec)\b(?!\.)\s+\d{1,2}(?:st|nd|rd|th)?\b", t):
         add("dates: month abbreviation needs a period", m, f"'{m.group(1)}' → '{m.group(1)}.'")
-    for m in re.finditer(r"\b(Mar|Apr|Jun|Jul)\.?\s+\d{1,2}\b", t):
+    for m in re.finditer(r"\b(Mar|Apr|Jun|Jul)\.?\s+\d{1,2}(?:st|nd|rd|th)?\b", t):
         add("dates: March, April, June, July are never abbreviated", m, "Spell out the month.")
-    for m in re.finditer(r"\b(Jan\.|Feb\.|Aug\.|Sept\.|Oct\.|Nov\.|Dec\.|March|April|May|June|July)\s+(\d{1,2})(st|nd|rd|th)\b", t):
+    for m in re.finditer(r"\b(Jan|Feb|Aug|Sept|Sep|Oct|Nov|Dec|March|April|May|June|July)\.?\s+(\d{1,2})(st|nd|rd|th)\b", t):
         add("dates: no ordinal suffixes", m, f"'{m.group(2)}{m.group(3)}' → '{m.group(2)}'")
     for m in re.finditer(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", t):
         add("dates: write out the date", m, "Use 'Oct. 5, 2026' style, not 10/5/2026.")
@@ -399,16 +399,13 @@ def pitch_email_check(subject: str, body: str, journalist_name: str = "", outlet
         issues.append(f"{n} words — cut to ≤ 150")
         fixes.append("Three short paragraphs: personal line, the news + why their readers care, the ask.")
     first_para = re.split(r"\n\s*\n|\n", b.strip())[0]
-    personal = False
-    if journalist_name and re.search(rf"\b{re.escape(journalist_name.split()[0])}\b", first_para):
-        personal = True
-    if re.search(r"\b(your (piece|story|article|coverage|column|newsletter|reporting|post|episode)|you wrote|you covered|you reported|loved your|read your)\b", b, re.I):
-        personal = True
+    named = bool(journalist_name and re.search(rf"\b{re.escape(journalist_name.split()[0])}\b", first_para))
+    personal = bool(re.search(r"\b(your (piece|story|article|coverage|column|newsletter|reporting|post|episode|interview)|you wrote|you covered|you reported|loved your|read your)\b", b, re.I))
     if outlet and re.search(rf"\b{re.escape(outlet)}\b", b, re.I):
         personal = True
     if not personal:
-        score -= 25
-        issues.append("no personalisation — nothing shows you read their work")
+        score -= 12 if named else 25
+        issues.append("names them but nothing shows you read their work" if named else "no personalisation — nothing shows you read their work")
         fixes.append("First line: reference a specific recent piece and why this fits it.")
     if re.search(r"\b(hope (this|you)|i hope you're well|hope you are well|to whom it may concern|dear (sir|madam|journalist|editor))\b", b, re.I):
         score -= 10
