@@ -30,8 +30,11 @@ def test_countdown_timeline_compresses_and_warns():
     assert any("Saturday" in w for w in out["warnings"])
     assert any("compressed" in w for w in out["warnings"])
     assert max(m["t_minus_business_days"] for m in out["milestones"]) <= 10
-    overdue = call("countdown_timeline", launch_date="2026-11-12", size="small", today="2026-11-05")
+    overdue = call("countdown_timeline", launch_date="2026-11-12", size="small", today="2026-11-05", plan_start="2026-10-01")
+    assert overdue["compressed"] is False and overdue["business_days_left"] == 5
     assert "Positioning and message locked" in overdue["overdue"]  # T-10 business days = Oct 29
+    with pytest.raises(ToolError):
+        call("countdown_timeline", launch_date="2026-11-12", today="2026-10-01", plan_start="2026-10-05")
 
 
 def test_countdown_timeline_rejects_past_launch():
