@@ -27,7 +27,7 @@ Every scenario can be replayed with `pytest tests/scenarios/test_engineering.py`
 
 (M = MATCHES, P = PARTIAL, Miss = MISSING, OOS = OUT OF SCOPE. "Above" = a documented capability we exceed.)
 
-**Totals.** 16 defects found and fixed in the tools, 1 playbook claim tightened (code-reviewer's scan scope), 2 playbooks extended (bug-hunter chain semantics, test-writer raise sites). No agent is BELOW on its core overlapping job after the fixes. Where a BELOW remains, it is breadth: linter/SCA suites, dataflow analysis, oasdiff's long tail of checks. None of those can be fixed cheaply in deterministic stdlib code.
+**Totals.** 22 tool defects found and fixed across all 10 agents (each listed in the Fixes column), 1 playbook claim tightened (code-reviewer's scan scope), 2 playbooks extended (bug-hunter chain semantics, test-writer raise sites). No agent is BELOW on its core overlapping job after the fixes. Where a BELOW remains, it is breadth: linter/SCA suites, dataflow analysis, oasdiff's long tail of checks. None of those can be fixed cheaply in deterministic stdlib code.
 
 **Test runs.**
 - `pytest -q tests/agents -k engineering tests/scenarios/test_engineering.py`: **219 passed**
