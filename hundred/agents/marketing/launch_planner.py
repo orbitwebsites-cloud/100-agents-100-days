@@ -158,24 +158,29 @@ MIN_RUNWAY = {"small": 10, "medium": 30, "large": 50}
 
 
 @AGENT.tool
-def countdown_timeline(launch_date: str, size: Size = "medium", today: str = "", holidays: list[str] = []) -> dict:
+def countdown_timeline(launch_date: str, size: Size = "medium", today: str = "", plan_start: str = "", holidays: list[str] = []) -> dict:
     """Dated T-minus milestones for a launch, computed on business days from the launch date and flagged when runway is short.
 
-    Call first. Milestones landing before today are marked overdue; a runway below the size's minimum triggers compression advice.
+    Call first. Runway is measured from plan_start (the day the plan was made; defaults to today) and milestones are
+    compressed if it is below the size's minimum. Re-run later with the same plan_start and a new today to see what is overdue.
 
     Args:
         launch_date: Launch date as YYYY-MM-DD.
         size: small (minor feature), medium (headline feature), large (new product / big campaign).
-        today: Today's date as YYYY-MM-DD (defaults to the real today).
+        today: Today's date as YYYY-MM-DD (defaults to the real today); milestones before it are marked overdue.
+        plan_start: The date the plan was first built, YYYY-MM-DD (defaults to today). Keeps milestones fixed on re-runs.
         holidays: Dates to treat as non-working days (YYYY-MM-DD).
     """
     launch = dates.parse_date(launch_date)
     base = dates.parse_date(today) if today else date.today()
+    anchor = dates.parse_date(plan_start) if plan_start else base
+    if anchor > base:
+        raise ToolError("plan_start cannot be after today.")
     hol = {dates.parse_date(h) for h in holidays}
     if size not in MIN_RUNWAY:
         raise ToolError("size must be small, medium or large.")
-    runway = dates.business_days_between(base, launch, hol)
-    if runway < 0:
+    runway = dates.business_days_between(anchor, launch, hol)
+    if launch < base:
         raise ToolError(f"Launch date {launch_date} is before today ({base.isoformat()}).")
     need = MIN_RUNWAY[size]
     warnings = []
