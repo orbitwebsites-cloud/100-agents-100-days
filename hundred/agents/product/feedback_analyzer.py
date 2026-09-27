@@ -296,10 +296,13 @@ def driver_analysis(tagged_rows: list[dict], min_n: int = 10) -> dict:
     rows = check_rows(tagged_rows, "tagged_rows", 5000)
     if not isinstance(min_n, int) or min_n < 1:
         raise ToolError("min_n must be a positive integer.")
-    scored = []
+    scored, skipped = [], 0
     for i, r in enumerate(rows):
-        if not isinstance(r, dict) or r.get("score") is None:
+        if not isinstance(r, dict):
             raise ToolError(f"tagged_rows[{i}] needs 'themes' and a numeric 'score'.")
+        if r.get("score") is None:
+            skipped += 1  # e.g. count_themes rows whose response had no score
+            continue
         themes = r.get("themes") or []
         if not isinstance(themes, list):
             raise ToolError(f"tagged_rows[{i}].themes must be a list.")
@@ -324,6 +327,7 @@ def driver_analysis(tagged_rows: list[dict], min_n: int = 10) -> dict:
     positives = [r for r in out if r["gap"] > 0.5]
     return {
         "responses": len(scored),
+        "skipped_unscored": skipped,
         "overall_mean": round(overall_mean, 2),
         "overall_detractor_pct": round(100 * overall_det, 1),
         "drivers": out,

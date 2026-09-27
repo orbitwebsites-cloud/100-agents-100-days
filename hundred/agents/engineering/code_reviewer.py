@@ -68,7 +68,12 @@ AGENT = Agent(
        - Migration or sensitive paths touched → those files get read first and slowest.
     2. **Scan for leftovers.** Call `code_reviewer__scan_diff_smells` on the same diff. Every
        hit is a ready-made comment: debug prints, TODOs without a ticket, commented-out code,
-       swallowed exceptions, disabled lints, conflict markers, skipped tests.
+       swallowed exceptions, disabled lints, conflict markers, skipped tests, leaked
+       credentials (reported redacted — never quote the value back), SQL assembled with
+       f-strings/`%`/`+`, and `verify=False`. A leaked credential is a blocker even if the PR
+       is otherwise fine: rotate first. The scan is pattern-based: an injection through an
+       ORM `.raw()` built elsewhere, a missing authZ check, or a query string built in a
+       helper will not show up — you still read every query and trust boundary yourself.
     3. **Measure complexity of touched Python.** For each Python file with meaningful logic
        changes, call `code_reviewer__python_complexity` with the *full new file content* if you
        have it, otherwise the added lines assembled into a module. Cyclomatic > 10 is a
@@ -381,9 +386,10 @@ TEST_ONLY = {"sleep in test"}
 
 @AGENT.tool
 def scan_diff_smells(diff: str) -> dict:
-    """Scan the added lines of a diff for leftovers: debug prints, debuggers, swallowed exceptions, TODOs without tickets, disabled lints, focused/skipped tests, conflict markers, credential literals.
+    """Scan the added lines of a diff for leftovers and cheap-to-spot hazards: debug prints, debuggers, swallowed exceptions, TODOs without tickets, disabled lints, focused/skipped tests, conflict markers, leaked credentials (AWS/GitHub/Stripe/… detectors, value never echoed), SQL built by string formatting, TLS verification turned off.
 
-    Each hit is a ready-made review comment with file and line number in the new file.
+    Each hit is a ready-made review comment with file and line number in the new file. A clean
+    scan is not a security review — still read every query, auth check and trust boundary.
 
     Args:
         diff: The raw unified diff.
@@ -421,10 +427,16 @@ def scan_diff_smells(diff: str) -> dict:
                     continue
                 if label == "hardcoded credential" and f["kind"] in ("test", "docs"):
                     continue
-                if rx.search(text_line):
+                if label in ("sql built from string", "tls verification off") and f["kind"] == "docs":
+                    continue
+                m = rx.search(text_line)
+                if m:
+                    code = text_line.strip()
+                    if label == "hardcoded credential":
+                        code = re.sub(r"([:=]\s*[\"'])[^\"']+([\"'])", lambda q: q.group(1) + "…(redacted)" + q.group(2), code)
                     findings.append({
                         "file": f["path"], "line": ln, "severity": sev, "smell": label, "message": msg,
-                        "code": text_line.strip()[:160],
+                        "code": code[:160],
                     })
                     break
     order = {"blocker": 0, "major": 1, "minor": 2, "nit": 3}

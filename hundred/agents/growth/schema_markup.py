@@ -196,7 +196,12 @@ def _date(v, name: str, warnings: list[str]) -> str | None:
     s = str(v).strip()
     if ISO_DATE.match(s):
         return s
-    for fmt in ("%Y-%m-%d %H:%M", "%d/%m/%Y", "%m/%d/%Y", "%B %d, %Y", "%d %B %Y", "%b %d, %Y"):
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)
+    if m and int(m.group(1)) <= 12 and int(m.group(2)) <= 12 and m.group(1) != m.group(2):
+        us = datetime.strptime(s, "%m/%d/%Y").strftime("%Y-%m-%d")
+        warnings.append(f"{name}: {s!r} is ambiguous (US month/day → {us}; day/month → {datetime.strptime(s, '%d/%m/%Y').strftime('%Y-%m-%d')}). Read as US {us}; pass ISO 8601 to be sure.")
+        return us
+    for fmt in ("%Y-%m-%d %H:%M", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%d %B %Y", "%b %d, %Y"):
         try:
             return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
         except ValueError:
