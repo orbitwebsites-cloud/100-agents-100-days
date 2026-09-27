@@ -113,3 +113,16 @@ def test_campaign_metrics_rejects_impossible_counts():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("campaign_metrics").call({"sent": "many", "delivered": 1})
+
+
+def test_subject_punctuation_and_caps_words_flagged():
+    out = call("test_subject_line", subject="Hey! Big news: new plans, new prices?")
+    assert any("punctuation marks" in f for f in out["primary"]["flags"])  # ! : , ? = 4 > 3 (Mailchimp: ≤ 3)
+    caps = call("test_subject_line", subject="Your FREE guide to cafe margins")
+    assert any("ALL-CAPS word: FREE" in f for f in caps["primary"]["flags"])
+    assert not any("ALL-CAPS" in f for f in call("test_subject_line", subject="Our FAQ on ROI for SaaS teams")["primary"]["flags"])
+
+
+def test_merge_tokens_with_fallbacks_are_parsed():
+    out = call("scan_email_body", body="Hi {{ frist_name | default: \"there\" }} and *|FNAME|*. [Go] unsubscribe 1 Main Street", available_fields=["first_name", "fname"])
+    assert out["merge_tokens"] == ["FNAME", "frist_name"] and out["undefined_tokens"] == ["frist_name"]

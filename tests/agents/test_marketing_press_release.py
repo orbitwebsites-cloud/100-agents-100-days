@@ -125,3 +125,12 @@ def test_embargo_timing_rejects_naive_datetime():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("embargo_timing").call({"embargo_lift": 20261013})
+
+
+def test_embargo_et_window_uses_real_dst_dates():
+    # 2027-11-03 10:30 UTC is 06:30 EDT (DST ends 2027-11-07) — inside the 6-10 a.m. ET window.
+    out = call("embargo_timing", embargo_lift="2027-11-03T10:30:00+00:00", audience_utc_offsets=[-4])
+    assert not any("ET —" in w for w in out["warnings"])
+    # 2026-11-04 10:30 UTC is 05:30 EST (DST ended 2026-11-01) — before the window.
+    out = call("embargo_timing", embargo_lift="2026-11-04T10:30:00+00:00", audience_utc_offsets=[-5])
+    assert any("05:30 ET" in w for w in out["warnings"])

@@ -68,8 +68,18 @@ def test_sample_size_rejects_impossible_target():
 def test_alpha_correction_pocock_and_bonferroni():
     out = call("alpha_correction", looks=10)
     assert out["bonferroni_alpha_per_test"] == 0.005
-    assert out["pocock_alpha_per_look"] == 0.0106
-    assert out["naive_false_positive_rate_pct"] == 19.3
+    assert out["pocock_alpha_per_look"] == pytest.approx(0.0106, abs=1e-4)  # Pocock (1977) table
+    # Armitage, McPherson & Rowe (1969) print 0.193 (3 d.p.); exact numerical integration gives 0.1937.
+    assert out["naive_false_positive_rate_pct"] == 19.4
+    # Beyond the old 10-look table: exact boundaries, not a Bonferroni fallback (Jennison & Turnbull: C_P(20) = 2.672 → 0.0075).
+    twenty = call("alpha_correction", looks=20)
+    assert twenty["pocock_alpha_per_look"] == pytest.approx(0.00754, abs=5e-5)
+    assert twenty["recommended_alpha"] > twenty["bonferroni_alpha_per_test"]
+    # Other α values: the α=0.10 boundary is tabulated, α=0.03 is interpolated between 0.01 and 0.05.
+    assert call("alpha_correction", looks=5, alpha=0.10)["pocock_alpha_per_look"] > call("alpha_correction", looks=5)["pocock_alpha_per_look"]
+    mid = call("alpha_correction", looks=5, alpha=0.03)
+    assert 0.00282 < mid["pocock_alpha_per_look"] < 0.0158 and "interpolated" in mid["note"]
+    assert call("alpha_correction", looks=80)["pocock_alpha_per_look"] is None  # > 50 looks → Bonferroni, flagged
     multi = call("alpha_correction", looks=1, variants=4)
     assert abs(multi["bonferroni_alpha_per_test"] - 0.05 / 3) < 1e-5
     assert abs(multi["sidak_alpha_per_test"] - (1 - 0.95 ** (1 / 3))) < 1e-5

@@ -58,7 +58,8 @@ AGENT = Agent(
        Read the p-value, the CI on the relative lift, and the probability the variant beats
        control. A CI that spans zero means "not distinguishable", never "no effect".
     3. **Was the sample adequate?** Call `ab_test_analyst__sample_size` with the control
-       rate and the MDE the team cared about. If the achieved sample is below the required
+       rate and the MDE the team cared about (plus daily traffic and the start date, so it
+       returns the stop date you quote). If the achieved sample is below the required
        one, the test is underpowered — the readout must say the effect was "too small to
        detect at this sample", not "no effect".
     4. **Correct for how the test was actually run.** If the team looked more than once or
@@ -313,6 +314,42 @@ def sample_size(
     return out
 
 
+# Group-sequential boundaries for K equally spaced looks at a two-sided overall α, from recursive numerical
+# integration of the Brownian-motion crossing problem (Armitage, McPherson & Rowe 1969): for each α, entry
+# K-1 of the first tuple is Pocock's constant nominal per-look α, and of the second the false-positive rate
+# of a naïve "stop when p < α" rule. Reproduces Pocock (1977) — K=5: 0.0158, K=10: 0.0106 at α=0.05 — and
+# Armitage et al. — K=5: 0.142, K=10: 0.193, K=50: 0.321.
+_SEQ_TABLE: dict[float, tuple[tuple[float, ...], tuple[float, ...]]] = {
+    0.01: ((0.01, 0.005571, 0.004065, 0.0033, 0.002822, 0.0025, 0.00227, 0.002091, 0.001944, 0.001827, 0.001732, 0.001648, 0.001577, 0.001514, 0.00146, 0.001412, 0.001369, 0.001329, 0.001293, 0.00126, 0.001231, 0.001205, 0.001178, 0.001155, 0.001133, 0.001111, 0.001094, 0.001075, 0.001056, 0.001041, 0.001027, 0.001012, 0.000998, 0.000985, 0.000974, 0.000962, 0.00095, 0.000939, 0.000928, 0.00092, 0.00091, 0.0009, 0.000892, 0.000883, 0.000876, 0.000867, 0.00086, 0.000852, 0.000845, 0.000838), (0.01, 0.0177, 0.0236, 0.0285, 0.0327, 0.0363, 0.0395, 0.0424, 0.045, 0.0474, 0.0495, 0.0516, 0.0535, 0.0552, 0.0569, 0.0585, 0.0599, 0.0614, 0.0627, 0.064, 0.0652, 0.0664, 0.0675, 0.0686, 0.0697, 0.0707, 0.0717, 0.0726, 0.0735, 0.0744, 0.0753, 0.0761, 0.0769, 0.0777, 0.0785, 0.0792, 0.0799, 0.0806, 0.0813, 0.082, 0.0827, 0.0833, 0.0839, 0.0846, 0.0852, 0.0857, 0.0863, 0.0869, 0.0875, 0.088)),
+    0.05: ((0.05, 0.029411, 0.022063, 0.018216, 0.015826, 0.014182, 0.012937, 0.012003, 0.011225, 0.010622, 0.010103, 0.009647, 0.009284, 0.008942, 0.008638, 0.008369, 0.008139, 0.007923, 0.007731, 0.007535, 0.007383, 0.007218, 0.007086, 0.00695, 0.006828, 0.006709, 0.006606, 0.0065, 0.006411, 0.00632, 0.006233, 0.006149, 0.00607, 0.00599, 0.005935, 0.005862, 0.005795, 0.005732, 0.005674, 0.005616, 0.005563, 0.005514, 0.005464, 0.005408, 0.005366, 0.005322, 0.005277, 0.005237, 0.005192, 0.005157), (0.05, 0.0832, 0.1074, 0.1264, 0.142, 0.1552, 0.1666, 0.1767, 0.1857, 0.1937, 0.2011, 0.2079, 0.2142, 0.22, 0.2255, 0.2306, 0.2354, 0.2399, 0.2442, 0.2482, 0.2521, 0.2558, 0.2593, 0.2627, 0.266, 0.2691, 0.2721, 0.275, 0.2778, 0.2805, 0.2831, 0.2856, 0.2881, 0.2904, 0.2927, 0.295, 0.2971, 0.2992, 0.3013, 0.3033, 0.3053, 0.3072, 0.309, 0.3108, 0.3126, 0.3143, 0.316, 0.3176, 0.3192, 0.3208)),
+    0.1: ((0.1, 0.060742, 0.046438, 0.038751, 0.033858, 0.030493, 0.027942, 0.026067, 0.024505, 0.023175, 0.022143, 0.021222, 0.020439, 0.01968, 0.019106, 0.018543, 0.017988, 0.017551, 0.017131, 0.016761, 0.016392, 0.016059, 0.015793, 0.015498, 0.015232, 0.014993, 0.014753, 0.014519, 0.014327, 0.014133, 0.013955, 0.013782, 0.013629, 0.013458, 0.013305, 0.013148, 0.013021, 0.012888, 0.012772, 0.012627, 0.012507, 0.012417, 0.0123, 0.012187, 0.01208, 0.011999, 0.011907, 0.011813, 0.011724, 0.011638), (0.1, 0.1604, 0.2024, 0.2343, 0.26, 0.2813, 0.2994, 0.3153, 0.3293, 0.3419, 0.3532, 0.3635, 0.373, 0.3817, 0.3898, 0.3974, 0.4044, 0.4111, 0.4174, 0.4233, 0.4289, 0.4342, 0.4392, 0.4441, 0.4487, 0.4531, 0.4573, 0.4614, 0.4653, 0.4691, 0.4727, 0.4762, 0.4796, 0.4828, 0.486, 0.489, 0.492, 0.4948, 0.4976, 0.5003, 0.5029, 0.5055, 0.508, 0.5104, 0.5128, 0.5151, 0.5173, 0.5195, 0.5217, 0.5238)),
+}
+
+
+def _peeking_boundaries(looks: int, alpha: float) -> tuple[float | None, float, str]:
+    """(Pocock per-look α or None, naïve-peeking false-positive rate, basis note) for K looks at overall α."""
+    alphas = sorted(_SEQ_TABLE)
+    if looks > 50:
+        # Beyond the table: Bonferroni is conservative; the naïve rate keeps growing roughly with log(K).
+        edge = min(alphas, key=lambda a: abs(math.log(a) - math.log(alpha)))
+        naive = min(0.99, _SEQ_TABLE[edge][1][-1] * (1 + 0.1 * math.log(looks / 50)))  # rough: grows ~log K
+        return None, naive, "More than 50 looks: Bonferroni per look (conservative); naïve rate approximate. Use a sequential test instead of peeking."
+    k = looks - 1
+    if alpha in _SEQ_TABLE:
+        pc, nv = _SEQ_TABLE[alpha]
+        return pc[k], nv[k], "Pocock boundary, exact for equally spaced looks (numerical integration)."
+    if alphas[0] < alpha < alphas[-1]:
+        lo = max(a for a in alphas if a < alpha)
+        hi = min(a for a in alphas if a > alpha)
+        w = (math.log(alpha) - math.log(lo)) / (math.log(hi) - math.log(lo))
+        pc = math.exp((1 - w) * math.log(_SEQ_TABLE[lo][0][k]) + w * math.log(_SEQ_TABLE[hi][0][k]))
+        nv = math.exp((1 - w) * math.log(_SEQ_TABLE[lo][1][k]) + w * math.log(_SEQ_TABLE[hi][1][k]))
+        return pc, nv, f"Pocock boundary log-interpolated between α={lo} and α={hi} (approximate)."
+    edge = alphas[0] if alpha < alphas[0] else alphas[-1]
+    pc, nv = _SEQ_TABLE[edge]
+    return pc[k] * alpha / edge, min(1.0, nv[k] * alpha / edge), f"α outside 0.01-0.10: scaled from the α={edge} boundary (approximate)."
+
+
 @AGENT.tool
 def alpha_correction(looks: int = 1, variants: int = 2, alpha: float = 0.05) -> dict:
     """Corrected per-look and per-comparison alpha for peeking and multiple variants, with false-positive inflation.
@@ -334,29 +371,9 @@ def alpha_correction(looks: int = 1, variants: int = 2, alpha: float = 0.05) -> 
     tests = looks * comparisons
     bonferroni = alpha / tests
     sidak = 1 - (1 - alpha) ** (1 / tests)
-    # Pocock constant boundaries for α=0.05 two-sided (Pocock 1977); scaled for other alphas via ratio.
-    pocock_05 = {1: 0.05, 2: 0.0294, 3: 0.0221, 4: 0.0182, 5: 0.0158, 6: 0.0142, 7: 0.0130, 8: 0.0120, 9: 0.0112, 10: 0.0106}
-    pocock = pocock_05.get(looks)
-    if pocock is not None and alpha != 0.05:
-        pocock = round(pocock * alpha / 0.05, 5)
-    # Approximate family-wise error if you peek `looks` times with a naïve alpha rule
-    # (Armitage, McPherson & Rowe 1969 for α=0.05; independent-look upper bound otherwise).
-    armitage = {1: 0.05, 2: 0.083, 3: 0.107, 4: 0.126, 5: 0.142, 10: 0.193, 20: 0.246, 50: 0.320}
-    if alpha == 0.05 and looks in armitage:
-        naive_fwer_peeking = armitage[looks]
-    else:
-        keys = sorted(armitage)
-        lo = max(k for k in keys if k <= looks)
-        hi = min((k for k in keys if k >= looks), default=None)
-        if hi is None:
-            naive_fwer_peeking = min(0.6, armitage[50] + 0.02 * math.log(looks / 50 + 1))
-        elif lo == hi:
-            naive_fwer_peeking = armitage[lo]
-        else:
-            naive_fwer_peeking = armitage[lo] + (armitage[hi] - armitage[lo]) * (looks - lo) / (hi - lo)
-        if alpha != 0.05:
-            naive_fwer_peeking = min(1.0, naive_fwer_peeking * alpha / 0.05)
+    pocock, naive_fwer_peeking, basis = _peeking_boundaries(looks, alpha)
     naive_fwer_total = 1 - (1 - naive_fwer_peeking) ** comparisons
+    recommended = pocock / comparisons if pocock else bonferroni
     return {
         "looks": looks,
         "variants": variants,
@@ -365,13 +382,13 @@ def alpha_correction(looks: int = 1, variants: int = 2, alpha: float = 0.05) -> 
         "naive_false_positive_rate_pct": round(100 * naive_fwer_total, 1),
         "bonferroni_alpha_per_test": round(bonferroni, 5),
         "sidak_alpha_per_test": round(sidak, 5),
-        "pocock_alpha_per_look": pocock,
-        "recommended_alpha": round(pocock / comparisons if pocock else bonferroni, 5),
+        "pocock_alpha_per_look": round(pocock, 5) if pocock else None,
+        "recommended_alpha": round(recommended, 5),
         "verdict": (
-            f"With {looks} look(s) and {comparisons} comparison(s), a naïve p<{alpha} rule yields ~{100 * naive_fwer_total:.0f}% false positives. "
-            f"Require p < {round(pocock / comparisons if pocock else bonferroni, 4)} instead."
+            f"With {looks} equally spaced look(s) and {comparisons} comparison(s), a naïve p<{alpha} rule yields ~{100 * naive_fwer_total:.0f}% false positives. "
+            f"Require p < {round(recommended, 4)} at every look instead."
         ),
-        "note": "Pocock boundaries are tabulated up to 10 looks; beyond that Bonferroni is used (conservative).",
+        "note": basis,
     }
 
 

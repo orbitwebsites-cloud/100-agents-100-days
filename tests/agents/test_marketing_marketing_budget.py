@@ -115,3 +115,17 @@ def test_growth_projection_rejects_zero_cac():
 def test_bad_arguments_raise_clean_error():
     with pytest.raises(ToolError):
         A.get_tool("pacing_check").call({"budget": "big", "spent_to_date": 1, "period_start": "2026-10-01", "period_end": "2026-10-31"})
+
+
+def test_growth_projection_breakeven_can_be_month_one_and_cohort_is_separate():
+    out = call("growth_projection", monthly_budget=10000, cac=200, arpu_monthly=50, gross_margin_pct=80, monthly_churn_pct=5, months=6, starting_customers=1000)
+    assert out["breakeven_month"] == 1  # 1,000 existing customers already cover the spend
+    assert out["acquired_cohort_breakeven_month"] is None or out["acquired_cohort_breakeven_month"] > 1
+    inflated = call("growth_projection", monthly_budget=10000, cac=200, arpu_monthly=50, gross_margin_pct=80, monthly_churn_pct=5, months=6, cac_inflation_pct_per_month=10)
+    assert inflated["steady_state_customers"] == round(10000 / inflated["projection"][-1]["cac"] / 0.05)
+
+
+def test_allocation_minimum_is_a_floor_not_an_extra():
+    out = call("allocate_budget", total=10000, channels=[{"channel": "A", "weight": 1, "min": 2000, "tag": "core"}, {"channel": "B", "weight": 1, "tag": "core"}])
+    amt = {r["channel"]: r["amount"] for r in out["allocation"]}
+    assert amt == {"A": 5000.0, "B": 5000.0}  # equal weights → equal split; A's 2,000 floor doesn't bind
