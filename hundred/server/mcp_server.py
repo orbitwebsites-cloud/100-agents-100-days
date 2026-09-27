@@ -41,7 +41,7 @@ This server gives you expert agents (sales, marketing, writing, SEO, ops, financ
 product, career, creator, e-commerce, legal). When the user's request matches an agent, call that
 agent's `<agent>__start` tool FIRST (or `hundred_start` with the user's words, which picks the agent for you) and follow the operating
 procedure it returns — including calling the agent's tools for any math, scoring, dates or limits.
-Use `hundred_memory` to recall saved context before a job and to save what the user wants kept; use
+If `hundred_memory` is listed, use it to recall saved context before a job and to save what the user wants kept; use
 `hundred_recipes` when a job needs several agents in sequence. Call `hundred_account` if the user asks about
 their plan or an agent says access is paused."""
 
@@ -237,7 +237,8 @@ ROUTER_TOOLS = [
 
 
 def list_tools_for(access: Access) -> list[types.Tool]:
-    tools = [ACCOUNT_TOOL, MEMORY_TOOL, RECIPES_TOOL]
+    # Memory needs a license key; don't offer a tool that can only fail (models call it first and stall).
+    tools = [ACCOUNT_TOOL, MEMORY_TOOL, RECIPES_TOOL] if access.license else [ACCOUNT_TOOL, RECIPES_TOOL]
     if access.mode == "router":
         return tools + ROUTER_TOOLS
     tools += [t for t in ROUTER_TOOLS if t.name in ("hundred_find_agent", "hundred_start")]
@@ -470,8 +471,11 @@ def memory_call(store: Store, access: Access, args: dict[str, Any]) -> types.Cal
     from .. import memory
 
     if access.license is None:
-        return _text("Memory is part of every paid plan and needs a license key on this connection. "
-                     f"Free agents work without one. Plans: {settings.public_url}/pricing", error=True)
+        msg = ("Memory is part of every paid plan and needs a license key on this connection. "
+               f"Free agents work without one. Plans: {settings.public_url}/pricing")
+        if str(args.get("action", "")).strip() in ("list", "get"):  # a recall isn't a failure: nothing is saved
+            return _text("Nothing saved. " + msg + " Carry on with the job without saved context.")
+        return _text(msg, error=True)
     kh = access.license.key_hash
     action = str(args.get("action", "")).strip()
     name = str(args.get("name", "")).strip().lower()

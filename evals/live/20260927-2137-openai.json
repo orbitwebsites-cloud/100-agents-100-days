@@ -1,0 +1,947 @@
+[
+ {
+  "scenario": "cold-email",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": false,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "cold-email"
+  ],
+  "tools": [],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 3,
+  "cost": 0.0037280000000000004,
+  "error": "",
+  "answer": "I\u2019m missing a couple quick items to hit the SOP. Three questions \u2014 answer any or all:\n\n1) Proof: do you have a named customer or short case line we can cite (e.g., \u201cHowe Logistics cut fuel spend 12% in 90 days\u201d)? If not, OK for me to use a generic peer-proof (\u201ca 200\u2011truck regional carrier cut fuel cost ~12%\u201d)?\n\n2) Who\u2019s the sender? Give first name + company as you want it in the signature.\n\n3) When should the campaign start? Give a start date (YYYY\u2011MM\u2011DD) or I\u2019ll pick next Tuesday.\n\nI\u2019ll proceed as soon as you reply.",
+  "passed": false
+ },
+ {
+  "scenario": "ab-test",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": false,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "ab-test-analyst"
+  ],
+  "tools": [],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 3,
+  "cost": 0.00506475,
+  "error": "",
+  "answer": "I can run the formal readout \u2014 quick clarification before I start:\n\n1) Was the primary metric \"signup conversion rate\" and was the hypothesis simply \"variant increases signups\" (directional)?  \n2) How long did the test run and how many times did you look at results (number of interim looks)?  \n3) Did you pre-specify an MDE (minimum detectable effect) \u2014 e.g., 5%, 10% relative lift \u2014 or should I assume a default?\n\nIf you don't specify, I'll assume: primary metric = signup rate, a two-sided pre-planned test with \u03b1 = 0.05, 80% power, a single final look, and I'll ask/assume an MDE of 10% relative unless you tell me otherwise.",
+  "passed": false
+ },
+ {
+  "scenario": "runway",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "cashflow-forecaster"
+  ],
+  "tools": [
+   "cashflow-forecaster/runway"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 4,
+  "cost": 0.007347,
+  "error": "",
+  "answer": "Short answer: about 14 months.\n\nDetails (assumptions: month\u2011end compounding, revenue collected monthly, expenses paid monthly):\n- Opening cash: $420,000  \n- Gross burn today: $38,000/mo  \n- Revenue (MRR): $9,000/mo \u2192 net burn now = $38k \u2212 $9k = $29,000/mo  \n- Growth assumptions used: revenue +8% MoM, expenses +3% MoM\n\nComputed result (compounding growth):\n- Runway with growth: 14.0 months (cash reaches zero \u2248 2027\u201110)  \n- Simple static runway (no growth): 14.5 months (cash \u00f7 net burn)  \n- Verdict: default = dead (revenue growth only overtakes expenses in ~month 32 \u2192 2029\u201104)  \n- Extra cash required to reach breakeven: \u2248 $370k\n\nWhat that means for you\n- You have a little over a year of runway under the stated growth rates, but you run out of cash before the business reaches break\u2011even.  \n- This should be treated as urgent: start a 13\u2011week cash forecast, open fundraising conversations, or cut/ defer spend now.\n\nRecommended next steps (fastest first)\n1. Run a 13\u2011week weekly cash forecast (I can do this now) to see the exact low\u2011cash week and weeks of visibility.  \n2. Start fundraising or line-of-credit conversations \u2014 you need ~ $370k to reach self\u2011sustaining breakeven on the current path.  \n3. Fast levers to extend runway immediately: accelerate collections, defer noncritical spend, negotiate vendor terms; if needed, reduce monthly expenses (headcount/contractors) until cash is safe.\n\nWant me to: (A) run the 13\u2011week forecast and stress tests now, or (B) model scenarios (e.g., raise X, cut Y, slower revenue) to show how many months each gives you?",
+  "passed": true
+ },
+ {
+  "scenario": "regex",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "regex-builder"
+  ],
+  "tools": [
+   "regex-builder/check_regex_safety",
+   "regex-builder/test_regex",
+   "regex-builder/explain_regex"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 6,
+  "cost": 0.00835775,
+  "error": "",
+  "answer": "**Pattern (Python/PCRE style):** \\A\\d{5}(?:-\\d{4})?\\Z \u00b7 **Flags:** (none) \u00b7 **Mode:** fullmatch\n**Safety:** safe \u2014 anchored, fixed-length repeats, no nested quantifiers\n\n| Sample | Expected | Result | Groups |\n|---|---:|---:|---|\n| 90210 | match | match | \u2014 |\n| 12345-6789 | match | match | \u2014 |\n| 1234 | no match | no match | \u2014 |\n| 123456 | no match | no match | \u2014 |\n| 12345-678. | no match | no match | \u2014 |\n\nExplanation\n| Token | Means |\n|---|---|\n| \\A | start of string |\n| \\d{5} | exactly five digits (0-9; matches Unicode digits in Python unless re.ASCII is used) |\n| (?: ... )? | non-capturing group, optional (the next part may appear 0 or 1 time) |\n| - | the literal hyphen character |\n| \\d{4} | exactly four digits |\n| \\Z | end of string (strict end in Python) |\n\nNotes:\n- This validates the whole string (useful for user input validation). It accepts 5-digit ZIPs (12345) and ZIP+4 (12345-6789) and rejects all other forms.\n- If you need ASCII-only digits (so \\d won't match non\u2011Western numerals), add the ASCII flag (in Python: re.ASCII or the (?a) inline flag if supported). For JavaScript, use ^\\d{5}(?:-\\d{4})?$ with ^ and $ anchors (JS doesn't support \\A/\\Z).",
+  "passed": true
+ },
+ {
+  "scenario": "stack-trace",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": false,
+  "used_tool": false,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "ecom-pricing"
+  ],
+  "tools": [],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 3,
+  "cost": 0.0097295,
+  "error": "",
+  "answer": "Short answer: cart.discount is None in production, so cart.discount.amount raises. The immediate symptom is that compute_total assumes a Discount object always exists; it doesn\u2019t handle a missing discount. Fix by treating a missing discount as zero and add logging/tests to find why discount is missing.\n\nWhat\u2019s happening (root cause possibilities)\n- The cart has no discount applied (cart.discount is None) and compute_total assumes cart.discount exists.\n- A discount object was deleted or not set (nullable FK), or a race removed it between reading cart and computing totals.\n- A serialization / caching bug made the discount relation None when reconstructing the cart.\n- A recent deploy changed the model or initialization so cart.discount can be None.\n\nImmediate hotfix (deploy within minutes)\n- Make compute_total defensive so it never dereferences None. This prevents the 500s while you investigate the true cause.\n\nExample safe patch (Python / Decimal-aware):\n```\nfrom decimal import Decimal\n\ndef compute_total(cart):\n    subtotal = sum(Decimal(i.price) * i.qty for i in cart.items)\n    # defensive: treat missing discount as zero\n    discount_amount = Decimal('0.00')\n    if getattr(cart, 'discount', None) is not None:\n        # guard against discount.amount being None or a falsy string\n        discount_amount = Decimal(str(getattr(cart.discount, 'amount', '0') or '0'))\n    total = subtotal - discount_amount\n    # don't return negative totals\n    return max(total, Decimal('0.00'))\n```\n\nOne-line minimal version:\n```\nreturn sum(i.price * i.qty for i in cart.items) - (getattr(cart.discount, 'amount', 0) or 0)\n```\n(Use Decimal in real code; above is for quick illustration.)\n\nDiagnosis steps (to find why discount was None)\n1. Add logging / Sentry breadcrumb around compute_total to capture cart.id, cart.discount (repr), and cart.items before computing totals:\n   - logger.info(\"compute_total: cart=%s discount=%r items=%r\", cart.id, cart.discount, cart.items)\n2. Reproduce from DB: pick a failing request (from logs / Sentry), load that cart in a console and inspect cart.discount, discount_id column, and discount table row.\n   - SELECT * FROM carts WHERE id = <id>;\n   - Check discount_id column and existence of the discount row.\n3. Audit code paths that touch cart.discount:\n   - Where carts are created, where discount is applied/removed, coupon expiration code, and any code that deletes discounts.\n   - Search for assignments like cart.discount = None, cart.discount_id = None, or Discount.objects.filter(...).delete().\n4. Check DB constraints & migrations:\n   - Is discount_id nullable by design? If not, a migration may have changed it.\n   - If discounts are FK with ON DELETE SET NULL vs CASCADE, that explains disappearance on discount deletion.\n5. Check caching/serialization:\n   - If cart is stored in Redis/serialized, ensure discount object is serialized with amount or that the code rehydrates the relation correctly.\n6. Look for race conditions:\n   - E.g., an expirer job deletes Discount rows while a purchase is processed. If so, consider soft-deleting discounts or using ON DELETE RESTRICT.\n\nLonger-term fixes / recommendations\n- Keep compute_total defensive: always treat optional fields as possibly missing. Order totals must never raise unhandled exceptions.\n- Enforce invariants explicitly:\n  - If a discount is optional, compute_total should assume zero discount when missing.\n  - If your business requires a discount to exist once applied, prevent deleting discount rows while referenced (FK RESTRICT or soft-delete).\n- Add tests:\n  - Unit tests for compute_total with: no discount, discount.amount None, discount.amount > subtotal, empty cart, large quantities, Decimal types.\n  - Integration test that simulates a discount deletion during checkout.\n- Monitoring:\n  - Add a Sentry tag or metric for \u201ccompute_total_missing_discount\u201d so you can track frequency.\n- Data migration (if appropriate):\n  - If many carts have discount_id NULL but should be 0, consider normalizing or cleaning data. Or add a default Discount record with amount=0 only if that matches business logic.\n\nWhat to do now (recommended plan)\n1. Patch compute_total defensively and deploy ASAP to stop the crash.\n2. Add a log line capturing the cart id and discount state; deploy.\n3. Triage logs to find one or more example cart ids that hit the case.\n4. Investigate DB/ORM for the specific cart(s) to see why discount is missing and fix the underlying bug (delete behavior, nullability, race).\n5. Add unit tests and a regression test; optionally add DB constraint or change delete behavior.\n\nIf you want, I can:\n- Draft the minimal PR (function patch + test + small logging change).\n- Craft the more robust Decimal-safe implementation and unit tests.\n- Inspect a sample cart or stack traces (provide cart id and ORM/DB info) and outline exact SQL or code-lines to check.\n\nQuestions (one or two to proceed if you want me to help fix the root cause)\n1. Which ORM/library are you using (Django ORM, SQLAlchemy, custom)? The exact code to inspect/delete behavior depends on that.\n2. Can you share a failing cart id or a Sentry event so I can suggest exact DB queries and a targeted patch?",
+  "passed": false
+ },
+ {
+  "scenario": "meeting",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": false,
+  "used_tool": false,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "pitch-deck-coach"
+  ],
+  "tools": [],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 3,
+  "cost": 0.0081205,
+  "error": "",
+  "answer": "Here are the action items converted from the chat, with owners, due dates, and short acceptance notes:\n\n1) Priya \u2014 Send revised pricing deck\n   - Due: Thursday, Sept 30, 2026\n   - Acceptance: Email the updated deck to the team (or upload to shared Slides) and confirm key changes in the message.\n\n2) Marcus \u2014 Complete Stripe migration (go-live)\n   - Due: Friday, Oct 9, 2026 (end of next week)\n   - Acceptance: Payments flowing on Stripe in production, basic smoke tests passing, and migration summary (changes, rollback plan, known issues) shared with the team.\n\n3) Dana \u2014 Email the three churned accounts\n   - Due: Tuesday, Sept 29, 2026 (tomorrow)\n   - Acceptance: Emails sent to all three accounts; copy or send confirmation of responses/next steps.\n\nStatus notes:\n- Dana confirmed she\u2019ll do the churned-account emails.\n- Priya and Marcus have committed to their timelines (no additional confirmations shown).\n\nWould you like:\n- A short email template for Dana to use?\n- A checklist / migration plan template for Marcus?\n- Calendar invites or reminders created for these due dates?",
+  "passed": false
+ },
+ {
+  "scenario": "reorder",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "inventory-planner"
+  ],
+  "tools": [
+   "inventory-planner/reorder_point"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 4,
+  "cost": 0.008142,
+  "error": "",
+  "answer": "Short answer \u2014 reorder when your inventory position (on hand + on order) is at or below 396 units.\n\nDetails and math (so you can defend the PO)\n- Daily demand (d): 14 units/day \u2192 expected demand during 21-day lead time = 14 \u00d7 21 = 294 units.\n- Demand volatility (\u03c3d): 4 units/day.\n- Lead time (LT): 21 days. I assumed lead-time std dev \u03c3LT = 20% of LT = 4.2 days (you can replace this if you know a different \u03c3LT).\n- Service level: 95% \u2192 z = 1.645.\n- Safety stock (SS) using combined-variability formula:\n  SS = z \u00d7 \u221a( (LT+R)\u00b7\u03c3d\u00b2 + d\u00b2\u00b7\u03c3LT\u00b2 ) with R=0 (continuous review).\n  That gives SS \u2248 102 units (\u2248 7.2 days of cover).\n- Reorder point (ROP) = d \u00d7 LT + SS = 294 + 102 = 396 units.\n\nWhy this matters\n- ROP = 396 means you should place a replenishment order when your inventory position (on-hand + on-order) falls to 396 units or lower.\n- The dominant driver of your safety stock is lead-time variability, not demand volatility (lead-time term \u226b demand term). Reducing \u03c3LT (faster/more reliable shipments) will cut SS more than improving forecasting.\n\nIf you want:\n- I can check whether you need to order right now if you tell me your current on-hand and on-order.\n- I can size the optimal PO (EOQ) if you give order cost, unit cost, MOQ/pack sizes and any price breaks.\n- If your ordering is periodic (weekly/biweekly), tell me the review cadence and I\u2019ll compute the order-up-to level S instead of continuous ROP.",
+  "passed": true
+ },
+ {
+  "scenario": "salary",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "salary-negotiator"
+  ],
+  "tools": [
+   "salary-negotiator/compare_offers",
+   "salary-negotiator/vesting_schedule",
+   "salary-negotiator/plan_counter",
+   "salary-negotiator/raise_value",
+   "salary-negotiator/vesting_schedule",
+   "salary-negotiator/compare_offers"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 9,
+  "cost": 0.03360625,
+  "error": "",
+  "answer": "Short answer: Offer A is the safer / higher expected-compensation choice. Counter Offer A to $160,000 base (or ask for $160k base + fallback sign\u2011on / equity if they say band is fixed). Below is the math, vesting details, recommended counter, script and next steps.\n\n## Offer math\n| Offer | Yr\u20111 cash | Yr\u20111 total | 4\u2011yr total | 4\u2011yr avg |\n|---|---:|---:|---:|---:|\n| Offer A | $162,800 | $162,800 | $651,200 | $162,800 |\n| Offer B | $135,000 | $135,000 | $540,000 | $135,000 |\n\nAssumptions: bonus paid at target (10% for A); 4\u2011year vest with 1\u2011year cliff for both; start date assumed today; public RSUs treated as cash at vest; private equity discounted for illiquidity (see sensitivity below).\n\nVerdict from the tool runs: Offer A leads on 4\u2011year average total comp by $27,800/yr under conservative assumptions.\n\n## Equity / vesting (mapping)\n- Offer A: $80k RSUs over 4 years (even). Paper = $80k \u2192 $20,000/yr. Cliff at 12 months vests $20,000. Quarterly afterward (next quarterly vests ~$5,000).\n  - Cliff date (if you start today): 12 months from start \u2192 first vest = $20,000. Leave at 24 months \u2192 you keep ~$40,000, forfeit ~$40,000.\n- Offer B: 0.15% at Series A @ $60M \u2192 paper value = 0.0015 * $60,000,000 = $90,000 total (\u2248 $22,500/yr). Cliff vests $22,500 at 12 months, then quarterly after that.\n  - Important: that $90k is \u201cpaper\u201d at the current preferred valuation; liquidity and common\u2011share economics matter.\n\nRisk\u2011adjusted reality (how much that private equity is really worth today):\n- Conservative haircut (typical for early stage): 75% discount \u2192 expected value \u2248 $90k * 25% = $22,500 total (\u2248 $5,625/yr).\n- More optimistic haircut (50%) \u2192 expected value \u2248 $45,000 total (\u2248 $11,250/yr).\n\nCompare: Offer A\u2019s RSUs = $20k/yr (liquid/public-like) vs. Offer B\u2019s expected equity value typically much smaller after haircut unless you believe the company will materially grow and you want to swing for that outcome.\n\nBottom line on equity: Paper value of B is similar to A on a raw-dollar basis ($90k vs $80k), but private common at Series A carries substantial execution/liquidity risk. If you need cash now / next few years, A is clearly stronger.\n\n## The counter (what to ask and why)\n- Ask: $160,000 base (\u2248 +8.1% vs Offer A's $148k). Justification: competing offer (Offer B at $135k) and market parity / retention.\n- Expected landing: ~$154,000 base (realistic near\u2011term settlement).\n- Walk\u2011away (BATNA): $135,000 (your other offer) \u2014 be prepared to take B if they won\u2019t move and you prefer the startup upside.\n- Credibility: strong (you have a written competing offer).\n- Fallback levers in order: 1) Base (ask first). 2) One\u2011time sign\u2011on bonus $9,000 to bridge year\u20111 gap if base is fixed. 3) Extra equity grant or guaranteed refresh (ask for +$24k worth of RSUs or a written 12\u2011month refresh). 4) 6\u2011month comp review if they truly cannot move now.\n\nWhy this size: asking 10\u201315% above the offer is normal; $160k is a single clear, reasonable ask tied to a competing offer and the tool recommends it as a credible one\u2011sentence anchor.\n\n## Script (email \u2014 paste/send)\nSubject: Excited about the role \u2014 one quick question on comp\n\nHi [Recruiter / Hiring Manager name],\n\nThanks again \u2014 I'm really excited about the team and the role. I want to be direct: I have a written offer at $135,000, and I'd much prefer to join you. Would you be able to move the base to $160,000? If we can get to $160k base, I\u2019m ready to sign this week.\n\nIf the base is fixed by band, I'd be open to a $9k sign\u2011on to bridge the gap or an increase to the RSU grant / guaranteed refresh at 12 months.\n\nI appreciate your help \u2014 excited to make this work.\n\nBest,  \n[Your name]\n\n(One justification only: competing offer. Short, enthusiastic, yes\u2011if language.)\n\n## What the increase is worth\n- Asking $160k instead of $148k is +$12,000 base. The tool shows that a $12k raise is worth ~$151,323 over 10 years (assuming 3% annual raises and 10% bonus scaling) \u2014 use that figure mentally when deciding whether to press.\n\n## Negotiation sequence and fallback plan\n1. Ask for $160k base (email/call).\n2. If they say band is fixed, request $9k sign\u2011on and/or +$24k RSU grant (or guaranteed 12\u2011month refresh).\n3. If they can\u2019t move comp at all, ask for a written 6\u2011month review with target comp increase.\n4. Always get any change in writing before accepting.\n\n## Questions to ask the startup (if you consider B or want to press A for equity)\n- For Offer B (private): Are you common shares or options? What\u2019s the last 409A / strike price, fully diluted share count, and refresh policy? Is there any acceleration on change of control?\n- For Offer A (RSUs): any withholding/tax guidance, refresh cadence, and when the first grant will be paid out in payroll?\n- For both: confirm start date, PTO, and any sign\u2011on.\n\n## Quick recommended next step\n- Send the short script above to the recruiter for Offer A. Start with base ask $160k. If they push back, move to sign\u2011on $9k then equity bump or 6\u2011month review.\n\n## Before you reply / accept\n- Get the revised offer in writing.\n- Confirm equity type, refresh policy, 409A (for private), and exact vest dates.\n- If you want the upside of the startup but also cash safety, consider asking A for a sign\u2011on + small equity bump instead of only base.\n\nWould you like me to:\n- Draft a customized email with the recruiter\u2019s name and role filled in?\n- Draft the exact fallback wording asking for sign\u2011on or equity refresh?\n- Run the numbers using a different haircut (e.g., 50% vs 75%) or a different start date?\n\nAlso: I attempted to check/save negotiation state to your stored memory but couldn't access the memory service on this connection \u2014 I can save a plain text summary for you here or try again if you'd like.",
+  "passed": true
+ },
+ {
+  "scenario": "seo-meta",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": false,
+  "started": [
+   "meta-writer"
+  ],
+  "tools": [
+   "meta-writer/serp_preview",
+   "meta-writer/serp_preview",
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description",
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 10,
+  "cost": 0.015724,
+  "error": "",
+  "answer": "",
+  "passed": false
+ },
+ {
+  "scenario": "x-thread",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": false,
+  "started": [
+   "x-thread-builder"
+  ],
+  "tools": [
+   "x-thread-builder/score_hook",
+   "x-thread-builder/count_post",
+   "x-thread-builder/count_post",
+   "x-thread-builder/count_post",
+   "x-thread-builder/count_post",
+   "x-thread-builder/count_post",
+   "x-thread-builder/count_post",
+   "x-thread-builder/count_post"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 10,
+  "cost": 0.01277275,
+  "error": "",
+  "answer": "",
+  "passed": false
+ },
+ {
+  "scenario": "macros",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "fitness-coach"
+  ],
+  "tools": [
+   "fitness-coach/tdee_and_macros"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 4,
+  "cost": 0.00904975,
+  "error": "",
+  "answer": "Fitness coach \u2014 fat loss (slow) while preserving strength\n\n_General guidance, not medical advice. See a doctor or registered dietitian if you have medical conditions, eating\u2011disorder history, or take drugs that affect weight/glucose/kidneys._\n\n**Numbers (from the calculation):** BMR 1,779 kcal \u00b7 TDEE \u2248 2,757 kcal (activity multiplier 1.55)  \n**Targets:** 2,317 kcal/day \u00b7 Protein 163 g \u00b7 Fat 64 g \u00b7 Carbs 271 g \u00b7 Planned loss 0.4 kg/week (daily deficit 440 kcal, \u224816% of TDEE)\n\nNotes from the calculation: TDEE \u2248 2757 kcal; target 2317 kcal/day for losing ~0.4 kg/week \u2014 P 163 g / F 64 g / C 271 g. No safety flags raised. (I used \u201cmoderate\u201d activity to match 4 sessions/week + desk job. If your non\u2011exercise activity is much lower or higher, we can re-run.)\n\nPractical prescription (to keep strength while losing slowly)\n- Keep protein high: ~2.0 g/kg (~163 g/day). Spread protein across 3\u20135 meals (aim 25\u201340 g protein per meal). This preserves lean mass and supports recovery.\n- Keep dietary fat at least the target (~64 g/day). That\u2019s your hormone/absorption floor \u2014 don\u2019t drop fat much lower.\n- Use carbs as the flexible fuel: ~271 g/day on average. Put more carbs on training days (pre/post workout) and slightly fewer on easy/rest days if you like carb cycling. Example: training days = target carbs; rest days = \u221210\u201320% carbs.\n- Strength-first training: keep training intensity (heavy sets, low rep ranges) \u2014 maintain or slightly reduce volume rather than slashing weight. Aim to keep all main lifts at similar intensity and RPE; if you notice strength dropping for >2 weeks, raise calories 100\u2013200 kcal or add one refeed.\n- Refeed: once weekly higher\u2011carb meal or day (+200\u2013400 kcal from carbs) can help with performance and adherence if you feel flat or strength dips.\n- Recovery: prioritize sleep (7\u20139 h), manage stress, keep protein + carbs around the workout (e.g., 20\u201340 g protein + 30\u201380 g carbs within 1\u20132 hours of training).\n- Track: weigh once per week same conditions; track gym performance (sets, reps, RPE). If weight loss is faster than desired (>0.6% bodyweight/week) or strength declines, increase intake 100\u2013200 kcal/day. If no weight change in 3 weeks, drop 100 kcal/day or increase low\u2011intensity activity.\n\nMinimum safety floor: never go below 1,500 kcal/day for men \u2014 your target (2,317) is well above that.\n\nHow to implement this week-to-week\n- Start at 2,317 kcal/day for 2\u20134 weeks and monitor bodyweight and strength. Expect ~0.4 kg/week if adhered to.\n- If strength is maintained and weight is moving as planned, continue for a 8\u201312 week block and then re-evaluate.\n- If you want a full 8\u201312 week program (daily sessions, sets/reps, deloads) I can build that and audit weekly volume to make sure frequency and hard sets support strength retention.\n\nA few questions (keeps advice tighter)\n- How long have you been consistently lifting (training age \u2014 months/years)? That changes programming recommendations.\n- Any current injuries, medical conditions, or medications?\n- Do you want calories/macros set as averages (same each day) or a training/rest day split?\n\nIf you want, I can:\n- Build a 8\u201112 week strength\u2011preserving fat\u2011loss program (progression, weekly plan, plate loading), or\n- Give sample meal plans at 2,317 kcal (omnivore / vegetarian / vegan), or\n- Re-run the numbers if your activity level or measurements differ.\n\nMemory note: I attempted to save context but account memory isn\u2019t available on this connection; I can save details if you want and memory is enabled.",
+  "passed": true
+ },
+ {
+  "scenario": "sql",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "sql-wizard"
+  ],
+  "tools": [
+   "sql-wizard/explain_structure",
+   "sql-wizard/lint_sql",
+   "sql-wizard/suggest_indexes",
+   "sql-wizard/format_sql"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 7,
+  "cost": 0.012587749999999998,
+  "error": "",
+  "answer": "**Grain:** one row per order (then joined to the matching customer) \u00b7 **Dialect:** PostgreSQL (assumed) \u00b7 **Assumptions:** customers.id is the PK (indexed); orders.customer_id is the foreign key; you intended an inner join (orders with no matching customer will be dropped).\n\n```sql\nSELECT *\nFROM orders o\nJOIN customers c\n    ON c.id = o.customer_id\nWHERE o.status = 'pending'\n    AND o.created_at > NOW() - interval '7 days'\nORDER BY\n    o.created_at DESC;\n```\n\nCorrectness notes\n- SELECT * is flagged: it forces the planner to read every column and prevents index-only scans. List only the columns you need (e.g., o.id, o.customer_id, o.created_at, c.name).\n- INNER JOIN will drop orders whose customer_id has no matching customers.id. If you want to keep such orders use LEFT JOIN.\n- now() is session-timezone-aware. If you need UTC-stable behaviour consider timezone handling, but that's not a performance blocker here.\n\nWhy this is slow (likely)\n- With no appropriate index the planner does a sequential scan of orders (a large table) to find recent pending rows, then sorts them by created_at (external sort if large), then probes customers. Scanning many rows to return a small recent set is expensive.\n- status is low-cardinality; an index on status alone is usually not selective. created_at is a range predicate and also used in ORDER BY \u2014 an index that serves both the filter and sort is needed.\n\nIndex suggestions (Postgres)\n- Best small-index option (partial index \u2014 much smaller, very effective for this exact predicate and ORDER BY):\n```sql\nCREATE INDEX CONCURRENTLY idx_orders_pending_created_at_desc\n    ON orders (created_at DESC)\n    WHERE status = 'pending';\n-- serves WHERE status = 'pending' AND created_at > ? and ORDER BY created_at DESC\n-- small and selective because it only indexes pending rows.\n```\n\n- General composite index (works for multiple status values):\n```sql\nCREATE INDEX CONCURRENTLY idx_orders_status_created_at_desc\n    ON orders (status, created_at DESC);\n-- serves equality on status and ORDER BY on created_at DESC; usable for the WHERE and the ORDER BY.\n```\n\n- If you only select a few columns from orders and want an index-only scan, add INCLUDE columns (no effect on ordering but makes the index covering):\n```sql\nCREATE INDEX CONCURRENTLY idx_orders_pending_created_at_desc_inc\n    ON orders (created_at DESC)\n    INCLUDE (customer_id, id)  -- include whichever columns you return\n    WHERE status = 'pending';\n-- allows index-only scan if visibility map is up-to-date, avoiding heap fetches.\n```\n\nNotes / tradeoffs\n- Prefer the partial index if you always query status = 'pending' \u2014 it's much smaller and faster to scan. If you query many statuses, use the composite index.\n- Adding indexes increases write cost (inserts/updates/deletes). One or two targeted indexes is reasonable; avoid indexing every column.\n- Using DESC in the index lets Postgres avoid a sort for ORDER BY created_at DESC.\n\nHow to verify\n1. Measure before \u2192 after:\n   - EXPLAIN (ANALYZE, BUFFERS) your query before creating the index: look for Seq Scan on orders and an external Sort.\n   - After creating the index, run EXPLAIN (ANALYZE, BUFFERS) again: expect an Index Scan (or Index Only Scan if covered) on orders using the new index and no separate Sort step.\n   - Check rows and buffers: large reduction in buffers read / heap blocks touched indicates improvement.\n\n2. Sanity checks:\n- Count of matching orders (independent of join):\n```sql\nSELECT count(*) FROM orders\nWHERE status = 'pending' AND created_at > now() - interval '7 days';\n```\n- Count after join (should equal above if every order has a customer):\n```sql\nSELECT count(*) FROM orders o\nJOIN customers c ON c.id = o.customer_id\nWHERE o.status = 'pending' AND o.created_at > now() - interval '7 days';\n```\n\nBefore \u2192 after (expected)\n- Before: Seq Scan on orders (N rows scanned, external Sort) \u2192 slow.\n- After: Index Scan on only the recent pending rows (or Index Only Scan if covering) and index-provided ordering \u2192 much fewer rows/pages read and no sort.\n\nIf you want, tell me:\n- the table sizes (rows in orders, rows in customers) and an EXPLAIN (ANALYZE, BUFFERS) output and I\u2019ll confirm which index is best and give the exact CREATE INDEX command to run (including INCLUDE columns tailored to your SELECT list).",
+  "passed": false
+ },
+ {
+  "scenario": "contract",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "contract-reviewer"
+  ],
+  "tools": [
+   "contract-reviewer/detect_clauses",
+   "contract-reviewer/extract_deadlines",
+   "contract-reviewer/renewal_calendar"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 6,
+  "cost": 0.01950475,
+  "error": "",
+  "answer": "# Contract review: auto-renew + liability cap clause \u2014 reviewing as customer \u2014 2026-09-27\n**Verdict:** Do not sign as\u2011is \u2014 negotiate the vendor back from two deal\u2011breakers \u00b7 Risk score 100/100  \n**Scope:** Drafting/review aid, not legal advice. Jurisdiction and governing law change the analysis. Recommend a licensed lawyer for contracts over ~$100k, cross\u2011border deals, IP assignment, employment terms, or where personal data is processed.\n\nNote on intake: I assumed you are the customer (buyer/licensee). I need one quick fact from you (below) to finish the numbers section.\n\n## Deal-breakers\n1. Limitation of liability \u2014 \"Provider's total liability shall not exceed the fees paid in the one (1) month preceding the claim.\"\n   - Why it matters: This caps the vendor's liability at a single month's fees and appears to apply only to the Provider (vendor). That is far below market for mid\u2011market SaaS/services (market \u2248 12 months' fees) and is one\u2011sided: your liability and any indemnities may be uncapped.\n   - Ask for: Mutual cap: \"Each party's aggregate liability for all claims arising under or in connection with this Agreement shall not exceed the total fees paid or payable by Customer to Provider for the twelve (12) months preceding the event giving rise to the claim. Notwithstanding the foregoing, liability for (a) willful misconduct or gross negligence, (b) breach of confidentiality, (c) infringement of third\u2011party intellectual property rights and (d) breaches of data protection obligations shall be subject to a super\u2011cap equal to two (2) times the foregoing amount (or uncapped if the parties prefer).\"  \n   - Fallback: Cap at 6 months' fees, mutual, and carve out IP indemnity and data breaches (2\u00d7 or uncapped for those categories).\n\n2. One\u2011way / insufficient liability protection \u2014 clause reads as vendor\u2011only protection\n   - Why it matters: If the cap only applies to the Provider, the Customer may remain exposed for uncapped liabilities (including contractual indemnities). That reverses the usual market position where caps are mutual.\n   - Ask for: Make the cap mutual (see language above). If the vendor insists on a lower cap, require the same low cap to apply equally to both parties and carve out IP/data/confidentiality from the cap.\n   - Fallback: Mutual 1\u20133 months only if combined with strong vendor insurance, express indemnities for IP/data, and liquidated limits on consequential damages.\n\n## Negotiate (important, not immediate deal\u2011breaker but required)\n- Auto\u2011renewal timing \u2014 \"automatically renew for successive one\u2011year terms unless either party gives written notice of non\u2011renewal at least ninety (90) days prior to the end of the then\u2011current term.\"\n  - Why it matters: 90 days' notice is longer than many customers expect; it increases the chance you miss the window and get locked into another year.\n  - Ask for: 30\u201360 days' notice (30 days is common; 60 is reasonable). Require vendor to send a renewal reminder at least 30 days before the notice deadline. Alternatively, convert to renewal only on written agreement.\n  - Fallback: Keep 90 days but require vendor to send an electronic renewal reminder 45 days before deadline and allow termination for convenience with 30\u201360 days' notice.\n\n- Missing / unquoted clauses flagged by the detector (you likely have other contract sections elsewhere; if not, add these):\n  - No indemnity clause \u2014 add vendor indemnity for IP infringement and data breach; customer indemnity for customer's content/misuse.\n  - No IP ownership/assignment \u2014 specify ownership of deliverables/work product (customer ownership of custom deliverables; license to provider for pre\u2011existing tools).\n  - No termination for convenience \u2014 add a 30\u201390 day termination-for\u2011convenience right for each party or at least allow customer to terminate on 30 days' notice after initial term.\n  - No termination-for-cause / cure period \u2014 require a 30\u2011day cure period for material breaches before termination.\n  - No data protection / privacy terms \u2014 if personal data is processed, add a data processing addendum (DPA) and security/incident obligations.\n  - No consequential damages exclusion \u2014 add mutual exclusion of indirect/consequential damages (carve out for willful misconduct, gross negligence and the data/IP indemnities).\n  - No governing law / venue \u2014 specify governing law and dispute resolution.\n\nRank:\n- Deal\u2011breakers: liability cap one\u2011sided & 1\u2011month size.\n- Negotiate: auto\u2011renewal notice window, missing indemnity/IP/data protections, termination mechanics.\n- Accept (standard): automatic renewal in principle is common \u2014 acceptable if notice window and reminders are fixed.\n\n## Key dates (computed from Effective Date = 2026-03-01)\n| Event | Date | Days from today (2026-09-27) | Action |\n| Notice deadline to avoid renewal (90 days before term end) | 2026-11-30 (Mon) | 64 | LAST DAY to send non\u2011renewal notice \u2014 ensure delivery method meets \"written notice\" requirement |\n| Reminder date (30 days before notice) | 2026-10-31 (Sat) | 34 | Set internal decision reminder; vendor reminder should be requested |\n| Contract term ends / next auto\u2011renewal date | 2027-02-28 (Mon) | 155 | If no notice sent by 2026-11-30, contract renews for 12 months starting 2027-03-01 |\n\nNotes: initial term end = 2027-02-28; first renewal period would run 2027\u201103\u201101 to 2028\u201102\u201129 (tool computed).\n\nIf you want, I can add these events to your Google Calendar (if connected) or generate an email reminder/template for your procurement/legal team.\n\n## Liability snapshot (summary \u2014 I need the fee amount to compute dollars)\n- Cap as written: 1 month of fees, and appears to cap only the Provider (vendor).\n- Market benchmark: ~12 months' fees (mutual) for general liability; higher or uncapped for confidentiality, data protection, and IP indemnity (super\u2011cap 2\u20133\u00d7 or uncapped).\n- Your uncapped exposure under missing clauses: potentially very large (indemnities, data breach, IP claims) because indemnities and carve\u2011outs are absent.\n- To compute dollar amounts I need your Annual Contract Value (ACV) or monthly fee. Example placeholders:\n  - If ACV = $120,000 => 1 month cap = $10,000; market cap = $120,000.\n  - If monthly fee = $5,000 => 1 month cap = $5,000; market cap = $60,000.\n\nPlease tell me the fees (monthly or annual) and I will run the liability exposure numbers and suggest insurance/indemnity thresholds.\n\n## Redline requests (copy/paste to the other side)\n1. Replace auto\u2011renewal sentence with:\n   - \"This Agreement shall have an initial term of twelve (12) months beginning on the Effective Date and shall automatically renew for successive one\u2011year terms unless either party provides written notice of non\u2011renewal at least thirty (30) days prior to the end of the then\u2011current term. Provider will send Customer an electronic renewal reminder at least forty\u2011five (45) days prior to the notice deadline.\"\n\n   - Fallback: 60 or 90 days' notice if vendor refuses, but require vendor reminder 45 days before deadline.\n\n2. Replace liability cap with mutual, market standard language:\n   - \"Each party's aggregate liability for all claims arising out of or relating to this Agreement shall not exceed the total fees paid or payable by Customer to Provider under this Agreement during the twelve (12) months preceding the event giving rise to the claim. Notwithstanding the foregoing, liability for (a) willful misconduct or gross negligence, (b) breach of confidentiality obligations, (c) infringement of third\u2011party intellectual property rights, and (d) Provider's breach of data protection obligations shall not be limited by the cap above and shall be subject to a super\u2011cap equal to two (2) times the foregoing amount (or uncapped as agreed).\"\n\n   - Fallback: mutual cap = six (6) months if vendor refuses 12 months; always carve out confidentiality, IP and data protection.\n\n3. Add these clauses if absent:\n   - Mutual indemnities (vendor indemnifies for third\u2011party IP claims and data breaches; customer indemnifies for customer content and misuse).\n   - IP ownership: Customer owns custom deliverables; Provider retains rights in pre\u2011existing tools and grants Customer a license to use such tools solely to use the deliverables.\n   - Data processing / security obligations and incident response (DPA).\n   - Termination for convenience: Customer may terminate for convenience with thirty (30) days' written notice after the initial term (or upon paying reasonable early termination fees).\n   - Consequential damages exclusion: mutual exclusion except for willful misconduct/gross negligence and indemnified claims.\n\n## Short suggested negotiation email (one paragraph)\n\"We appreciate your proposal. Before execution we need the limitation of liability and auto\u2011renewal terms revised: please make the liability cap mutual and set it at 12 months' fees (with a super\u2011cap or carve\u2011out for IP, confidentiality and data breaches), and reduce the auto\u2011renewal notice to 30 days (or, if you insist on 90 days, agree to send a vendor\u2011side renewal reminder at least 45 days before the deadline). Also please confirm mutual indemnities, IP ownership of deliverables, and a DPA (if personal data is processed). I can send proposed language.\"\n\n## Next steps / questions for you (answer any/all)\n1. Confirm your role: are you the Customer (buyer/licensee) or the Provider (vendor/seller)? I assumed Customer.  \n2. What is the contract value (annual fees or monthly fee)? I need this to compute the dollar cap and compare to market.  \n3. Do you want me to produce: (A) a tracked redline of the full agreement with edits inserted, or (B) a short negotiation email and the three extracted replacement paragraphs above? (I can do either.)\n\nIf you want, I can also save these preferences (notice window, preferred cap months, reminder schedule) so future reviews start from your standard positions.",
+  "passed": true
+ },
+ {
+  "scenario": "rice",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "roadmap-prioritizer"
+  ],
+  "tools": [
+   "roadmap-prioritizer/rice_score",
+   "roadmap-prioritizer/capacity_check"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 5,
+  "cost": 0.01294725,
+  "error": "",
+  "answer": "# Roadmap \u2014 next quarter (assumption: 24 person-weeks capacity; goal: maximise shipped value per engineering-week)\n\nNotes on assumptions I used\n- Planning horizon: one quarter. Capacity assumed 24 person\u2011weeks (example: 2 engineers \u00d7 ~12 weeks). Tell me if your capacity is different and I'll re-run.\n- Normalisations: 1 person\u2011month = 4 person\u2011weeks. Impact used on the 0.25/0.5/1/2/3 scale as given. Confidence used as decimal (80% \u2192 0.8, etc.). Effort in person\u2011weeks.\n\n## Ranked\n| Rank | Item | RICE | Kano | MoSCoW | Effort (pw) | Cum. effort (pw) | Note |\n|---|---:|---:|---|---|---:|---:|---|\n| 1 | CSV export | 525.0 | \u2014 | Must | 4 | 4 | Highest RICE (value per week) |\n| 2 | Dark mode | 400.0 | \u2014 | Should | 8 | 12 | High reach but lower impact per user; nice-to-have |\n| \u2014 cut line at 19.2 person\u2011weeks (80% of capacity; leave 20% contingency) \u2014 |\n| 3 | SSO | 50.6 | \u2014 | Could | 16 | 28 | Low RICE due to high effort; flagged for confidence justification |\n\nPlanned items (fit within 80% of capacity): CSV export (Must) and Dark mode (Should). SSO sits below the cut line and is in the cycle contingency (ship only if the cycle runs clean).\n\n## Why this order\n- CSV export gives the most value per engineering-week (RICE 525) \u2014 relatively low effort (4 pw) for broad reach and medium impact. That makes it #1.\n- Dark mode has very high reach but low impact per user (impact=1) and higher effort, giving it the second spot (RICE 400). It\u2019s close to CSV export in rank when you consider estimate uncertainty.\n- SSO has the highest per-user impact (3) but very low reach and a large effort (16 pw), producing a much smaller RICE (50.6). It\u2019s flagged because its confidence was reported as 90% (tool flagged that >80% without evidence); if you can justify high confidence with data, say so \u2014 otherwise cap at 80% as best practice.\n\nFragile ranks / ties\n- CSV export is fragile with respect to Dark mode \u2014 the tool reports these two are within \u00b130% estimate error. Treat them as the same tier (tier 1) rather than a precise 1 vs 2 if estimates are uncertain.\n\nFlags and notes\n- SSO: confidence flagged (\"confidence > 80% with no evidence\") \u2014 if you have customer commitments or sales requests, provide evidence and I'll keep 90%; otherwise reduce to 80% (which lowers its RICE slightly and doesn't change rank).\n- I did not run Kano or opportunity scoring because you didn\u2019t provide survey data. If you have customer survey pairs or importance/satisfaction ratings I can add those and reconcile.\n\n## Moved by judgement\n- None \u2014 ranking is the raw RICE ordering (with the tool\u2019s flags noted). I assigned MoSCoW labels conservatively: CSV export = Must, Dark mode = Should, SSO = Could. Tell me if SSO is actually a sales/legal must and I\u2019ll move it.\n\n## Assumptions that would change the answer most\n1. Capacity change \u2014 if available capacity is significantly lower than 24 pw (e.g., 12\u201316 pw), SSO becomes impossible and Dark mode may be cut. If capacity is larger, SSO could be considered.  \n2. SSO reach or commercial need \u2014 if SSO\u2019s reach is actually much larger (enterprise deals) or sales require it (contractual), its priority rises regardless of RICE.  \n3. Impact/effort estimate error >30% \u2014 CSV and Dark mode are fragile to \u00b130% estimate changes; if Dark mode effort is smaller or impact higher, it could flip #1.\n\n## Cut this cycle (and where it goes)\n- SSO \u2192 cut this cycle / move to next cycle or to \"needs validation\" if sales request it. If you want SSO sooner, run a short validation (sales commit / number of accounts blocked) and I\u2019ll re-score.\n- Dark mode \u2192 keep as Should; ship if the cycle runs clean after CSV export.\n- CSV export \u2192 deliver this cycle (Must).\n\nWould you like me to:\n- Re-run with a different capacity (enter your actual person-weeks)?  \n- Re-score after capping SSO confidence at 80% (or after you supply evidence for 90%)?  \n- Save this scored backlog for future reference? (If yes, I can save it to memory.)",
+  "passed": true
+ },
+ {
+  "scenario": "pipeline",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "pipeline-forecaster"
+  ],
+  "tools": [
+   "pipeline-forecaster/weighted_pipeline",
+   "pipeline-forecaster/coverage_ratio",
+   "pipeline-forecaster/sales_velocity"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 6,
+  "cost": 0.0180135,
+  "error": "",
+  "answer": "# Forecast \u2014 Q4 2026 (as of 2026-09-27)\n\n**Forecast:** $115,000  (range $0 \u2013 $230,000) \u00b7 Weighted: $148,000  \n**Quota:** $150,000 \u00b7 Closed: $0 (0%) \u00b7 Gap: $150,000 \u00b7 Coverage: 1.83\u00d7 (open) \u00b7 Weighted coverage: 0.99\u00d7 \u00b7 Days left: 92\n\nSummary verdict: You are at risk. The midpoint forecast (commit + 50% best case) is $115k \u2014 below quota. The weighted check is $148k (very close to quota) but the model shows high concentration risk (Initech) and no deals currently meet \"commit\" criteria (no next steps recorded). To hit quota you need either Initech + Umbrella closed, or Initech + one other late-stage win, or a material improvement in win rate / new pipeline.\n\n## Commit (deal by deal)\nNo deals meet the \"commit\" criteria (negotiation+ with a recent activity and a documented next step). Commit = $0.\n\n## Best case\n(Proposal+ with close dates inside period)\n\n- Initech \u2014 $120,000 \u2014 Stage: Negotiation \u2014 Close: 2026-12-05 \u2014 What has to happen: get an owned, timeboxed next step (finalize contract language, set legal/PO deadline), secure verbal/PO by 2026-12-05. High impact; owner must push for signature.\n- Acme \u2014 $80,000 \u2014 Stage: Proposal \u2014 Close: 2026-12-15 \u2014 What has to happen: update/clarify proposal and obtain verbal acceptance or signature by 2026-12-15.\n- Umbrella \u2014 $30,000 \u2014 Stage: Proposal \u2014 Close: 2026-10-31 \u2014 What has to happen: resolve pricing/terms and obtain signature by 2026-10-31.\n\n(Globex $45,000 is Discovery \u2192 pipeline category; not in best case.)\n\n## Risks\n- Concentration: Initech is 52.2% of the forecast. One deal >50% of forecast \u2014 if it slips, you miss quota.\n- No commit: 0 deals in commit (all four deals show \"no next step\" recorded).\n- Stale / process risk: Every deal in the snapshot is missing a documented next step \u2192 increases slip risk.\n- Coverage short: Open pipeline $275k \u2192 coverage 1.83\u00d7 (target 3.0\u00d7). Weighted pipeline covers 99% of gap (i.e., weighted is $148k vs $150k gap).\n- Required win rate: To convert current open pipeline into the $150k gap you need ~54.5% win rate on current open deals (we assumed historical ~30% \u2192 a big increase needed).\n- Timing: Umbrella must close early (10/31). If it slips, you lose Q4 coverage.\n\n## Gap plan (concrete, pick owners and dates)\n1. Close Initech ($120k) \u2014 Owner: AE (assign now). Next step: schedule a 48\u2011hour legal sync + PO deadline. Target: verbal by 2026-11-30, signed by 2026-12-05. Expected impact: +$120k.\n2. Close Umbrella ($30k) \u2014 Owner: AE. Next step: pricing review + sign-off call. Target: 2026-10-25 (buffer before 10/31). Expected impact: +$30k.\n   - If both 1 & 2 succeed \u2192 quota hit exactly ($150k).\n3. Parallel plays (if Initech or Umbrella look risky): push Acme ($80k) \u2014 Owner: AE. Next step: re-engage exec sponsor, limit approvals. Target: signed by 2026-12-15. Expected impact: +$80k (gives breathing room).\n4. New pipeline: source $175k of new pipeline (to reach 3\u00d7 coverage) \u2014 Owner: you / SDRs \u2014 timeline: ASAP. Realistic? Depends on average cycle; median cycle assumed 45 days, days left 92 \u2192 new pipeline can land, but it's tight.\n5. Process fixes (high leverage, immediate): require a documented next step for every deal within 24 hours; escalate any late-stage deal without a next step to a daily tombstone until a date is set.\n\n## Numbers behind this\n- Open pipeline (in-period): $275,000\n- Weighted pipeline (stage probs defaults): $148,000\n- Best-case sum (proposal+): $230,000\n- Commit: $0\n- Forecast (commit + 50% best case): $115,000\n- Weighted check: $148,000\n- Required win rate on open pipeline to fill gap: 54.5% (vs historical ~30%)\n\n## Velocity & levers\n- Current sales velocity estimate: ~$1,667/day \u2192 projects ~$153,333 over the period (with current assumptions).\n- High-leverage levers: shorten cycle time (a 10% reduction in cycle \u2192 ~11% higher velocity), improve win rate, or increase average deal size. The highest single-lever impact here is reducing cycle length; however, securing current largest deals (Initech) is the fastest path to quota.\n\n## What changed since last snapshot\nNo previous snapshot provided \u2014 cannot compute week-over-week movement. If you want that I can diff last week's export (or save this snapshot to compare next week).\n\n## By rep\nNo owner data included in the snapshot. If you supply owners, I will break Commit / Best case / Forecast by rep.\n\n## Calibration\nNo historical forecast vs actual data provided, so no calibration multiplier applied. Note: default stage probabilities were used. If you have historical stage conversion data I will replace defaults and re-run the weighted pipeline (this often reduces optimistic bias).\n\nRecommendation (next actions \u2014 prioritized)\n1. Immediately assign owners and enforce a documented next step for Initech and Umbrella. If Initech signs and Umbrella signs, you make quota. (Owner/AE, deadlines above.)\n2. If Initech looks shaky, move Acme up to a closing play and add outbound to create at least $175k of new pipeline (hard but increases coverage to target).\n3. Short-term process: require daily \"deal cadence\" for late-stage deals with no next step; escalate misses to you/CRO.\n4. Optional: I can draft an email/LinkedIn message to the Initech sponsor or a short legal escalation template \u2014 which would you like me to prepare?\n\nWould you like me to:\n- Save this snapshot so we can run a \"what moved since\" diff next week? (I can save as pipeline/2026-Q4-09-27)\n- Draft a one-page chase email for Initech or Umbrella right now?\n- Re-run with your historical close data (closed deals last 12 months) to replace the default stage probabilities?",
+  "passed": true
+ },
+ {
+  "scenario": "contrast",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "accessibility-checker"
+  ],
+  "tools": [
+   "accessibility-checker/contrast_ratio",
+   "accessibility-checker/suggest_color",
+   "accessibility-checker/suggest_color"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 6,
+  "cost": 0.013084249999999999,
+  "error": "",
+  "answer": "# Accessibility audit \u2014 white text on brand orange (#F97316) \u2014 target WCAG 2.2 AA\n**Verdict:** 0 blockers \u00b7 1 major \u00b7 0 minor \u2014 can a keyboard/screen-reader user complete the core task? yes (visual contrast fail is a major but not a blocker for keyboard/AT users)\n\nAssumptions: treating this as body text (regular, <18pt / 24px) per the intake rules.\n\n## Blockers\nNone.\n\n## Major\n| # | Element | Criterion | Problem | Fix |\n| 1 | Body text: #FFFFFF on #F97316 | WCAG 1.4.3 (AA) contrast | Contrast ratio 2.80:1 (needs \u22654.50:1 for normal text). Also fails large-text (needs \u22653.00:1) and non-text UI (3:1). | Two practical fixes (pick one): a) Use darker text: change text to #333333 which reaches 4.50:1 on #F97316. b) Keep white text but darken the orange to #bd5711 (\u224824% darker) so #FFFFFF on #bd5711 reaches 4.63:1. Both preserve hierarchy; darkening the background preserves the brand hue better, changing the text to #333333 preserves the current orange.\n\n## Minor\nNone.\n\n## Contrast table\n| Pair | Ratio | Normal text (4.5:1) | Large text (3:1) | UI (3:1) | Nearest passing |\n| #FFFFFF on #F97316 | 2.80:1 | FAIL | FAIL | FAIL | background \u2192 #bd5711 (4.63:1) OR foreground \u2192 #333333 (4.50:1) |\n| #333333 on #F97316 | 4.50:1 | PASS (AA) | PASS (AAA large) | PASS | \u2014 |\n| #FFFFFF on #bd5711 | 4.63:1 | PASS (AA) | PASS (AAA large) | PASS | \u2014 |\n\nNotes on numbers: ratios shown to two decimals (tool computed). Ratios are exact per WCAG formula; values at thresholds are considered passing if \u2265 threshold.\n\n## Explanation & recommendations\n- Current white-on-brand-orange (white #FFFFFF on orange #F97316) is not accessible for body text: 2.80:1 (needs 4.5:1). It also fails for large text and UI components (3:1).\n- Two safe, designer-friendly options:\n  1. Keep the orange as-is and use dark body text: color: #333333; background: #F97316. This reaches exactly the AA normal-text threshold (4.50:1). The suggested change is a substantial darkening of the foreground (\u224880% darker from white).\n  2. Keep white body text and darken the orange to #bd5711 (\u224824% darker). White on that darker orange gives 4.63:1 and preserves the orange hue better.\n- Which to choose depends on brand priorities:\n  - If preserving the exact brand orange is most important, use dark body text (#333333) for readability.\n  - If retaining white text over orange is central to the brand aesthetic, darken the orange to at least #bd5711 (or darker) for accessible contrast.\n- For headings / display text: if you plan to use large text (\u226518pt regular or \u226514pt bold), you still need \u22653.0:1. Current pair (2.80:1) fails that too, so you cannot safely use white text even for headings on #F97316.\n- Don't try to \u201cfix\u201d this with ARIA or screen-reader tricks \u2014 color contrast is a visual requirement.\n\n## Quick CSS examples\n- Darken text (keep orange):\n  - body { color: #333333; background-color: #F97316; }\n- Darken background (keep white text):\n  - .brand-bg { background-color: #bd5711; color: #FFFFFF; }\n\n## Other notes / next steps I can help with\n- I can produce a small palette of accessible variants (hover/focus/disabled states) derived from your brand orange.\n- I can check contrast for other component combinations (buttons, disabled states, focus rings, icons, placeholder text) if you share those hexes or component states.\n- I attempted to save/check a memory profile but the memory service for this account isn\u2019t available from this connection \u2014 I can save a brand accessibility baseline if you want and memory is enabled.\n\n## Scope note\nThis audit covers only automated color-contrast checks for the specified colour pair. It is not a full WCAG audit (no HTML lint, keyboard walkthrough or color-blindness simulations were run for other palette items). If you want a full page/component audit (including focus, labels, target sizes, color-blindness simulation), tell me and I will run those next.",
+  "passed": true
+ },
+ {
+  "scenario": "tax",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "freelance-tax"
+  ],
+  "tools": [
+   "freelance-tax/quarterly_estimate",
+   "freelance-tax/safe_harbor",
+   "freelance-tax/payment_deadlines"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 6,
+  "cost": 0.015029250000000001,
+  "error": "",
+  "answer": "# Tax estimate \u2014 2026 \u2014 single\n**Next payment:** $18,756.22 due 2027-01-15 (110 days) \u00b7 **Set aside:** 21.9% of every net dollar \u00b7 **Safe harbor:** short by $18,756.22\n\nNOTE: These are estimates using default 2026 federal figures (standard deduction, brackets, SS wage base). Verify current IRS/SSA numbers if your tax year differs. This is estimate only, not tax advice.\n\n## Projection\n| Line | Amount |\n| Net SE profit | $95,000.00 |\n| SE tax (self-employment) | $13,423.07 |\n| Taxable income (after half-SE, std deduction, QBI) | $57,750.77 |\n| Federal income tax | $7,417.17 |\n| State (flat placeholder) | $0.00 |\n| Total federal tax (SE + income) | $20,840.24 |\n| Quarterly payment (even split \u00f74) | $5,210.06 |\n\nKey numbers used:\n- Half of SE tax (above-the-line deduction) = $6,711.54\n- AGI after half-SE deduction = $88,288.46\n- Standard deduction used = $16,100 (2026 default; verify)\n- QBI deduction (20% simplified applied) = $14,437.69\n- Set-aside percent (total tax \u00f7 net profit) = 21.9%\n- Combined marginal rate (income + SE effect) \u2248 30.5%\n\n## Deductions\nYou did not list business expenses. If you want me to value specific deductions (meals, home office, mileage, etc.), paste a short list and I\u2019ll calculate the tax saved using your marginal rates.\n\n## Deadlines\n| Q | Period | Due | Days left | Amount |\n| Q1 | Jan 1 \u2013 Mar 31 2026 | 2026-04-15 (past) | -165 | Paid $0 / Expected (even split) $5,210.06 |\n| Q2 | Apr 1 \u2013 May 31 2026 | 2026-06-15 (past) | -104 | Paid $0 / Expected (even split) $5,210.06 |\n| Q3 | Jun 1 \u2013 Aug 31 2026 | 2026-09-15 (past) | -12 | Paid $0 / Expected (even split) $5,210.06 |\n| Q4 | Sep 1 \u2013 Dec 31 2026 | 2027-01-15 (upcoming) | 110 | **Pay at least $18,756.22** (90% safe-harbor). Or pay full remaining $20,840.24 to cover the year. |\n\nWhy Q4 is large: three quarterly deadlines already passed with no estimated payments. To avoid an underpayment penalty you should either (A) meet the safe-harbor amount (90% of this year\u2019s tax = $18,756.22) or (B) pay the full projected tax ($20,840.24). With only one quarter remaining, that amount is due in the single Jan 15, 2027 payment.\n\n## Recommendation / Action steps\n1. If you want to avoid any possible underpayment penalty, pay at least $18,756.22 by 2027-01-15. If cash allows, pay the full $20,840.24 to finish the year clean.\n2. Start moving 21.9% of each net payment into a dedicated \u201ctax\u201d savings account the day you receive the money. (If your expenses change, we can recompute.)\n3. Open a separate bank account for estimated taxes and make the Jan 15 payment via EFTPS or your bank to ensure timeliness.\n4. If your income is lumpy, consider the annualized-income method (Form 2210 Schedule AI) to reduce penalty risk \u2014 ask a CPA before filing if you want to use that.\n5. If you want me to value specific deductions (home office, mileage, meals), tell me the amounts and I\u2019ll compute tax saved.\n\n## Assumptions & verify list\n- Used 2026 default federal brackets and standard deduction = $16,100 \u2014 verify current IRS figures.\n- Social Security wage base assumed $184,500 (2026 default) \u2014 verify SSA.\n- QBI deduction applied as a simplified 20% (phaseouts ignored; if your taxable income is near thresholds, consult a CPA).\n- State tax set to $0 (flat placeholder). Add your state rate if you want the state estimate included.\n- No W-2 wages or withholding were reported.\n\nWould you like me to:\n- Calculate the payment split if you want to make a smaller catch-up now and smaller monthly payments until Jan 15?\n- Value specific expenses (meals, mileage, home office) to show exact tax saved?\n- Save this profile (filing status, net income) so we can re-run quickly next quarter?",
+  "passed": true
+ },
+ {
+  "scenario": "pricing",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "ecom-pricing"
+  ],
+  "tools": [
+   "ecom-pricing/price_for_target_margin",
+   "ecom-pricing/unit_economics"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 5,
+  "cost": 0.01224175,
+  "error": "",
+  "answer": "# Pricing \u2014 per unit \u00b7 recommended price $38.95\n\nCM2 (contribution margin after fees & returns) = 46.0% \u00b7 Break\u2011even ROAS = 2.18\u00d7\n\n## Unit economics at $38.95 (per order)\n| Line | $ | % of price |\n| Price | 38.95 | 100.0% |\n| COGS (landed) | 11.40 | 29.3% |\n| Outbound shipping you pay | 6.20 | 15.9% |\n| Packaging | 0.00 | 0.0% |\n| Payment fees (3.2% of price) | 1.25 | 3.2% |\n| Expected return cost (8% return rate) | 2.20 | 5.6% |\n| Contribution margin (CM2) | 17.90 | 46.0% |\nGross profit (price \u2212 COGS) = $27.55 (70.7% gross margin)  \nBreak\u2011even ROAS: 2.18\u00d7 \u00b7 Max CPA (first order) = $17.90 \u00b7 Floor price for 30% CM2 = $28.38\n\n## Recommendation\n- Exact algebraic price to hit 45% target = $38.10.  \n- Charm\u2011price options (actual CM2 they deliver): $38.99 (46.0%), $38.95 (46.0%), $39.00 (46.0%).  \n- I recommend $38.95 (x.95) \u2014 keeps you a hair above the target 45% CM2, preserves a clean charm ending, and gives a break\u2011even ROAS \u2248 2.18\u00d7.\n\n## Promo guardrails\n- Keep discounts shallow. With a 46% CM2, a 20% off promo requires roughly +77% unit lift just to break even.  \n- If you want promos only when lifts are realistic, cap promos \u2248 12\u201313% off (that keeps the required break\u2011even unit lift \u2272 40%).  \n- Preferred non\u2011price levers: gift\u2011with\u2011purchase, free\u2011shipping threshold, product bundles, or sitewide value add versus straight % off.\n\n## Assumptions & formulas\n- Inputs used: COGS = $11.40, shipping you pay = $6.20, payment fees = 3.2% of price (no fixed $0.30 included), packaging = $0, marketplace fees = 0, return rate = 8%, return_cost (label/handling/unsellable) = $0 assumed.  \n- Exact solved formula used:  \n  P = ((1 \u2212 rr)\u00b7COGS + ship + pack + fulfil + fixed fees + rr\u00b7return_cost) \u00f7 ((1 \u2212 rr)(1 \u2212 marketplace%) \u2212 payment% \u2212 target_margin)  \n  (tool solved this to get exact price $38.10; charm choice $38.95 yields 46.0% CM2)  \n- Notes: payment fees are applied to price (not to cost). Return modeling is included as an expected per\u2011order cost.\n\nIf you want, I can:\n- Recompute with a different return-cost assumption (e.g., $3 handling/label + 15% write\u2011off of COGS), or include a $0.30 fixed payment fee, packaging cost, or marketplace fees (Amazon).  \n- Save this pricing baseline (COGS/shipping/target) for future use. Would you like me to save it?",
+  "passed": false
+ },
+ {
+  "scenario": "okr",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "okr-coach"
+  ],
+  "tools": [
+   "okr-coach/lint_okrs"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 4,
+  "cost": 0.0096565,
+  "error": "",
+  "answer": "Good start \u2014 you\u2019ve picked a sensible objective and three related KRs, but they\u2019re all currently task-shaped or vague. I ran a lint pass: score 70/100 \u2014 needs rewrites.\n\nSummary\n- OKRs (team unspecified), period not provided \u00b7 Lint score: 70/100\n- Verdict: all 3 KRs need to be rewritten as measurable outcomes (baseline \u2192 target \u00b1 date). Move \u201claunch\u201d/\u201cmake\u201d tasks into Initiatives.\n\nRewrites (before \u2192 after)\n- Objective\n  - ~~Improve the product.~~ \u2192 **Make the product more delightful and reliable.**\n    - Why: objective should be qualitative, inspiring, \u226412 words and contain no metric.\n\n- KR1\n  - ~~Launch dark mode.~~ \u2192 **Increase dark-mode adoption among DAUs from <baseline> to <target> by <date>.**\n    - Why: \u201claunch\u201d is a task. The KR must be an outcome (adoption rate or % of active users using dark mode).\n\n- KR2\n  - ~~Make onboarding better.~~ \u2192 **Increase week\u20111 activation (users reaching first success) from <baseline> to <target> by <date>.**\n    - Why: \u201cbetter\u201d is vague. Pick a measurable onboarding metric (week\u20111 activation, onboarding completion %, time\u2011to\u2011first\u2011success, NPS for new users).\n\n- KR3\n  - ~~Increase activation.~~ \u2192 **Increase 7\u2011day activation rate from <baseline> to <target> by <date>.**\n    - Why: make the metric, baseline and target explicit and avoid duplicating KR2 \u2014 keep this focused (e.g., if KR2 is completion %, KR3 can be activation rate).\n\nNotes on shape and balance\n- Move the tasks into an Initiatives section. Example initiatives: implement dark mode, ship onboarding flow changes, run A/B tests on activation funnel.\n- Add a quality guardrail to avoid a bad tradeoff. Example: \u201cKeep new\u2011user NPS for onboarding \u2265 X\u201d or \u201cKeep crash rate after dark\u2011mode launch \u2264 Y\u201d.\n- Mix leading and lagging indicators. For example:\n  - Leading: number of onboarding experiments run / % of users enrolled in guided onboarding.\n  - Lagging: week\u20111 activation, 30\u2011day retention.\n- Label KRs as committed vs aspirational (committed = must hit, aspirational = stretch). Don\u2019t make everything committed.\n\nInitiatives (examples \u2014 NOT KRs)\n- Implement dark mode, QA, and rollout plan \u2192 feeds KR1 (adoption).\n- Redesign onboarding flow + new onboarding checklist \u2192 feeds KR2 (activation/completion).\n- Run 5 activation experiments (A/B tests) \u2192 feeds KR3 (activation rate).\n\nWhat I need from you (two quick items)\n1) Period: what quarter/dates should I use? (e.g., 2026-10-01 \u2192 2026-12-31)\n2) For grading now: for each rewritten KR, give me baseline, current and target numbers and whether each KR is committed or aspirational. If you don\u2019t have a baseline, say \u201cbaseline unknown\u201d and I\u2019ll mark \u201cbaseline unknown \u2014 measure it in week 1\u201d and we\u2019ll proceed.\n\nIf helpful, here are suggested example metrics & targets you can copy/edit:\n- KR1 example: Increase dark\u2011mode adoption among DAUs from 0% \u2192 20% (aspirational) by end of quarter.\n- KR2 example: Increase onboarding completion rate (complete onboarding checklist within 7 days) from 28% \u2192 45% (committed).\n- KR3 example: Increase 7\u2011day activation rate from 31% \u2192 45% (aspirational).\n\nNext steps I\u2019ll run once you reply with the period and numbers\n- Re-run grading to compute progress, status and score (okr_coach__grade_progress).\n- Build the OKR cadence/calendar for the period (okr_coach__okr_calendar).\n- If you want, I\u2019ll save the OKRs for the quarter (ask first).\n\nWhich quarter/dates should I use, and what are the baseline \u2192 current \u2192 target values (and committed vs aspirational) for KR1\u2013KR3?",
+  "passed": true
+ },
+ {
+  "scenario": "no-agent",
+  "model": "gpt-5-mini",
+  "mode": "router",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [],
+  "tools": [],
+  "tool_errors": [],
+  "turns": 1,
+  "cost": 0.000286,
+  "error": "",
+  "answer": "Canberra. \n\n(It's a common misconception that Sydney or Melbourne are the capital, but Australia's capital is Canberra.)",
+  "passed": true
+ },
+ {
+  "scenario": "cold-email",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "cold-email"
+  ],
+  "tools": [
+   "cold-email/score_subject_line"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 4,
+  "cost": 0.01313125,
+  "error": "",
+  "answer": "Short answer: no \u2014 that subject scores poorly (46/100). The exclamation marks and the generic \"quick question\" phrasing read like mass marketing.\n\nTop subject picks (scored)\n1. 12% lower fuel costs \u2014 100/100\n2. Save 12% on fuel \u2014 100/100\n\nRecommended winner: \"12% lower fuel costs\" \u2014 concise, benefit-first, mobile-safe.\n\nTwo quick questions before I write the sequence:\n1) No trigger was given \u2014 OK if I use a peer-proof angle (e.g., \"mid\u2011size logistics fleets cut fuel ~12% with our route optimizer\")?\n2) You asked for 3 emails, but the outbound playbook recommends 4 steps (trigger \u2192 proof \u2192 insight/different angle \u2192 direct ask). Do you want exactly 3, or are you OK with the recommended 4-step sequence?",
+  "passed": true
+ },
+ {
+  "scenario": "ab-test",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "ab-test-analyst"
+  ],
+  "tools": [
+   "ab-test-analyst/srm_check",
+   "ab-test-analyst/significance_test",
+   "ab-test-analyst/sample_size",
+   "ab-test-analyst/alpha_correction"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 7,
+  "cost": 0.020289500000000002,
+  "error": "",
+  "answer": "# Experiment readout \u2014 (user-supplied test)\n\n**Hypothesis:** (not provided) \u2014 I assume you pre-registered the primary metric as signup rate and planned a single final look (\u03b1 = 0.05, two-sided). Tell me the original hypothesis if you want it quoted exactly.\n\n**Primary metric:** Signup conversion rate \u00b7 **Runtime:** (not provided) \u00b7 **Looks:** 1 \u00b7 **\u03b1 (corrected):** 0.05\n\n| Arm | Visitors | Conversions | Rate |\n|---|---:|---:|---:|\n| Control | 2,400 | 120 | 5.000% |\n| Variant | 2,380 | 151 | 6.345% |\n\n**Result:** relative lift 26.89% (95% CI 0.53% to 60.17%), absolute lift 1.345 pp (95% CI 0.033 to 2.656 pp), p = 0.04445, P(variant > control) \u2248 97.8%.\n\n**Sample check:** using a conventional MDE = 10% relative (+0.5 pp from 5% baseline) you would need 31,234 visitors/arm (62,468 total) for 80% power; you have ~2,390/arm \u2192 underpowered for that MDE.\n\n**SRM:** pass (observed split \u2248 50.21% / 49.79%, \u03c7\u00b2 p = 0.77).\n\n## Recommendation: ITERATE (replicate & verify)\nWhy: the variant shows a statistically significant win at the naive \u03b1 = 0.05 and the lower bound of the 95% relative-lift CI is just above 0 (0.53%), but the test is far smaller than the sample needed to robustly detect a typical business MDE (e.g., 10% rel). Also: the observed lift is large (+26.9%) \u2014 Twyman\u2019s law says unusually big relative lifts on mature funnels often indicate instrumentation or segmentation issues. Before shipping broadly, verify tracking and guardrails, then run a pre-registered replication (or a holdout/longer run) to confirm the effect. \nRisk of being wrong: ~5% nominal false-positive risk plus practical risk that the effect will shrink on replicate \u2014 if the change is costly to ship, false positives are expensive.\n\n## What this does NOT tell us\n- Whether the lift holds across key segments (traffic source, country, new vs returning users) \u2014 post-hoc segment \"wins\" are hypotheses, not proof.\n- Whether secondary guardrails (cancelations, support tickets, load time) were affected.\n- Whether novelty/primacy effects are inflating short-term lift \u2014 need time-series checks.\n\n## Next test (concrete)\n1) Verify instrumentation and that no cohort/redirect/logging bug produced the lift.  \n2) Run a pre-registered replication A/B test (same variant vs control), single final look, minimum 7 days. If you want 80% power to detect a 10% relative lift from a 5% baseline, you need ~31,234 visitors/arm (\u2248131 days at your current combined daily traffic of 478 visitors/day). If that\u2019s impractical, decide a larger MDE (e.g., 20%) and I can compute the required sample and runtime.\n\nTell me:\n- Do you want me to compute sample sizes for a different MDE or for your real daily traffic/start date?\n- Or should I draft the replication plan (runtime, pre-registration text, guardrail checks) and the instrumentation checklist?",
+  "passed": true
+ },
+ {
+  "scenario": "runway",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "cashflow-forecaster"
+  ],
+  "tools": [
+   "cashflow-forecaster/runway"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 4,
+  "cost": 0.013222999999999999,
+  "error": "",
+  "answer": "Short answer\n- Runway \u2248 14 months with the stated growth rates.  \n- Cash hits zero in October 2027 (month 14).  \n- Simple rule-of-thumb (cash \u00f7 current net burn) gives ~14.5 months, but compounding revenue (\u21918%/mo) and expenses (\u21913%/mo) shortens it to 14 months \u2014 you are \"default dead\" on the current trajectory (revenue doesn't overtake expenses before cash runs out).\n\nKey numbers (assumptions: opening cash $420k today; revenue = $9k/month growing 8%/mo; expenses = $38k/month growing 3%/mo; months measured end-of-month)\n- Opening cash: $420,000  \n- Gross burn now: $38,000/mo  \n- Net burn now: $29,000/mo (38k \u2212 9k)  \n- Runway (no growth): 420,000 \u00f7 29,000 \u2248 14.5 months  \n- Runway (with growth compounding): 14.0 months \u2014 zero cash in 2027-10.  \n- Breakeven (revenue \u2265 expenses) happens in ~April 2029 (month 32) \u2014 so cash runs out long before you break even.  \n- Additional cash required to reach breakeven today: ~$370k.\n\nMonthly cash path (selected points, month ends)\n- Sep 2026: cash \u2248 $391k  \n- Oct 2026: \u2248 $361.6k  \n- Jan 2027: \u2248 $271k  \n- Jul 2027: \u2248 $83k  \n- Sep 2027: \u2248 $20k  \n- Oct 2027: \u2248 \u2212$11k (first negative month)\n\nImmediate recommendations (ranked by speed / impact)\n1. Collect faster \u2014 push AR, require autopay/CC, run a focused collections sprint. Fastest way to buy weeks/months.  \n2. Pause / defer nonessential spend and hiring \u2014 target a near-term cut of $10\u201330k/mo to buy runway immediately.  \n3. Negotiate vendor payment terms (extend DPO) and delay discretionary capex.  \n4. Secure a small bridge / credit line to cover the gap to the next milestone (you\u2019ll likely need ~$300\u2013400k to reach breakeven without deep cuts).  \n5. As a parallel track, prepare a raise (convert or equity) timed to land before the 3\u20134 month mark when cash gets tight.\n\nNext steps I can run for you\n- A 13-week weekly cash forecast (places receipts and payroll by week) so you know the exact week of the low point and what to act on this month.  \n- A stress test (collections slip, revenue drop, surprise cost) to see how fragile the plan is and which lever helps most.  \n- Scenario: how much headcount or spend to cut to push zero-cash past a target date.\n\nWhich of those would you like me to run now? If you want the 13-week forecast, tell me your payroll cadence (date), any large one-off receivables or payables, and a minimum cash buffer you refuse to go below.",
+  "passed": true
+ },
+ {
+  "scenario": "regex",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "regex-builder"
+  ],
+  "tools": [
+   "regex-builder/check_regex_safety",
+   "regex-builder/test_regex",
+   "regex-builder/explain_regex"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 6,
+  "cost": 0.0145365,
+  "error": "",
+  "answer": "Pattern (Python/PCRE/JS-compatible): \\A[0-9]{5}(?:-[0-9]{4})?\\Z\nFlags: none \u00b7 Mode: fullmatch\nSafety: safe \u2014 anchored and no ReDoS risk (fixed-length repeats, no nested quantifiers).\n\nSample results\n| Sample | Expected | Result |\n|---|---:|---|\n| 90210 | match | match |\n| 12345-6789 | match | match |\n| 1234 | no match | no match |\n| 123456 | no match | no match |\n| 12345-678. | no match | no match |\n\nExplanation\n| Token | Means |\n|---|---|\n| \\A | start of string |\n| [0-9]{5} | exactly five ASCII digits 0\u20139 |\n| (?: ... )? | optional non-capturing group (either present once or not at all) |\n| - | a literal hyphen |\n| [0-9]{4} | exactly four ASCII digits 0\u20139 |\n| \\Z | end of string (strict) |\n\nNotes and caveats\n- This uses ASCII digits [0-9]. In Python, \\d can match other digit characters (e.g. Arabic-Indic) unless you use re.ASCII; I used [0-9] for clarity and portability.\n- Anchors \\A and \\Z ensure full-string validation (use ^...$ only if you know the multiline flag won't be set).\n- If you need a JavaScript literal: use /^[0-9]{5}(?:-[0-9]{4})?$/ \u2014 JS doesn't support \\A/\\Z but ^/$ with no m flag behaves equivalently for whole-string checks.\n- Want me to convert to a specific language/flavour or save this pattern for reuse?",
+  "passed": true
+ },
+ {
+  "scenario": "stack-trace",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "bug-hunter"
+  ],
+  "tools": [
+   "bug-hunter/parse_stack_trace"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 4,
+  "cost": 0.0132585,
+  "error": "",
+  "answer": "## Diagnosis: compute_total assumes cart.discount exists; cart.discount is None at app/billing/totals.py:41 so `cart.discount.amount` raises AttributeError.\n**Error:** `AttributeError: 'NoneType' object has no attribute 'amount'` \u00b7 **Blame frame:** `app/billing/totals.py:41 in compute_total` \u00b7 **Family:** data / wrong assumption\n\n### What the evidence says\n- Trace points to one line: compute_total subtracts `cart.discount.amount`. The exception message \"'NoneType' ... amount\" literally means `cart.discount` is None.\n- Hint from parser: \"If the message says 'NoneType', a function up the call chain returned None (usually a lookup miss or an early return). Trace the variable back to its source.\"\n- Most likely: some carts don't have a discount (or the discount lookup returned None), but compute_total assumes it's always present.\n\n### Hypotheses (ranked)\n1. **Missing/optional discount** \u2014 compute_total didn't account for carts that have no discount (discount is legitimately None).\n   - For: simple and common; bug is exactly consistent with stack; low code-change surface.\n   - Against: if business invariant says discount should always be present, this only masks a deeper invariant break.\n   - Test: call compute_total with a cart whose discount is None (unit test). Expect crash now; with fix, result uses discount 0.\n   - Quick test command (under 1 min):\n     - Create a minimal Cart with items and discount = None and call compute_total (snippet below).\n\n2. **Race / data cleanup produced dangling cart with discount removed** \u2014 some code removed or nullified the discount record for an existing cart (or foreign-key join failed).\n   - For: explains why only some carts fail and possibly why it started suddenly (background job or data migration).\n   - Against: would expect other code paths to fail similarly if they access discount without checking.\n   - Test: inspect DB rows for carts referencing discounts; search for recent jobs that set discount to null; reproduce by nulling discount in DB and calling create_order.\n\n3. **Deserialization / serializer schema change** \u2014 an API/serializer change now maps missing discount to null in some payloads.\n   - For: explains sudden after-deploy regression.\n   - Against: less likely than #1; needs deploy or schema change evidence.\n   - Test: check recent commits touching cart/discount model or API payloads; run integration test that simulates the API body that reached create_order.\n\nI would run hypothesis #1 first (fastest and most likely).\n\n### Reproduce\nMinimal python snippet to reproduce the crash (one-liner you can run locally):\npython - <<'PY'\nclass Item: \n    def __init__(self, price, qty): \n        self.price, self.qty = price, qty\nclass Cart:\n    def __init__(self, items, discount): \n        self.items, self.discount = items, discount\ndef compute_total(cart):\n    return sum(i.price * i.qty for i in cart.items) - cart.discount.amount\nc = Cart([Item(10,2)], None)\nprint(compute_total(c))\nPY__\n\nThis will raise AttributeError same as prod.\n\n### Fix (minimal, correct at the consumer boundary)\nPatch compute_total to treat missing discount as zero, and log a warning the first time for observability. Prefer validating at the boundary (where carts are created/loaded) later.\n\nSuggested diff (apply to app/billing/totals.py):\n- Old:\n  return sum(i.price * i.qty for i in cart.items) - cart.discount.amount\n- New:\n  discount_amount = cart.discount.amount if cart.discount is not None else 0\n  return sum(i.price * i.qty for i in cart.items) - discount_amount\n\nOptionally with logging:\n  if cart.discount is None:\n      logger.debug(\"compute_total: cart %s has no discount, assuming 0\", getattr(cart, \"id\", \"<no-id>\"))\n  discount_amount = cart.discount.amount if cart.discount is not None else 0\n  return sum(i.price * i.qty for i in cart.items) - discount_amount\n\nAdd a unit test (pytest pseudocode):\ndef test_compute_total_no_discount():\n    cart = Cart(items=[Item(10,2)], discount=None)\n    assert compute_total(cart) == 20\n\ndef test_compute_total_with_discount():\n    cart = Cart(items=[Item(10,2)], discount=SimpleNamespace(amount=5))\n    assert compute_total(cart) == 15\n\nRegression test name: test_compute_total_handles_missing_discount\n\n### Better/longer-term fixes\n- Validate at the producer/boundary:\n  - When loading a Cart from DB/serializer, ensure discount is either a Discount object or a zero-valued placeholder (make invalid states unrepresentable).\n  - If business invariant requires a discount for certain flows, assert or raise a clearer error earlier with cart id for debugging.\n- Audit other accesses to cart.discount.amount across the codebase and add safe guards or guarantees. Search for \".discount.amount\" or \"cart.discount\" usages.\n- If this started after a deploy or migration, inspect commits touching discount/cart models or any job that nullifies discounts.\n\n### Blast radius\n- Any code that accesses `cart.discount.amount` or assumes discount is non-null (billing, UI totals, order summary) may crash the same way. Audit billing, checkout, order summary, invoice rendering.\n- If discount being None is unexpected, some business logic (discount expiry/removal) might have been changed and could affect pricing correctness.\n\n### Quick mitigation (hotfix plan)\n1. Deploy the minimal safe change above (treat None as 0 + debug log). This stops the exceptions immediately.\n2. Add the unit tests and deploy.\n3. Instrument/log the number of carts with missing discount and sample cart IDs to investigate why discount is missing.\n4. Follow up with a deeper fix: either enforce non-null discount at load-time or fix the code path that should have set it.\n\n### Unexplained / follow-ups\n- Why did this start happening now? (unexplained) \u2014 check:\n  - Recent deploys that touched billing/cart/discount code.\n  - Background jobs or data migrations that could nullify discounts.\n  - Error first-seen time in logs; if you can paste surrounding logs or a time range I can cluster them to find the first occurrence and the change before it.\n- I recommend searching logs for the first cart IDs that triggered this and inspecting DB rows and related deploy/PRs.\n\nIf you want, I can:\n- Produce the exact git diff/patch file for your repo.\n- Search for other uses of cart.discount in the codebase (if you paste a grep or repo listing).\n- Cluster your logs around the first-seen time if you paste more logs (use bug_hunter__cluster_logs).",
+  "passed": false
+ },
+ {
+  "scenario": "meeting",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "meeting-ops"
+  ],
+  "tools": [
+   "meeting-ops/transcript_stats",
+   "meeting-ops/resolve_due_dates",
+   "meeting-ops/format_action_items"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 6,
+  "cost": 0.016078500000000003,
+  "error": "",
+  "answer": "# Meeting \u2014 2026-09-28\n**Attendees:** Priya \u00b7 Marcus \u00b7 Dana \u00b7 **Length:** ~0 min \u00b7 **Talk share:** Priya 65%, Marcus 32%, Dana 3%  \n**Topics:** pricing deck, Stripe migration, churned accounts\n\n## TL;DR\nThree concrete commitments: Priya will send a revised pricing deck, Marcus will finish the Stripe migration, and Dana will email the three churned accounts.\n\n## Decisions\n- No formal decisions recorded.\n\n## Action items\n| # | Task (imperative) | Owner | Due | Source |\n|---|---|---:|---:|---|\n| 1 | Send revised pricing deck | Priya | 2026-10-01 | \"I'll send the revised pricing deck by Thursday.\" |\n| 2 | Complete Stripe migration | Marcus | 2026-10-09 | \"I can get the Stripe migration done end of next week.\" |\n| 3 | Email the three churned accounts (include account list & outcomes) | Dana | 2026-09-29 | \"Someone needs to email the three churned accounts \u2014 Dana, can you take that tomorrow?\" |\n\n## Open questions\n- None \u2014 every commitment had a named owner and a date.\n\n## Follow-up email (draft)\nSubject: Quick follow-up \u2014 pricing deck, Stripe migration, churn outreach\n\nHi team \u2014 quick recap from today:\n\nPriya \u2192 Send revised pricing deck (due 2026-10-01)  \nMarcus \u2192 Complete Stripe migration (due 2026-10-09)  \nDana \u2192 Email the three churned accounts and report back with outcomes (due 2026-09-29)\n\nThanks \u2014 please reply if any due date needs to change.\n\nWhat I filed/created\n- No external connectors available here. The action items are ready to paste into your task tracker (Asana/Linear/Jira/Notion) or to send as an email.",
+  "passed": false
+ },
+ {
+  "scenario": "reorder",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "inventory-planner"
+  ],
+  "tools": [
+   "inventory-planner/reorder_point"
+  ],
+  "tool_errors": [],
+  "turns": 3,
+  "cost": 0.009465,
+  "error": "",
+  "answer": "Inventory plan \u2014 2026-09-27 \u00b7 1 SKU \u00b7 service level A/B/C = 98/95/90%\n\nSummary\n- Reorder point (ROP): 396 units.\n- Safety stock: 102 units (\u2248 7.2 days of cover).\n- Expected demand over lead time (21 days): 294 units (14 \u00d7 21).\n- Action: Reorder when your inventory position (on-hand + on-order) \u2264 396 units.\n\nNumbers (from the calculation)\n- Daily demand mean (d): 14 units/day\n- Daily demand SD (\u03c3d): 4 units/day\n- Lead time (LT): 21 days\n- Assumed lead-time SD (\u03c3LT): 4.2 days (20% of mean, used because you didn't supply \u03c3LT)\n- Service level: 95% \u2192 z = 1.645\n- Formula used: SS = z\u00b7\u221a((LT+R)\u00b7\u03c3d\u00b2 + d\u00b2\u00b7\u03c3LT\u00b2); ROP = d\u00b7LT + SS\n- Computation results:\n  - Lead-time demand = d \u00d7 LT = 294\n  - Safety stock (SS) = 102\n  - ROP = 294 + 102 = 396\n  - Safety-stock days of cover \u2248 102 / 14 = 7.2 days\n  - Variance split: demand-term = 336, lead-time-term = 3,457 \u2192 lead-time variability is the dominant driver of SS\n\nNotes & next steps\n- I assumed continuous review (order any time). If you order on a fixed cadence, the review period increases SS \u2014 tell me the cadence if relevant.\n- If you give current on-hand and on-order quantities I will tell you whether to order now and calculate the last safe order date.\n- If you want the economically optimal order quantity (EOQ) or a PO size that respects MOQ/pack sizes/price breaks, provide order cost, unit cost, MOQ and pack size and I\u2019ll compute it.\n- If your supplier can reduce lead-time variability (\u03c3LT), safety stock will fall a lot \u2014 e.g. halving \u03c3LT typically reduces SS more than small forecasting improvements.\n\nWant me to check whether you should place a PO now? If so, please give on-hand units and units already on-order (inbound).",
+  "passed": true
+ },
+ {
+  "scenario": "salary",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "salary-negotiator"
+  ],
+  "tools": [
+   "salary-negotiator/compare_offers",
+   "salary-negotiator/compare_offers",
+   "salary-negotiator/plan_counter",
+   "salary-negotiator/raise_value"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 7,
+  "cost": 0.029914000000000003,
+  "error": "",
+  "answer": "Short answer: Offer A is the better, safer deal on a conservative valuation. Counter Offer A to $160,000 base (expect to land \u2248 $154k). Below I show the math, assumptions, a counter plan with fallback levers, and an email script you can send.\n\n## Offer math\nAssumptions: bonus paid at target; Offer A equity = RSUs (treated at face value); Offer B equity = 0.15% of $60M \u2192 $90,000 paper value but treated as private-option value with an 80% haircut (i.e. worth 20% of face = $18k) to account for illiquidity / risk; 4-year vest, 1-year cliff for B; no sign-on or 401k match.\n\n| Offer | Yr\u20111 cash | Yr\u20111 total | 4\u2011yr avg | Notes |\n|---|---:|---:|---:|---|\n| Offer A | $162,800 | $166,800 | $166,800 | 148k base + 10% bonus; RSUs $80k / 4 = $20k/yr (treated as RSU cash-like; here first-year vested portion shown conservatively) |\n| Offer B | $135,000 | $139,500 | $139,500 | 135k base, no bonus; 0.15% at $60M = $90k face \u2192 haircut 80% \u2192 $18k effective value (\u2248$4.5k/yr vested) |\n\nVerdict (conservative): Offer A leads by about $27,300 per year on a 4\u2011year average (A \u2248 $166.8k/yr vs B \u2248 $139.5k/yr) under the haircut assumptions above.\n\nNotes on upside vs risk\n- Offer B has startup upside: if the company grows well or exits at much higher valuation, 0.15% could be worth a lot. But that is risky and illiquid; the haircut models that risk.\n- If you highly value upside and can tolerate risk, B could be attractive \u2014 but on guaranteed/near-term comp, A is better.\n\n## Vesting / cliff (important facts)\n- Offer B has a 1\u2011year cliff \u2192 if you leave before 12 months you get 0 equity.\n- With a 4\u2011year even vest after 1\u2011year cliff, leaving at 12 mo \u2192 you get 0; at 24 mo \u2192 ~25% of grant (after cliff then monthly/quarterly pro rata depending on cadence).\n- Because B\u2019s expected cash value (after haircut) is small relative to the base/bonus gap, the cliff makes early-year cash (offer A) materially more attractive.\n\n## The counter (sized and justified)\n- Ask: $160,000 base (this is \u2248 +8.1% vs Offer A).\n- Justification to give the recruiter: you have a competing offer at $135k and you'd prefer to join them \u2014 but you need base = $160k to sign this week.\n- Expected landing: about $154,000 base (a realistic, credible outcome).\n- Walk-away (BATNA): $135,000 (the competing offer).\n- Fallback levers (in order if base is fixed):\n  1. Signing bonus: $9,000 (one-time) to bridge year\u20111 cash.\n  2. Extra equity: ask for +$24,000 (4\u2011yr value) or a guaranteed refresh at 12 months.\n  3. Written 6\u2011month review with a compensation target.\n  4. Non\u2011cash: start date, PTO, title (last resort).\n\nWhy this is reasonable: 10\u201315% move on base is typical when you have a competing offer; your ask of $160k is anchored to that competing offer and is within normal ranges. Expect them to counter lower \u2014 landing at ~154k is credible.\n\n## What that base increase is worth\nIf you land at $154k (expected landing), that +$6k vs $148k compounds through raises/bonus. Over 10 years (3% annual raises assumed) the cumulative additional earnings are roughly $75.7k. (This shows why pushing for base matters \u2014 it compounds.)\n\n## Script (email / recruiter)\nSubject: Excited about the role \u2014 one quick question on comp\n\nHi [Recruiter name],\n\nThank you again \u2014 I\u2019m excited about the role and the team. I do have one question on compensation: I currently have a written offer at $135,000. I\u2019d much rather join [Company A], and if you can do $160,000 base I\u2019m ready to sign this week.\n\nIf the base is fixed by band, I\u2019m open to a $9,000 one\u2011time sign\u2011on or a $24,000 increase to the equity grant (or a committed refresh at 12 months) to bridge the difference.\n\nReally excited about the opportunity \u2014 let me know what\u2019s possible and I\u2019ll get this signed.\n\nBest,  \n[Your name]\n\nNotes: say the competing offer only if asked; do not email the written offer unless explicitly requested.\n\n## If you\u2019re leaning toward Offer B (startup upside)\nIf you prefer B for upside, negotiate at B instead:\n- Ask for more equity (e.g., 0.25\u20130.3% instead of 0.15%) OR\n- Ask for favorable terms: lower strike (if options), last 409A, fully diluted share count, acceleration on change of control (single- or double-trigger), and a refresh grant at 12 months. Also ask for a sign-on to cover year\u20111 cash gap if needed.\n\n## Before you reply / checklist\n- Get any revised offer in writing.\n- Ask Offer B (if you care about it) for: last 409A, preferred price vs common, fully diluted shares, strike price and type (ISO/NQO), refresh policy, and acceleration terms.\n- If base is fixed, move to sign-on or equity (in that order).\n- Don\u2019t accept verbally before getting the final offer in writing.\n\nWould you like:\n- I can draft a one\u2011sentence phone line for you, or\n- I can adapt the email above for Offer B (ask for more equity + protective terms), or\n- I can save these offers + the negotiation plan to memory for future chats (note: your account needs memory enabled).\n\nWhich offer are you leaning toward, and do you want the tailored email for Offer A (above) or a counter-script for Offer B?",
+  "passed": true
+ },
+ {
+  "scenario": "seo-meta",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": false,
+  "started": [
+   "meta-writer"
+  ],
+  "tools": [
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description",
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/serp_preview",
+   "meta-writer/score_title",
+   "meta-writer/score_description"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 10,
+  "cost": 0.02122,
+  "error": "",
+  "answer": "",
+  "passed": false
+ },
+ {
+  "scenario": "x-thread",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "x-thread-builder"
+  ],
+  "tools": [
+   "x-thread-builder/score_hook",
+   "x-thread-builder/score_hook",
+   "x-thread-builder/score_hook",
+   "x-thread-builder/lint_thread"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 7,
+  "cost": 0.0207235,
+  "error": "",
+  "answer": "**Hook score:** 95/100 (numbered list) \u2014 specific result + promise; opens a clear loop.\n\n1/ We grew our newsletter from 0 to 25,000 subscribers in 11 months \u2014 with $0 ad spend. The three things that actually moved the needle:\n\n2/ Cross-promos with 40 similar newsletters. We swapped short, promise-led blurbs with editors who already reached our exact audience. No ads, scalable, and the traffic kept coming for weeks after each send.\n\n3/ A free template library gated by email. Practical assets people reuse = returning readers. Each download was a high-intent signup who opened and used our content.\n\n4/ Posting the best issue excerpts on LinkedIn every weekday. Short, actionable excerpts drove steady traffic and signups without needing a viral post\u2014consistency beats spikes.\n\n5/ What failed: giveaways. They brought ~6,000 subscribers who almost never opened an email. Vanity numbers hurt deliverability and engagement.\n\n6/ How to replicate:\n- Partner with 20\u201350 non-competing newsletters; swap concise blurbs.\n- Build 5\u201310 high-use freebies people return to.\n- Post one practical excerpt on LinkedIn every weekday.\n\n7/ Result recap: 0 \u2192 25k in 11 months, $0 ad spend. Want the template library + a plug-and-play promo blurb you can copy? Follow me \u2014 link in bio.\n\n---\n**Lint:** \u2705 all posts \u2264 280 \u00b7 no links before N \u00b7 numbering OK\n**Alt hooks (scored):** \"0 \u2192 25,000 subscribers in 11 months with zero ad spend. The 3 tactics that got us there (and 1 that backfired):\" \u2014 87 \u00b7 \"How we grew a newsletter to 25k in 11 months \u2014 no ads, no viral Tweet, just three repeatable tactics:\" \u2014 84\n**Posting notes:** Best post 2 as a quote-tweet (proof: screenshot of an example cross-promo). Attach a screenshot of the template library landing page to post 3 if you want higher saves. If you want, I can (a) tighten the CTA with a short signup link, (b) create the 40-word promo blurb for swaps, or (c) save this thread for reuse. Which would you like next?",
+  "passed": true
+ },
+ {
+  "scenario": "macros",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "fitness-coach"
+  ],
+  "tools": [
+   "fitness-coach/tdee_and_macros"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 4,
+  "cost": 0.013692,
+  "error": "",
+  "answer": "Scope note: general guidance, not medical advice. See a doctor or registered dietitian for medical conditions or if you have/are recovering from an eating disorder.\n\nQuick summary (what I used)\n- Inputs you gave: male, 31, 180 lb (81.6 kg), 5'10\" (177.8 cm), lift 4\u00d7/week, desk job.\n- I assumed \u201cmoderate\u201d daily activity on top of lifting and a slow fat-loss target \u22480.25 kg/week (~0.55 lb/week).\n\nNumbers (target for slowly losing fat while preserving strength)\n- Estimated BMR: 1,778 kcal/day\n- Estimated TDEE: \u2248 2,755 kcal/day\n- Recommended daily calories (slow deficit): 2,480 kcal/day (\u224810% deficit)\n- Expected loss rate: ~0.25 kg/week \u2192 ~20 weeks to lose 5 kg at this rate\n- Macros (daily):\n  - Protein: 163 g (\u22482.0 g/kg) \u2192 652 kcal\n  - Fat: 69 g (\u22480.85 g/kg; ~25% of calories) \u2192 621 kcal\n  - Carbs: 302 g \u2192 1,208 kcal\n  - Totals \u2248 2,480 kcal\n\nWhy these numbers\n- A ~10% deficit is conservative and much less likely to cause strength loss than aggressive deficits. Protein is set at 2.0 g/kg to protect muscle and strength while losing fat. Fat kept above 0.6 g/kg to support hormones and recovery. Carbs fill the remaining calories to support heavy lifting sessions.\n\nPractical suggestions to keep strength while losing fat\n- Keep training intensity high: keep most compound lifts in the 3\u20136 rep (strength) and 6\u201310 rep (hypertrophy) ranges, with heavy sets taken near RPE 7\u20139 on main lifts. Maintain training frequency (4\u00d7/week is fine).\n- Prioritize strength progression: try to add reps in-range first, then small load increases (2.5 lb / 1.25 kg upper increments where possible).\n- Place most carbs around workouts: larger pre/post-workout meals to fuel performance and recovery.\n- Add one refeed per week (optional): +200\u2013400 kcal from carbs on one higher-carb day if you feel very depleted \u2014 helps energy and adherence.\n- Don\u2019t add lots of extra cardio. If you want extra calorie burn, prefer low-volume steady-state or a couple of HIIT sessions (but watch recovery).\n- Sleep, hydration, and alcohol: aim for 7\u20139 h sleep; limit alcohol as it impairs recovery and calories add up.\n\nHow to track and when to adjust\n- Check weight and strength trends weekly; focus on body composition and how your lifts feel, not day-to-day weight.\n- If after 2\u20134 weeks your weight is dropping near the expected rate and strength is stable \u2192 continue.\n- If strength falls for two consecutive training sessions on the same lift \u2192 add 100\u2013200 kcal/day (reduce deficit) until strength stabilizes.\n- If weight loss is much slower than expected after 3\u20134 weeks (e.g., <0.1 kg/week) \u2192 drop ~100 kcal/day or add ~150\u2013200 kcal/week of extra activity.\n- If weight is falling faster than desired (>0.7\u20131.0% bodyweight/week) \u2192 increase calories by 200\u2013300 kcal/day to protect strength.\n\nMeal-distribution tips\n- Aim for 3\u20134 protein-containing meals/day (e.g., 30\u201350 g protein per meal) to hit the 163 g target.\n- Example split: Breakfast 40 g P / Lunch 40 g P / Pre/post workout 40 g P / Dinner 43 g P.\n- Keep fats mostly from whole-food sources (olive oil, nuts, dairy, fatty fish) and carbs from whole grains, fruit, potatoes/rice around workouts.\n\nIf you want I can:\n- Turn this into a day-by-day meal plan at ~2,480 kcal.\n- Make a training + progression plan that preserves strength while in a deficit (I\u2019ll need current 1RMs or recent working weights).\n- Give a heart-rate zone recommendation (I\u2019ll need resting HR or I can assume 60 bpm).\n\nQuick questions (pick any or skip)\n1) How long have you been lifting (training age)? (helps choose progression)\n2) Do you track resting HR and want cardio zones?\n3) Any injuries, dietary preferences, or foods you avoid?\n\nWould you like a 4-week training + nutrition schedule that matches these targets and focuses on strength retention?",
+  "passed": true
+ },
+ {
+  "scenario": "sql",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "sql-wizard"
+  ],
+  "tools": [
+   "sql-wizard/explain_structure",
+   "sql-wizard/lint_sql",
+   "sql-wizard/suggest_indexes",
+   "sql-wizard/format_sql"
+  ],
+  "tool_errors": [],
+  "turns": 6,
+  "cost": 0.015213250000000001,
+  "error": "",
+  "answer": "**Grain:** one row per order (joined to its customer) \u00b7 **Dialect:** PostgreSQL (assumed) \u00b7 **Assumptions:** customers.id is the primary key (indexed); orders.customer_id references customers.id (1:N, many orders per customer); orders.created_at is a timestamp; orders.status is low-cardinality (e.g. 'pending','shipped',...).\n\n```sql\nSELECT *\nFROM orders o\nJOIN customers c\n    ON c.id = o.customer_id\nWHERE o.status = 'pending'\n    AND o.created_at > NOW() - interval '7 days'\nORDER BY\n    o.created_at DESC;\n```\n\nCorrectness notes\n- SELECT * drags all columns through the plan and prevents useful covering indexes. Replace with an explicit column list for production.\n- Predicate semantics: status = 'pending' excludes NULLs; created_at > now() - interval '7 days' is relative to the server clock/time zone \u2014 if you need deterministic boundaries use timestamptz or a fixed boundary.\n- The JOIN is on customers.id = orders.customer_id; that should be 1:N (customers \u2192 orders). No aggregate required unless you intended one row per customer.\n\nWhy it's slow\n- Likely cause: a sequential scan of orders (the large table) and a separate sort for ORDER BY. If there is no useful index that matches the WHERE + ORDER BY, Postgres will scan many rows (or the whole table), then sort them \u2014 heavy I/O and CPU.\n- status alone is low-cardinality, so an index on only status is rarely selective enough. The planner needs an index that serves the filter and the ordering.\n\nRecommended indexes (Postgres)\nOption A \u2014 composite index (equality \u2192 sort):\n```sql\nCREATE INDEX CONCURRENTLY idx_orders_status_created_at_desc\n    ON orders (status, created_at DESC);\n-- serves: equality on status = 'pending' and ORDER BY created_at DESC\n```\nWhy: the B-tree can use the leading equality on status, then read rows already ordered by created_at (DESC), avoiding a filesort for the ORDER BY and reducing rows scanned.\n\nOption B \u2014 smaller partial index (usually best when 'pending' is a small fraction):\n```sql\nCREATE INDEX CONCURRENTLY idx_orders_pending_created_at_desc\n    ON orders (created_at DESC)\n    WHERE status = 'pending';\n-- serves: WHERE status = 'pending' (via the index predicate) and ORDER BY created_at DESC\n```\nWhy: only stores rows with status = 'pending', so the index is much smaller and more likely to be cached \u2014 typically faster for recent/rare statuses.\n\nCovering index tweak (if you need extra columns from orders without heap lookups)\n- List the actual columns you SELECT (don't use *). If you need, say, customer_id and total_price in the result, create:\n```sql\nCREATE INDEX CONCURRENTLY idx_orders_pending_created_at_desc_inc\n    ON orders (created_at DESC)\n    INCLUDE (customer_id, total_price)\n    WHERE status = 'pending';\n-- serves WHERE + ORDER BY and can enable Index Only Scan (no heap access) for those columns\n```\nCaveat: additional indexes increase write overhead (insert/update/delete). Avoid many indexes on a high-write table.\n\nNotes about customers\n- customers.id should be the primary key (already indexed). If it's not, add an index on customers.id.\n\nHow to verify\n1. Run EXPLAIN (ANALYZE, BUFFERS) for the original query and for the query after creating the index.\n   - Before: expect Seq Scan on orders (large rows) and a Sort node.\n   - After: expect an Index Scan or Index Only Scan on the proposed index (idx_orders_...), and no external Sort (ORDER BY covered).\n2. Sanity counts:\n```sql\nSELECT count(*) FROM orders\n WHERE status = 'pending'\n   AND created_at > now() - interval '7 days';\n```\nThis should be roughly the rows the index scan touches. Also verify the join result matches:\n```sql\nSELECT count(*)\nFROM orders o\nJOIN customers c ON c.id = o.customer_id\nWHERE o.status = 'pending'\n  AND o.created_at > now() - interval '7 days';\n```\n3. If you need to ensure index-only scans are used, check pg_stat_all_indexes and ensure visibility map is well-maintained (VACUUM).\n\nBefore \u2192 after (expected)\n- Before: Seq Scan on orders (scans many or all rows) \u2192 Sort on created_at (heavy I/O).\n- After: Index Scan / Index Only Scan on idx_orders_* (scans only recent pending rows in order), no Sort; expected much lower I/O and faster response.\n\nIf you want, I can:\n- Suggest the exact index statement tuned to your schema if you tell me (a) approximate rows in orders, percent of rows with status = 'pending', and (b) the exact columns you need in the SELECT (so I can recommend INCLUDE columns).",
+  "passed": true
+ },
+ {
+  "scenario": "contract",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "contract-reviewer"
+  ],
+  "tools": [
+   "contract-reviewer/detect_clauses",
+   "contract-reviewer/extract_deadlines",
+   "contract-reviewer/renewal_calendar",
+   "contract-reviewer/liability_exposure"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 7,
+  "cost": 0.0247965,
+  "error": "",
+  "answer": "# Contract review \u2014 auto\u2011renewal + liability clause \u2014 reviewing as the customer \u2014 2026-09-27\n\nScope: This is a drafting/review aid, not legal advice. Contract law and enforceability vary by jurisdiction \u2014 if this contract is high value (>~$100k), cross\u2011border, involves IP assignments or personal data, get a licensed lawyer to review.\n\nVerdict: Do not sign as\u2011is \u2014 negotiate changes first. Risk score: high (tool score: 100/100). Main problems: (1) one\u2011sided, very low liability cap that protects only the Provider; (2) long auto\u2011renewal notice window with no reminder or clarity about how/when notice must be received; (3) many standard clauses are missing (indemnity, IP, data, termination mechanics, governing law, payment terms).\n\nTop three deal\u2011breaking issues (what could actually hurt you)\n1. Limitation of liability \u2014 one month of fees, and it appears to cap only the Provider.\n   - Quote: \"Provider's total liability shall not exceed the fees paid in the one (1) month preceding the claim.\"\n   - Why it matters: A 1\u2011month cap is far below market for mid\u2011market SaaS/services (market \u2248 12 months' fees). If the Provider causes a substantial outage, data breach or IP claim, your recoverable damages will be tiny. Worse, the clause looks one\u2011sided (caps Provider only) which leaves you potentially fully exposed.\n   - Ask for: Mutual cap (each party capped) set to 12 months' fees (fees paid or payable in the 12 months before the claim). Carve out data breaches, confidentiality breaches and IP indemnity from the cap (or give them a higher \"super\u2011cap\" of 2\u20133\u00d7 annual fees). Exclude fraud and willful misconduct from any cap (i.e. unlimited liability).\n   - Fallback: Mutual cap at 3 months' fees; or mutual cap of 12 months but allow an explicit higher cap for data/IP (2\u00d7 annual fees).\n\n2. Auto\u2011renewal + notice mechanics \u2014 you can be rolled into another year automatically.\n   - Quote: \"This Agreement shall automatically renew for successive one\u2011year terms unless either party gives written notice of non\u2011renewal at least ninety (90) days prior to the end of the then\u2011current term.\"\n   - Why it matters: 90 days is long and there's no obligation on Provider to remind you. The clause doesn't specify how notice must be given (received vs sent; email vs certified mail). If you miss the window you may be locked in for a full year.\n   - Ask for: Reduce to 30\u201360 days; require notice to be \"received\" by the other party (or delivered by registered mail/email with return receipt); add a Vendor obligation to send a renewal reminder 30 days before the deadline. Alternatively, remove auto\u2011renewal so renewal requires mutual written agreement.\n   - Fallback: Keep auto\u2011renew but change to 60 days' notice and require Provider to send a written renewal reminder 45 days before the deadline.\n\n3. Missing/unclear companion clauses (negotiation items you should add)\n   - Indemnity: No indemnity clause found \u2014 add mutual indemnities (Provider for IP infringement and data breach; Customer for Customer content/use).\n   - IP ownership: No assignment/ownership of deliverables \u2014 define that Customer owns work product or license terms.\n   - Termination & cure: No termination for convenience or termination for cause/cure periods \u2014 add 30\u2011day cure for material breach and a right to terminate for convenience with 30\u201390 days' notice (depending on bargaining power).\n   - Data protection / privacy and confidentiality: Missing \u2014 add standard data processing agreement (if personal data is processed) and confidentiality obligations.\n   - Governing law / venue and payment terms: Missing \u2014 add explicit governing law and payment terms (net 30, etc).\n\nKey dates (computed from effective date 2026\u201103\u201101)\n- Initial term ends: 2027\u201102\u201128 (Sunday).\n- LAST DAY to send non\u2011renewal notice (90 days before term end): 2026\u201111\u201130 (Monday).\n- Reminder date (suggested 30 days before the deadline): 2026\u201110\u201131 (Saturday).\nNotes: Because the term end is on a weekend, plan to send notice earlier to ensure receipt on a business day. Also clarify whether \"prior to the end of the then\u2011current term\" means the deadline is inclusive/exclusive and whether the other party must \"receive\" notice by that date.\n\nLiability snapshot\n- Cap as written: \"1 month of fees preceding the claim\" \u2014 and it appears to cap the Provider only (not mutual).\n- Market reference: mid\u2011market norm \u2248 12 months' fees (mutual), with carve\u2011outs or higher caps for data breach/IP indemnity and unlimited for fraud/willful misconduct.\n- Practical impact: If your monthly fee is small, your recoverable damages for a major breach could be negligible. I cannot compute the dollar cap without the monthly/annual fee amount \u2014 please provide the contract fees (monthly or annual) if you want precise dollar math and a comparison.\n\nRecommended redlines (paste these to the other side)\n1) Make the liability cap mutual and market\u2011standard (example):\n   \"Each party's aggregate liability for direct damages arising out of or relating to this Agreement shall not exceed the greater of (a) the fees paid or payable by Customer to Provider under this Agreement during the twelve (12) months immediately preceding the claim, or (b) USD [minimum amount, optional]. Notwithstanding the foregoing, (i) neither party's liability for fraud or willful misconduct shall be limited, and (ii) liability for claims arising from Provider's breach of confidentiality obligations, Provider's failure to comply with data protection obligations, or IP infringement indemnity shall be subject to a separate cap equal to two (2) times the fees paid or payable in the twelve (12) months preceding the claim.\"\n\n   Alternate (if Provider resists): \"\u2026shall not exceed the fees paid or payable by Customer to Provider in the three (3) months immediately preceding the claim.\"\n\n2) Auto\u2011renewal and notice mechanics (example if you keep auto\u2011renewal):\n   \"This Agreement shall have an initial term of twelve (12) months beginning on 1 March 2026 (the 'Initial Term'). Thereafter this Agreement shall automatically renew for successive twelve (12) month terms unless either party provides written notice of non\u2011renewal to the other party, which must be received at least thirty (30) days prior to the end of the then\u2011current term. Provider shall send Customer a written renewal reminder no later than forty\u2011five (45) days prior to the notice deadline. 'Written notice' means notice sent by email to the parties' designated contacts and, for non\u2011renewal, shall be effective upon receipt.\"\n\n   Alternate (stronger): Remove auto\u2011renewal: \"This Agreement shall expire at the end of the Initial Term unless the parties mutually agree in writing to renew.\"\n\n3) Notice delivery clarity:\n   \"Notice of non\u2011renewal must be received by the other party by the deadline and may be delivered by (i) email confirmed by a read receipt to the other party's designated email address; or (ii) registered mail or overnight courier. Provider's unilateral calendar reminders do not substitute for the formal notice requirement.\"\n\n4) Add missing companion clauses (examples to request):\n   - Indemnity: Provider shall indemnify and defend Customer for third\u2011party IP infringement claims and for breaches of data protection obligations; Customer indemnifies Provider for Customer content/use.\n   - IP ownership: Work product and deliverables created by Provider for Customer under this Agreement shall be owned by Customer, subject to Provider's pre\u2011existing IP and licensed items.\n   - Data protection: Add DPA addressing roles, security measures, breach notification timelines, and liability for data incidents.\n   - Termination & cure: Add 30\u2011day cure period for material breach and a right for Customer to terminate for convenience with 30 days' notice (or negotiate termination fees).\n\nWhat to accept if the other side refuses (fallbacks)\n- Liability cap: mutual cap at 3 months' fees (instead of 12) + carve\u2011outs for data/IP; or 12 months cap but allow a small floor minimum.\n- Auto\u2011renewal: 60 days' notice and a Provider obligation to send a reminder 30 days prior.\n- If Provider refuses mutual cap, insist on at least: (a) the cap applies only to direct damages (not indemnities for IP/data); (b) a higher cap (2\u00d7 annual fees) for data/IP claims; and (c) unlimited liability for fraud/willful misconduct.\n\nPractical next steps (recommended)\n1. Tell me the contract's monthly or annual fee so I can compute the dollar cap and show you how under\u2011insured you are.\n2. Ask the Provider for the redlines above (liability mutuality and higher cap; reduce/clarify renewal notice; add indemnity, IP and DPA).\n3. If this contract/value is material, get outside counsel to draft the precise indemnity/IP/DPA language and approve the final redline.\n\nIf you want, I can:\n- Draft an exact redline patch you can send to the other side (I can produce a marked\u2011up clause replacement).\n- Compute dollar caps and the numeric exposure once you provide the monthly/annual fees.\n- Add calendar reminders for the renewal deadline (I can format calendar text or create a calendar file you can import).\n\nWould you like me to:\nA) Draft the exact redline text ready to send now? and/or\nB) Compute the dollar cap and compare to market if you provide the contract fee (monthly or annual)?\n\nWhich would you prefer?",
+  "passed": true
+ },
+ {
+  "scenario": "rice",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "roadmap-prioritizer"
+  ],
+  "tools": [
+   "roadmap-prioritizer/rice_score",
+   "roadmap-prioritizer/rice_score"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 5,
+  "cost": 0.021207,
+  "error": "",
+  "answer": "# Roadmap \u2014 next quarter (assumed capacity 36 person-weeks; goal: deliver the highest value-per-week improvements to the product)\n\nNotes on assumptions I made (labelled so you can change them):\n- Planning horizon = 1 quarter (12 weeks). Capacity assumed = 3 engineers \u00d7 12 weeks = 36 person-weeks (changeable).\n- Input efforts converted from person-months \u2192 person-weeks (1 month = 4.33 weeks).\n- I used your confidence numbers as given; tool flagged confidence >80% as unusual (see below).\n\n## Ranked\n| Rank | Item | RICE | Impact | Confidence | Effort (wk) | Cum. effort (wk) | MoSCoW | Note |\n|---|---:|---:|---:|---:|---:|---:|---|---|\n| 1 | CSV export | 485.0 | 2 | 70% | 4.33 | 4.33 | Must | Best value per week; cheap to build. Fragile vs Dark mode (see below). |\n| 2 | Dark mode | 369.5 | 1 | 80% | 8.66 | 12.99 | Should | Large reach but low impact per user; higher effort. |\n| 3 | SSO | 46.8 | 3 | 90% (flagged) | 17.32 | 30.31 | Could | High effort, low reach \u2192 low RICE. Confidence >80% flagged by rule \u2014 justify or cap. |\n\n\u2014 cut line at 36 person-weeks (cycle capacity). All three fit under the assumed capacity (total effort = 30.31 wk). Must \u2264 60% capacity = OK (Must = 4.33 wk = 12% of capacity).\n\n## Why this order\n- CSV export beats Dark mode because its effort is small (4.33 wk) so its medium impact (2) and 1,500 reach yield the highest delivered value-per-week (RICE = 485). In RICE terms it gives the most value per engineering-week.\n- Dark mode has very high reach but only impact=1 and a non-trivial effort (8.66 wk), so it ranks second (RICE = 369.5). If impact were higher it could overtake CSV.\n- SSO is valuable for affected customers (impact=3) but reach is low (300) and effort is large (17.32 wk), producing a low RICE score (46.8), so it\u2019s placed last.\n\nFragile ranks / ties\n- CSV export is marked fragile with Dark mode: the two are within the \u00b130% estimate error band. Treat them as the top tier (CSV slightly preferred today). If either effort or impact estimates move \u00b130%, their order could flip.\n\nFlagged items / validation suggestions\n- SSO confidence 90% was flagged by the prioritizer (rule: don\u2019t assert >80% without evidence). Either (a) provide evidence to keep 90%, or (b) cap confidence at 80% and re-run \u2014 this does not materially change SSO\u2019s low RICE today.\n- If you want higher certainty, run a quick discovery spike for Dark mode (to validate impact per user) or a customer interview for SSO demand.\n\n## Moved by judgement\n- None. This ranking is the RICE ordering without manual overrides. If you need SSO promoted for strategic/security reasons, say so and I\u2019ll reclassify it as Must.\n\n## Three assumptions that would most change the answer\n1. SSO becomes a compliance/security Must (contract/customer requirement) \u2014 then RICE is irrelevant; SSO must be prioritized and could displace others.  \n2. Dark mode\u2019s impact per user is actually 2 (not 1) \u2014 Dark mode\u2019s RICE would rise and it could overtake CSV.  \n3. Team capacity is much smaller (e.g., only 8\u201312 person-weeks this cycle) \u2014 then only CSV would fit and everything else would push to the next cycle.\n\n## Suggested next steps (pick one)\n- If you want a capacity-accurate plan: tell me true capacity (people \u00d7 weeks \u00d7 focus factor) and I\u2019ll run a MoSCoW capacity check and show what to cut.\n- If you want tighter estimates: I can (a) re-score with SSO confidence capped at 80%, or (b) run a short discovery spike plan for Dark mode to reduce fragility.\n- If you want these priorities exported (Jira/Notion/Productboard), tell me which tool.\n\nWould you like me to re-run with a different capacity, cap SSO confidence to 80%, or create brief discovery spike tasks to reduce the fragile rank?",
+  "passed": true
+ },
+ {
+  "scenario": "pipeline",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "pipeline-forecaster"
+  ],
+  "tools": [
+   "pipeline-forecaster/weighted_pipeline",
+   "pipeline-forecaster/coverage_ratio"
+  ],
+  "tool_errors": [],
+  "turns": 4,
+  "cost": 0.0186645,
+  "error": "",
+  "answer": "# Forecast \u2014 Q4 2026 (as of 2026-09-27)\n\n**Forecast:** $115,000  (range $0 \u2013 $230,000) \u00b7 Weighted: $148,000  \n**Quota:** $150,000 \u00b7 Closed: $0 (0%) \u00b7 Gap: $150,000 \u00b7 Coverage: 1.83\u00d7 (open) \u00b7 Weighted coverage: 0.99\u00d7 \u00b7 Days left: 95\n\nSummary answer: No \u2014 not yet. At current stage the planed/likely outcome ($115k forecast) is below quota by $35k. Weighted pipeline (~$148k) is just under quota but there is no commit. You need either to convert at least one large deal (Initech) plus one smaller, or add ~\\$175k of new pipeline to be comfortably covered by the 3\u00d7 rule.\n\n## Commit (deal by deal)\nNo deals meet the \"commit\" criteria (negotiation+ with a next step and recent activity). Commit = $0.\n\n## Best case\n| Deal | Amount | Stage | Close | What has to happen |\n| Acme | $80,000 | Proposal | 2026-12-20 | Proposal signed / next step: contracting + signature |\n| Initech | $120,000 | Negotiation | 2026-12-05 | Get a clear next step + exec sponsor / signed order |\n| Umbrella | $30,000 | Proposal | 2026-12-18 | Convert proposal to signed order |\n\n(Globex $45,000 is in Discovery \u2192 in pipeline, not best case.)\n\n## Key numbers & flags\n- Open pipeline: $275,000 \u00b7 Weighted pipeline: $148,000  \n- Forecast (commit + 50% of best case): $115,000 \u00b7 Forecast range: $0 \u2013 $230,000  \n- Required win rate on remaining pipeline to hit quota (given current pipeline): ~54.5%  \n- Deals needed at current avg deal size (~$62.5k): ~3 deals\n- Concentration: Initech is 52.2% of the forecast \u2192 high concentration risk\n- Activity flags: every deal is missing a documented next step; Initech (late stage) is explicitly excluded from commit because it lacks a next step\n\n## Risks\n- No commit deals \u2014 forecast depends on turning proposals/negotiation into signed business.  \n- Concentration: >50% of the forecast is one deal (Initech). If it slips, you likely miss quota.  \n- Weighted coverage <1\u00d7 of the gap (weighted pipeline covers only ~99% of the $150k gap).  \n- Required win rate (54.5%) is high for a pipeline with current stage mix.  \n- No historical calibration provided (no closed/won history supplied), so forecast has wide error bars.\n\n## Gap plan (recommended, with owners & dates)\n1. Convert Initech to commit \u2014 owner: you / AE \u2014 get a signed purchase order or a hard close date + next-step by 2026-11-15. Impact: if closed, +$120k (primary path to quota). Priority: highest.  \n2. Close Acme or Umbrella \u2014 owner: you / AE \u2014 push proposals to signature by 2026-12-01. Impact: Acme $80k, Umbrella $30k. Closing either plus Initech gets you over quota.  \n3. Add short-cycle pipeline worth >= $175k to reach the recommended 3\u00d7 coverage (or at least $35k in high-probability deals to eliminate the current gap) \u2014 owner: demand/BDR + AE \u2014 target in-period close by 2026-11-30. Tactics: run a limited discount / pilot, focus on small quick wins, re-engage warm leads.  \n4. Reduce concentration: if Initech is risky, push for partial payment / pilot order to capture guaranteed revenue or split the contract. Owner: AE / Sales Ops \u2014 by 2026-11-20.  \n5. Tactical lever: increase win rate by +5\u201310 pts via exec involvement or commercial concessions on one deal (estimate +$15\u2013$30k effective uplift). Owner: CRO/you \u2014 immediate.\n\n## What changed since last snapshot\nNo previous snapshot provided \u2014 cannot compute delta. (If you want, I can save today's weighted snapshot so next time we can show \"what moved\".)\n\n## By rep\nNo owner data supplied in the export. Provide rep/owner columns next time for per-rep accountability.\n\n## Calibration\nNo historical forecast vs actual data provided \u2192 no calibration multiplier applied. If you have past forecast vs actuals I can compute bias and adjust the forecast.\n\n---\n\nBottom line recommendation (short): treat Initech as the make-or-break deal \u2014 get a written next step and target signature. While doing that, push Acme/Umbrella up the closing pipeline and actively generate short-cycle pipeline worth at least $35k\u2013$175k depending on how conservative you want to be. Without those actions the current forecast is unlikely to hit $150k.\n\nWould you like me to:\n- draft an email / playbook to push Initech to signature?  \n- save today's weighted pipeline snapshot so we can diff next week?  \n- run a coverage/velocity recalculation if you can add owners, last activity dates, or closed-history?",
+  "passed": true
+ },
+ {
+  "scenario": "contrast",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "accessibility-checker"
+  ],
+  "tools": [
+   "accessibility-checker/contrast_ratio",
+   "accessibility-checker/suggest_color",
+   "accessibility-checker/suggest_color",
+   "accessibility-checker/suggest_color"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 7,
+  "cost": 0.01970925,
+  "error": "",
+  "answer": "# Accessibility audit \u2014 brand orange #F97316 with white text \u2014 target WCAG 2.2 AA\n**Verdict:** 0 blockers \u00b7 1 major \u00b7 0 minor \u2014 can a keyboard/screen-reader user complete the core task? yes\n\nAssumptions: body text = normal text (<18pt, regular). Target = WCAG 2.2 AA (normal text requires contrast \u2265 4.5:1).\n\n## Major\n| # | Element | Criterion | Problem | Fix |\n| 1 | Body text (white #FFFFFF on brand orange #F97316) | WCAG 1.4.3 (AA) contrast | Contrast ratio 2.80:1 \u2014 fails AA for normal text (needs \u2265 4.5:1). Also fails non-text UI (needs \u2265 3:1). | Use one of the nearest passing fixes below (changes preserve hue where possible): A) Darken the background to #bd5711 (24% darker) \u2014 white on #bd5711 = 4.63:1 (AA pass for normal text). B) Darken the foreground to #333333 \u2014 #333333 on #F97316 = 4.50:1 (AA pass). C) For UI / non-text elements where only 3:1 is required, darken background slightly to #ef6e15 \u2014 white on #ef6e15 = 3.03:1 (passes UI/non-text but still fails normal text).\n\n## Contrast table\n| Pair | Ratio | Normal text (4.5:1) | Large text (3:1) | UI (3:1) | Nearest passing |\n| White (#FFFFFF) on #F97316 | 2.80:1 | FAIL | FAIL | FAIL | \u2014 |\n| White (#FFFFFF) on #bd5711 | 4.63:1 | PASS (AA) | PASS | PASS | background \u2192 #bd5711 (darker 24%) |\n| #333333 on #F97316 | 4.50:1 | PASS (AA) | PASS | PASS | foreground \u2192 #333333 (darker 80%) |\n| White (#FFFFFF) on #ef6e15 | 3.03:1 | FAIL | PASS (if large) | PASS | background \u2192 #ef6e15 (darker 4%) \u2014 only meets 3:1 threshold |\n\nNotes: ratios shown to two decimals where returned by the checker. The tool reports 2.8:1 (2.80:1), and found nearest hue-preserving background that reaches 4.5:1 is #bd5711 (4.63:1).\n\n## Recommended actions (practical)\n- If you want to keep white text on an orange background for body copy, update the brand orange to #bd5711 (CSS: --brand-orange: #bd5711;). This is the closest background change that preserves the orange hue and passes AA.\n- If you need to keep the exact brand orange (#F97316), change body text color from white to #333333 (CSS: color: #333333;). This preserves the brand color but uses dark text for readability.\n- If the orange is used for large UI elements (buttons, badges) and you only need non-text contrast (3:1), the minimal change is #ef6e15 \u2014 but that still fails for normal body text, so do not use white for paragraph/body text with only that adjustment.\n\n## CSS snippets\n- Option A (keep white text, darken orange):\n  - :root { --brand-orange: #bd5711; }\n- Option B (keep orange, use dark body text):\n  - body { color: #333333; }\n- Option C (UI-only pass):\n  - .badge, .icon-bg { background: #ef6e15; color: #fff; }  /* OK for icons/UI, not for body text */\n\n## Needs manual testing\n- Verify semantic contrast in context (shadows, gradients, semi-transparent overlays): the contrast tool flattens alpha \u2014 any overlays may change effective colour and should be re-checked.\n- Check placeholders, disabled states and focus rings (these are often lighter; verify they meet 3:1 or 4.5:1 as appropriate).\n- Test with real content and at 200\u2013400% zoom and with device/browser defaults to ensure reflow and legibility.\n\n## Scope note\nThis check only covered the colour pair(s) you provided. If you want, I can:\n- Generate a small accessible orange palette (shades that pass for white text and for dark text).\n- Update your design tokens and produce a PR/patch or Figma swatches.\n- Run a color-blindness simulation across your palette to flag any pairs that collapse.\n\nWhich would you like next \u2014 generate the accessible palette (best two or three orange shades) or give CSS tokens for your product?",
+  "passed": true
+ },
+ {
+  "scenario": "tax",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "freelance-tax"
+  ],
+  "tools": [
+   "freelance-tax/quarterly_estimate",
+   "freelance-tax/safe_harbor",
+   "freelance-tax/payment_deadlines"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 6,
+  "cost": 0.025244749999999996,
+  "error": "",
+  "answer": "# Tax estimate \u2014 2026 \u2014 single\nNext payment: $20,840.24 due 2027-01-15 (110 days) \u00b7 Set aside: 21.9% of every net dollar \u00b7 Safe harbor: prior-year = $0 so safe-harbor does not cover you \u2014 consider paying 90% of current-year tax ($18,756.22) or the full $20,840 to avoid underpayment risk.\n\n## Projection\n| Line | Amount |\n| Net SE profit | $95,000.00 |\n| SE tax (total) | $13,423.07 |\n| Taxable income (after half\u2011SE, standard & QBI) | $57,750.77 |\n| Federal income tax | $7,417.17 |\n| State (flat placeholder) | $0.00 |\n| Total federal tax (SE + income) | $20,840.24 |\n| Even quarterly payment (\u00f74) | $5,210.06 |\n\nNotes:\n- The \u201ceven quarterly\u201d payment above is the simple \u00f74 split. Because 3 of 4 estimated\u2011tax deadlines (Q1\u2013Q3) have passed this year and you report no payments made, the amount due at the next (and final) deadline is the full remaining tax: $20,840.24 on 2027\u201101\u201115.\n- Projected effective tax-on-net: 21.9% (set-aside percent). Combined marginal rate \u2248 30.5% (federally: 22% marginal).\n\n## Deductions\n- No itemized business expense list provided. The projection used:\n  - Half self-employment tax deduction: $6,711.54 (already applied in the AGI)\n  - Standard deduction used: $16,100.00\n  - QBI deduction (estimated): $14,437.69 (applied)\n- If you want per-expense tax-savings computed (meals, mileage, home office, equipment), send a list and I\u2019ll value each using the effective marginal rates (income tax saving per deductible $ \u2248 16.36%; SE tax effect \u2248 14.13%; combined \u2248 30.49% for an ordinary deductible dollar in this projection).\n\n## Deadlines\n| Q | Period | Due | Status | Amount that should have been paid |\n| 1 | Jan 1 \u2013 Mar 31 2026 | 2026-04-15 | past | $5,210.06 |\n| 2 | Apr 1 \u2013 May 31 2026 | 2026-06-15 | past | $5,210.06 |\n| 3 | Jun 1 \u2013 Aug 31 2026 | 2026-09-15 | past | $5,210.06 |\n| 4 | Sep 1 \u2013 Dec 31 2026 | 2027-01-15 | upcoming (next) | $20,840.24 (catch-up: remaining tax) |\n\nIf you had paid nothing so far (as assumed), you need to pay $20,840.24 by 2027\u201101\u201115 to cover the year (or split to hit the safe\u2011harbor target described below).\n\n## Safe-harbor and penalty notes\n- You say you had no prior-year tax (or this is your first year): the prior-year safe-harbor amount is $0, so it does not protect you.\n- Alternative safe-harbor option: pay 90% of projected current\u2011year tax = $18,756.22 (evenly or as catch-up) to reduce underpayment risk. If your prior-year tax had been >0, 100% (or 110% for high AGI) of that prior tax could be used instead.\n- If you expect income to be lumpy, consider the annualized method (Form 2210 Schedule AI) \u2014 it can reduce penalty risk if most income arrived late in the year.\n\n## Simple plan (practical)\n1. Put $20,840.24 into a separate tax savings account now (or at least $18,756.22 to meet 90% safe-harbor).\n2. Pay the full remaining balance ($20,840.24) by 2027\u201101\u201115 if possible (that eliminates underpayment risk for 2026).\n3. Going forward: move 21.9% of every net dollar you receive into that account (auto-transfer per deposit) \u2014 this matches the computed set-aside percent for 2026 based on your inputs.\n\n## Assumptions & verify list\n- Tax year: 2026; used IRS/SSA 2026 default figures (standard deduction $16,100; SS wage base \u2248 $184,500; 2026 federal brackets) \u2014 verify current-year values on IRS.gov / SSA if your filing is for a different year.\n- No W\u20112 wages, no withholding, no other taxable income, and no payments made so far this year (you stated you\u2019re single and expect $95k net SE income).\n- State tax not included (set as $0 placeholder).\n- Estimates only \u2014 not a substitute for personalized CPA/EA advice.\n\nIf you want:\n- I can value specific business expenses (meals, mileage, phone, home office) to show the tax saved per item \u2014 paste a list and I\u2019ll run the math.\n- I can produce exact payment steps (Form 1040\u2011ES voucher text or EFTPS/IRS Direct Pay links and the single payment amount to submit).\n- I can save this profile for next year (set-aside %, filing status, typical net income) \u2014 save only if you want me to remember it (I won\u2019t store sensitive data without permission).",
+  "passed": false
+ },
+ {
+  "scenario": "pricing",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": true,
+  "answered": true,
+  "started": [
+   "ecom-pricing"
+  ],
+  "tools": [
+   "ecom-pricing/price_for_target_margin",
+   "ecom-pricing/unit_economics"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 5,
+  "cost": 0.0155345,
+  "error": "",
+  "answer": "Short answer: charge $34.95. At $34.95 this delivers a 45.6% contribution margin (CM2) and a break-even ROAS of 2.19\u00d7.\n\nPricing \u2014 recommended price $34.95\nUnit economics at $34.95 (per order)\n- Price: $34.95 (100%)\n- COGS: $11.40 (32.6% of price)\n- Shipping you pay: $6.20 (17.7%)\n- Payment fees (3.2% + $0.30): $1.42 (4.1%)\n- Contribution margin (CM2): $15.93 (45.6% of price)\n- Gross margin (price \u2212 COGS): $23.55 (67.4%)\nBreak-even ROAS: 2.19\u00d7 \u00b7 Max CPA (first order) = $15.93\nExact math note: the fee-inclusive exact price to hit 45.0% was $34.56; the lowest \u201ccharm\u201d price that clears the target is $34.95 (recommended).\n\nRecommendation\n- List price: $34.95 (use the x.95 ending to keep the target margin and a good price signal).\n- Why: it meets your 45% contribution-margin target after COGS, outbound shipping and payment fees, keeps a breakeven ROAS ~2.2\u00d7, and leaves up to ~$15.9 per order to spend on ads while staying break-even.\n\nPromo guardrails\n- If you discount, be careful: at a 45.6% CM2, a 20% off coupon needs ~78% more units just to break even; a 10% off coupon needs ~28% more units to break even.\n- Practical cap: prefer \u226410% promo depth unless you expect a large, reliable unit lift, and prefer non-price promotions (free-gift, bundled value, free-shipping threshold).\n\nAssumptions & next steps\n- Assumed: no packaging/fulfillment fee beyond the $6.20 shipping you gave, no returns included, payment fees = 3.2% + $0.30, no marketplace fees, prices exclude sales tax/VAT.\n- Do you have expected return rate, packaging/fulfillment fees, marketplace fees (e.g. Amazon), or do you want me to run a discount-impact scenario (show the lift needed for a given promo depth)? I can re-run with returns or any extra per-order costs and update the recommended price.",
+  "passed": true
+ },
+ {
+  "scenario": "okr",
+  "model": "gpt-5-mini",
+  "mode": "direct",
+  "routed": true,
+  "used_tool": true,
+  "recovered": false,
+  "answered": true,
+  "started": [
+   "okr-coach"
+  ],
+  "tools": [
+   "okr-coach/lint_okrs"
+  ],
+  "tool_errors": [
+   "hundred_memory: Memory is part of every paid plan and needs a license key on this connection. Free agents work without one. Plans: http://localhost:8000/pricing"
+  ],
+  "turns": 4,
+  "cost": 0.013490750000000001,
+  "error": "",
+  "answer": "# OKRs \u2014 Product, <period?>            Lint score: 70/100\n\nObjective\nO1: Improve the product  (supports company KR: <please specify>)\n\nKey results (current draft)\n- KR1: Launch dark mode\n- KR2: Make onboarding better\n- KR3: Increase activation\n\nSummary of lint findings (high level)\n- All 3 KRs are task-shaped or vague and contain no numbers (baseline \u2192 target). KRs must be measurable outcomes. Score 70/100 \u2014 needs rewrites.\n\nRewrites (before \u2192 after) \u2014 use these as the KRs\n- ~~Launch dark mode~~ \u2192 **Increase dark-mode adoption among weekly active users from <baseline> to <target> by <date>**  \n  Why: \"Launch\" is a task. The measurable outcome is adoption/usage (or engagement lift among adopters). Example: Increase dark-mode adoption from 0% \u2192 20% by quarter end. Label: committed/aspirational per your confidence.\n\n- ~~Make onboarding better~~ \u2192 **Increase onboarding completion rate (users who complete core onboarding flow in first session) from <baseline> to <target> by <date>**  \n  Why: \"Better\" is subjective. Pick a concrete metric: completion rate, time-to-first-value, or onboarding NPS. Example: Increase onboarding completion from 45% \u2192 65% by quarter end.\n\n- ~~Increase activation~~ \u2192 **Increase week\u20111 activation (users who perform X key action within 7 days) from <baseline> to <target> by <date>**  \n  Why: Define what \"activation\" concretely means for your product (first key event). Example: Increase week-1 activation from 22% \u2192 35% by quarter end.\n\nSuggested guardrail (quality KR)\n- Add one guardrail KR so improvements don't break quality: **Keep new-user NPS \u2265 7** or **Maintain 7-day retention \u2265 <baseline>**. This prevents growth at the expense of experience.\n\nNotes on overlap\n- \"Onboarding\" and \"activation\" can overlap. If onboarding completion strongly drives activation, make one KR lead (e.g., onboarding completion) and the other a downstream outcome (activation) or replace one with the quality guardrail.\n\nInitiatives (these are tasks \u2014 keep them out of KRs)\n- Implement dark mode, feature flag rollout, QA, analytics instrumentation \u2192 feeds dark-mode adoption KR\n- Redesign onboarding flow, copy updates, guided tour, in-app checklist, A/B tests \u2192 feeds onboarding completion KR\n- Instrument and define activation event(s), run experiments to shorten time-to-first-value \u2192 feeds week\u20111 activation KR\n\nCommitted vs aspirational\n- Decide which KRs are committed (expected = score ~1.0 if met) and which are aspirational (stretch, target ~0.7). Example: shipping dark mode is an initiative; adoption target could be aspirational. Say which you want.\n\nCadence (recommended)\n- Weekly 15-min check-in (Mon): each KR owner reports confidence 1\u201310, one blocker each.\n- Mid-cycle review at ~week 6.\n- Draft next cycle 3 weeks before quarter end.\n- Score in first week after the period.\n\nWhat I need from you (two quick questions)\n1) What period should these OKRs cover? (start date and end date \u2014 e.g., 2026-10-01 to 2026-12-31)\n2) Do you have baselines/current values and targets for each KR (dark-mode adoption, onboarding completion, week-1 activation)? If yes, paste them (start/target/current). If not, should I propose example numeric baselines and targets for you to adjust?\n\nNext steps I can take once you answer:\n- If you give the period + start/current/target for each KR, I'll call the grader and give progress status, pacing and recovery actions.\n- If you want, I can propose concrete numeric baselines/targets (examples) for your review and then produce the full OKR table and calendar.",
+  "passed": false
+ }
+]

@@ -63,6 +63,18 @@ def test_no_key_gets_a_clear_upgrade_message(store):
     assert err and "license key" in out
 
 
+def test_no_key_memory_is_not_a_dead_end(store):
+    # Live runs: models recall memory first, and an error here left the job stuck on an unrecoverable failure.
+    from hundred.server.mcp_server import list_tools_for
+
+    access = resolve_access(store, req(""))
+    assert "hundred_memory" not in [t.name for t in list_tools_for(access)]
+    err, out = mem(store, "", action="list")
+    assert not err and "Nothing saved" in out and "license key" in out
+    key, _ = licensed(store)
+    assert "hundred_memory" in [t.name for t in list_tools_for(resolve_access(store, req(key)))]
+
+
 def test_limits_and_name_rules(store):
     key, _ = licensed(store)
     assert "limit" in mem(store, key, action="save", name="big/one", value="x" * (memory.MAX_VALUE_BYTES + 10))[1]

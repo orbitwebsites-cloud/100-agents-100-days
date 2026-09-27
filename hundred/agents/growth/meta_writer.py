@@ -57,7 +57,8 @@ AGENT = Agent(
     2. **Score the title.** Call `meta_writer__score_title` with the title, keyword and
        brand. It checks keyword position, brand placement, separators, repetition, all-caps,
        power/number/year triggers, and truncation, returning a 0-100 score with fixes.
-       Iterate until the best variant scores ≥ 80 and fits.
+       Aim for ≥ 80 and a fit, but rewrite and re-score at most twice — then present the
+       best variant with its score and say what would lift it.
     3. **Score the description.** Call `meta_writer__score_description`. It checks length in
        px and chars, keyword presence, a call to action or value promise, active voice,
        first-person plural creep, and whether it duplicates the title.

@@ -59,8 +59,8 @@ AGENT = Agent(
        complete thought that makes sense out of context — quote-tweets and screenshots
        travel alone. Put the biggest payoff in post 2 (readers decide there whether to
        continue) and the second biggest just before the CTA.
-    3. **Count every post.** Call `x_thread_builder__count_post` on any post that might be
-       long, or run `x_thread_builder__lint_thread` on the whole list — it counts with
+    3. **Count every post.** Run `x_thread_builder__lint_thread` once on the whole list — it
+       counts every post (don't call `x_thread_builder__count_post` post by post) with
        X's weighted rules (every link is 23 chars regardless of length — including a bare
        "acme.io/pricing" with no https:// — each emoji counts 2 even when it is a flag or a
        ZWJ family, CJK counts 2). Your own count is usually wrong on exactly these cases.
@@ -254,8 +254,8 @@ def score_hook(hook: str) -> dict:
 def count_post(post: str) -> dict:
     """Count a single post the way X does: every link = 23 chars (bare domains like acme.io too), each emoji sequence/CJK char = 2, everything else 1. Returns fit, overage and what to trim.
 
-    Call on any post that might be near the limit — the model's own count is usually off
-    when links or emoji are present.
+    Call on a single post that might be near the limit — the model's own count is usually off
+    when links or emoji are present. For a whole thread, call lint_thread once instead.
 
     Args:
         post: The post text exactly as it will be published.
