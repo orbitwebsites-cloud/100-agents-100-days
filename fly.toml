@@ -5,7 +5,7 @@ primary_region = "iad"
 [build]
 
 [env]
-  PUBLIC_URL = "https://hundred-agents.fly.dev"
+  PUBLIC_URL = "https://agents.klippdstudio.com"
   DATABASE_PATH = "/data/hundred.db"
 
 [mounts]
