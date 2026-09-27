@@ -98,7 +98,7 @@ def test_growth_projection_compounds_and_breaks_even():
     out = call("growth_projection", monthly_budget=40000, cac=190, arpu_monthly=79, gross_margin_pct=78, monthly_churn_pct=3.5, months=12)
     m1 = out["projection"][0]
     assert m1["new_customers"] == round(40000 / 190, 1) and m1["customers"] == m1["new_customers"]
-    assert m1["mrr"] == round(m1["customers"] * 79, 2)
+    assert abs(m1["mrr"] - 40000 / 190 * 79) < 0.01
     assert out["projection"][-1]["customers"] > m1["customers"] * 8
     assert out["breakeven_month"] == 6
     assert out["steady_state_customers"] == round(40000 / 190 / 0.035)

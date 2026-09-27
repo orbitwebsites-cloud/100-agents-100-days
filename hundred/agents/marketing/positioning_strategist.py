@@ -362,7 +362,7 @@ def message_clarity(messages: list[str]) -> dict:
         notes = []
         generic = [g for g in GENERIC_CLAIMS if g in low]
         if generic:
-            score -= min(35, 12 * len(generic))
+            score -= min(40, 15 * len(generic))
             notes.append(f"generic: {', '.join(generic[:3])}")
         vague = sorted({m.lower() for m in VAGUE.findall(s)})
         if vague:

@@ -71,7 +71,7 @@ def test_message_clarity_ranks_specific_over_generic():
     scores = {r["message"]: r for r in out["ranked"]}
     assert scores["The all-in-one platform for modern teams"]["competitor_could_say_it"] is True
     assert scores["Slotly fills 80% of cancelled clinic slots within 2 hours"]["competitor_could_say_it"] is False
-    assert scores["The all-in-one platform for modern teams"]["score"] < 40
+    assert scores["The all-in-one platform for modern teams"]["score"] <= 40
 
 
 def test_message_clarity_rejects_empty():

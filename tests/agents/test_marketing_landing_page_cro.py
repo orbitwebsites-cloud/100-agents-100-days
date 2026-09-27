@@ -57,7 +57,8 @@ def test_funnel_leaks_math():
     assert out["steps"][1]["step_conversion_pct"] == 15.5
     assert out["steps"][2]["lost"] == 5300
     assert out["biggest_leak_by_lost_conversions"]["step"] == "signup"
-    assert out["biggest_leak_by_rate"]["step"] == "pricing"
+    assert out["biggest_leak_by_rate"]["step"] == "signup"  # 85.48% drop vs 84.5% at pricing
+    assert abs(out["biggest_leak_by_rate"]["drop_pct"] - 85.48) < 0.01
     assert out["value_of_10pct_fix_at_biggest_leak"]["extra_final_conversions"] == 21.0
     assert out["value_of_10pct_fix_at_biggest_leak"]["extra_value"] == 10500.0
 

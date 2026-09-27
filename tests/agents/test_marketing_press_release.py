@@ -84,6 +84,7 @@ def test_pitch_email_check_bad_and_good():
     bad = call("pitch_email_check", subject="Press release: Acme launches Slotly", body="Hi Sarah, hope you are well. We are excited to announce our revolutionary product. Please see attached.", journalist_name="Sarah")
     assert bad["grade"] == "rewrite" and bad["personalised"] is False and bad["has_ask"] is False
     assert any("attachment" in i for i in bad["issues"]) and any("press release" in i for i in bad["issues"])
+    assert any("names them" in i for i in bad["issues"])
     good = call(
         "pitch_email_check",
         subject="Embargoed: clinics fill 80% of cancelled slots in 2 hours",
