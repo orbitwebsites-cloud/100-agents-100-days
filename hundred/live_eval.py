@@ -334,6 +334,30 @@ def report(results: list[Result], spent: float, budget: float, note: str = "") -
     return "\n".join(lines) + "\n"
 
 
+def _clean(value: str) -> str:
+    return value.strip().strip("'\"").strip()
+
+
+def find_key(provider: str, environ: dict[str, str] | None = None) -> tuple[str, str]:
+    """(variable name, key) for a provider, by the key's own prefix, whatever the variable is called.
+
+    OpenRouter keys start with sk-or-; OpenAI keys start with sk- (sk-proj-, sk-svcacct-, ...).
+    Only the name is ever shown; the value never leaves this function except to the API.
+    """
+    environ = dict(os.environ if environ is None else environ)
+    default = PROVIDERS[provider]["key"]
+    if _clean(environ.get(default, "")):
+        return default, _clean(environ[default])
+    for name in sorted(environ):
+        value = _clean(environ[name])
+        if "ANTHROPIC" in name.upper() or not value.startswith("sk-"):
+            continue
+        is_openrouter = value.startswith("sk-or-")
+        if (provider == "openrouter") == is_openrouter and " " not in value:
+            return name, value
+    return "", ""
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--provider", choices=sorted(PROVIDERS), required=True)
@@ -345,15 +369,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--price-in", type=float, help="$ per 1M input tokens if the model isn't on the price list")
     ap.add_argument("--price-out", type=float, help="$ per 1M output tokens")
     ap.add_argument("--no-instructions", action="store_true", help="simulate clients that ignore server instructions")
-    ap.add_argument("--key-env", help="name of the env var holding the API key, if not the provider default")
+    ap.add_argument("--key-env", default="auto",
+                    help="env var holding the API key; 'auto' (default) finds it by the key's prefix")
     ap.add_argument("--out", default="evals/live", help="where to write the report")
     args = ap.parse_args(argv)
 
-    key_env = args.key_env or PROVIDERS[args.provider]["key"]
-    key = os.environ.get(key_env, "").strip()
+    if args.key_env == "auto":
+        key_env, key = find_key(args.provider)
+    else:
+        key_env, key = args.key_env, _clean(os.environ.get(args.key_env, ""))
     if not key:
-        print(f"Set {key_env} in the environment first (or pass --key-env NAME).", file=sys.stderr)
+        prefix = "sk-or-" if args.provider == "openrouter" else "sk-"
+        print(f"No {args.provider} key found: no environment variable holds a value starting with {prefix!r}. "
+              "Add one in the environment settings (e.g. "
+              f"{PROVIDERS[args.provider]['key']}=...) and start a new session.", file=sys.stderr)
         return 2
+    print(f"Using the {args.provider} key from ${key_env}.", file=sys.stderr)
     scenarios = [s for s in SCENARIOS if not args.scenario or s.id in args.scenario]
     modes = ["router", "pick5"] if args.mode == "both" else [args.mode]
 

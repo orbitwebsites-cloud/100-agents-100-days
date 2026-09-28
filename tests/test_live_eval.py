@@ -119,3 +119,11 @@ def test_report_renders():
     r = le.run_scenario(OFF_TOPIC, scripted("Canberra."), le.all_access(), Store(":memory:"), meter(), "m")
     text = le.report([r], 0.001, 1.0)
     assert "| m | router | **1/1**" in text
+
+
+def test_find_key_by_prefix_whatever_the_name():
+    env = {"gpt_key": "sk-proj-abc", "my router": "'sk-or-v1-xyz' ", "ANTHROPIC_API_KEY": "sk-ant-1", "X": "hello"}
+    assert le.find_key("openrouter", env) == ("my router", "sk-or-v1-xyz")
+    assert le.find_key("openai", env) == ("gpt_key", "sk-proj-abc")
+    assert le.find_key("openrouter", {"OPENROUTER_API_KEY": " sk-or-1 ", "z": "sk-or-2"}) == ("OPENROUTER_API_KEY", "sk-or-1")
+    assert le.find_key("openrouter", {"gpt_key": "sk-proj-abc"}) == ("", "")
